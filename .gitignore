@@ -1,30 +1,21 @@
-########################################
-# Unreal Engine - Source Only Repository
-########################################
+####################################################
+# Unreal Engine Git Ignore
+# - Full Source Code
+# - Full Content Assets
+# - EXCEPT Maps / Levels
+####################################################
 
-# --- 기본 정책 ---
-# 기본적으로 전부 무시
-*
 
-# --- Git 관련 파일은 허용 ---
-!.gitignore
-!.gitattributes
+############################
+# IDE / Editor 개인 설정
+############################
 
-# --- Unreal 프로젝트 필수 파일 허용 ---
-!*.uproject
-
-# --- Source 코드만 허용 ---
-!Source/
-!Source/**
-
-########################################
-# 이하: 명시적 무시 (안전망)
-########################################
-
-# IDE / Editor
+# Visual Studio / Rider / VSCode / IntelliJ
 .vs/
 .vscode/
 .idea/
+
+# Visual Studio 생성 파일
 *.sln
 *.suo
 *.opensdf
@@ -33,27 +24,90 @@
 *.VC.opendb
 .vsconfig
 
-# Unreal Generated
+
+############################
+# 컴파일 결과물 / 실행 파일
+############################
+
+# Executables / Libraries
+*.exe
+*.dll
+*.so
+*.dylib
+*.app
+*.ipa
+*.out
+
+*.lib
+*.a
+*.la
+*.lai
+
+
+############################
+# Unreal Engine 자동 생성 폴더
+############################
+
+# 빌드 결과물
 Binaries/
+Plugins/**/Binaries/
+
+# 중간 컴파일 산출물
 Intermediate/
+Plugins/**/Intermediate/
+
+# 에디터 실행 중 생성되는 데이터
 Saved/
+
+# 셰이더 / 에셋 캐시 (재생성 가능, 용량 큼)
 DerivedDataCache/
-Build/
 
-# Plugins (Source만 허용, 나머지 차단)
-Plugins/**
-!Plugins/**/Source/
-!Plugins/**/Source/**
 
-# Asset / Content (전부 제외)
-Content/
-*.uasset
-*.umap
+############################
+# Build 폴더 정책
+############################
+
+# 기본적으로 Build 산출물 제외
+Build/*
+
+# PakBlacklist 설정 파일은 유지
+!Build/*/
+!Build/*/PakBlacklist*.txt
+
+# Build 내 아이콘 파일은 유지
+!Build/**/*.ico
+
+
+############################
+# Content 정책
+############################
+
+# ❌ 모든 Map / Level 제외
+Content/Map/
+
+# 맵 빌드 결과 데이터 (Lighting, NavMesh 등)
 *_BuiltData.uasset
 
-# Logs / Cache
-*.log
 
-# OS
+############################
+# SourceArt (원본 아트 리소스)
+############################
+
+# PSD, 원본 이미지 등 (선택적 제외)
+SourceArt/**
+
+
+############################
+# 로그 / 임시 파일
+############################
+
+*.log
+*.tmp
+
+
+############################
+# OS / 기타
+############################
+
 .DS_Store
 Thumbs.db
