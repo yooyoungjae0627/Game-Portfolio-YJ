@@ -52,7 +52,7 @@ bool AMosesLobbyGameMode::CanDoServerTravel() const
 	if (!World)
 	{
 		UE_LOG(LogMosesSpawn, Warning, TEXT("[DOD][Travel] REJECT (NoWorld)"));
-		return falsef
+		return false;
 	}
 
 	const ENetMode NM = World->GetNetMode();
