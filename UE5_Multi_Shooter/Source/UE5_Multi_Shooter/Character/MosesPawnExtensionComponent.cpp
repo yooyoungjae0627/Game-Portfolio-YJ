@@ -53,7 +53,7 @@ void UMosesPawnExtensionComponent::OnRegister()
 	// 올바른 Actor(=Pawn)에 붙어 있는지 확인
 	if (GetPawn<APawn>() == nullptr)
 	{
-		UE_LOG(LogMoses, Error, TEXT("this component has been added to a BP whose base class is not a Pawn!"));
+		//UE_LOG(LogMoses, Error, TEXT("this component has been added to a BP whose base class is not a Pawn!"));
 		return;
 	}
 

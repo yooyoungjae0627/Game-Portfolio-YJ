@@ -1,4 +1,4 @@
-// Copyright Epic Games, Inc. All Rights Reserved.
+ï»¿// Copyright Epic Games, Inc. All Rights Reserved.
 
 using UnrealBuildTool;
 
@@ -6,28 +6,32 @@ public class UE5_Multi_Shooter : ModuleRules
 {
 	public UE5_Multi_Shooter(ReadOnlyTargetRules Target) : base(Target)
 	{
-        // PCH(¹Ì¸® ÄÄÆÄÀÏµÈ Çì´õ) »ç¿ë ¹æ½Ä
+        // PCH(ë¯¸ë¦¬ ì»´íŒŒì¼ëœ í—¤ë”) ì‚¬ìš© ë°©ì‹
         PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
 
-        // ´Ù¸¥ ¸ğµâ¿¡¼­µµ Á¢±Ù °¡´ÉÇÑ °ø°³ ÀÇÁ¸¼º
+        // ë‹¤ë¥¸ ëª¨ë“ˆì—ì„œë„ ì ‘ê·¼ ê°€ëŠ¥í•œ ê³µê°œ ì˜ì¡´ì„±
         PublicDependencyModuleNames.AddRange(new string[]
         {
-            "Core",            // ±âº» Å¸ÀÔ, ·Î±×
-            "CoreUObject",     // UObject, ¸®ÇÃ·º¼Ç
+            "Core",            // ê¸°ë³¸ íƒ€ì…, ë¡œê·¸
+            "CoreUObject",     // UObject, ë¦¬í”Œë ‰ì…˜
             "Engine",          // Actor, World
-            "InputCore",       // ±âº» ÀÔ·Â
-            "EnhancedInput",   // Enhanced Input ½Ã½ºÅÛ
+            "InputCore",       // ê¸°ë³¸ ì…ë ¥
+            "EnhancedInput",   // Enhanced Input ì‹œìŠ¤í…œ
 
-            "GameplayTags",    // GAS ÅÂ±× ½Ã½ºÅÛ
-            "ModularGameplay", // GameFeature ±â¹İ ±¸Á¶
-            "GameFeatures",    // GameFeature ÇÃ·¯±×ÀÎ
+            "GameplayTags",    // GAS íƒœê·¸ ì‹œìŠ¤í…œ
+            "ModularGameplay", // GameFeature ê¸°ë°˜ êµ¬ì¡°
+            "GameFeatures",    // GameFeature í”ŒëŸ¬ê·¸ì¸
+            "Projects"        // âœ… IPluginManager í•´ê²°
 
-            //"CommonUser"       // CommonUser ¼­ºê½Ã½ºÅÛ
+            //"CommonUser"       // CommonUser ì„œë¸Œì‹œìŠ¤í…œ
         });
 
-        // ¸ğµâ ³»ºÎ¿¡¼­¸¸ ¾²´Â ºñ°ø°³ ÀÇÁ¸¼º
-        PrivateDependencyModuleNames.AddRange(new string[] { });
-
-        // Slate(UI) / OnlineSubsystem µîÀº ÇÊ¿ä ½Ã Ãß°¡
+        // í•„ìš”í•˜ë©´ Private ìª½ì—ë„ ê°€ëŠ¥
+        PrivateDependencyModuleNames.AddRange(new string[]
+        {
+            "Slate",
+            "SlateCore"
+               // "ModularGameplay" // í•„ìš” ì‹œ
+        });
     }
 }

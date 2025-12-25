@@ -1,20 +1,16 @@
-﻿// Fill out your copyright notice in the Description page of Project Settings.
+﻿#include "MosesAssetManager.h"
 
+#include "Misc/CommandLine.h"
+#include "Misc/Parse.h"
+#include "HAL/PlatformTime.h"
+#include "Misc/ScopeLock.h"
 
-#include "MosesAssetManager.h"
-
-//#include "Project_YJ_A/YJGameplayTags.h"
-//#include "Project_YJ_A/YJLogChannels.h"
+#include "UE5_Multi_Shooter/MosesLogChannels.h"
 
 UMosesAssetManager::UMosesAssetManager()
 {
 }
 
-/**
- * 전역 AssetManager 접근 함수
- * - Project Settings에서 AssetManagerClassName이
- *   UMosesAssetManager로 설정되어 있어야 정상 동작
- */
 UMosesAssetManager& UMosesAssetManager::Get()
 {
 	check(GEngine);
@@ -24,42 +20,34 @@ UMosesAssetManager& UMosesAssetManager::Get()
 		return *Singleton;
 	}
 
-	// 잘못된 설정이면 즉시 크래시
-	//UE_LOG(LogYJ, Fatal, TEXT("AssetManagerClassName must be UMosesAssetManager"));
+	// 여기로 오면 ini 설정이 잘못된 것.
+	// 개발 단계에서 빨리 죽는 게 원인 파악이 쉬움.
+	checkf(false, TEXT("AssetManagerClassName is not UMosesAssetManager. Check DefaultEngine.ini"));
 	return *NewObject<UMosesAssetManager>();
 }
 
-/**
- * 엔진 부팅 시 호출되는 AssetManager 초기화 지점
- * - 부모(UAssetManager)에서 PrimaryAsset 스캔 수행
- * - 이후 프로젝트 고유 초기화 실행
- */
 void UMosesAssetManager::StartInitialLoading()
 {
 	Super::StartInitialLoading();
 
-	// ✅ Day3 DoD: AssetManager 스캔 확인 로그
+	// ✅ Day3: 스캔 확인 로그 (A 검증용)
 	TArray<FPrimaryAssetId> FoundAssets;
-	GetPrimaryAssetIdList(FPrimaryAssetType(TEXT("YJExperienceDefinition")), FoundAssets);
+	GetPrimaryAssetIdList(ExperienceType(), FoundAssets);
 
-	UE_LOG(LogTemp, Log, TEXT("[YJ][AssetManager] Scanned ExperienceDefinitions: %d"), FoundAssets.Num());
+	UE_LOG(LogMosesExp, Log, TEXT("[AssetManager] Scanned ExperienceDefinitions: %d"), FoundAssets.Num());
 	for (const FPrimaryAssetId& Id : FoundAssets)
 	{
-		UE_LOG(LogTemp, Log, TEXT("  - %s"), *Id.ToString());
+		UE_LOG(LogMosesExp, Log, TEXT("  - %s"), *Id.ToString());
 	}
 }
 
-/** 커맨드라인 옵션으로 에셋 로딩 로그 출력 여부 판단 */
 bool UMosesAssetManager::ShouldLogAssetLoads()
 {
+	// 커맨드라인에 -LogAssetLoads 가 있으면 true
 	static bool bLogAssetLoads = FParse::Param(FCommandLine::Get(), TEXT("LogAssetLoads"));
 	return bLogAssetLoads;
 }
 
-/**
- * SoftObjectPath 기반 동기 로딩
- * - AssetManager의 StreamableManager를 통해 로딩
- */
 UObject* UMosesAssetManager::SynchronousLoadAsset(const FSoftObjectPath& AssetPath)
 {
 	if (!AssetPath.IsValid())
@@ -67,30 +55,24 @@ UObject* UMosesAssetManager::SynchronousLoadAsset(const FSoftObjectPath& AssetPa
 		return nullptr;
 	}
 
-	// 로딩 시간 로그 옵션
-	TUniquePtr<FScopeLogTime> LogTime;
+	// ✅ 옵션: 로딩 시간 측정 로그
+	const double Start = FPlatformTime::Seconds();
+
+	checkf(UAssetManager::IsValid(), TEXT("AssetManager must be valid when loading assets: %s"), *AssetPath.ToString());
+
+	UObject* Loaded = UAssetManager::GetStreamableManager().LoadSynchronous(AssetPath);
+
 	if (ShouldLogAssetLoads())
 	{
-		LogTime = MakeUnique<FScopeLogTime>(
-			*FString::Printf(TEXT("Sync Load: %s"), *AssetPath.ToString()),
-			nullptr,
-			FScopeLogTime::ScopeLog_Seconds
-		);
+		const double End = FPlatformTime::Seconds();
+		UE_LOG(LogMosesExp, Log, TEXT("[AssetLoad] SyncLoad %s (%.3f sec)"),
+			*AssetPath.ToString(),
+			(End - Start));
 	}
 
-	if (UAssetManager::IsValid())
-	{
-		return UAssetManager::GetStreamableManager().LoadSynchronous(AssetPath);
-	}
-
-	return AssetPath.TryLoad();
+	return Loaded;
 }
 
-/**
- * 로딩된 에셋을 캐시에 등록
- * - GC 방지 목적
- * - Thread-safe
- */
 void UMosesAssetManager::AddLoadedAsset(const UObject* Asset)
 {
 	if (!Asset)
@@ -101,6 +83,3 @@ void UMosesAssetManager::AddLoadedAsset(const UObject* Asset)
 	FScopeLock Lock(&SyncObject);
 	LoadedAssets.Add(Asset);
 }
-
-
-

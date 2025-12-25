@@ -1,21 +1,44 @@
-﻿// Fill out your copyright notice in the Description page of Project Settings.
-
-
-#include "MosesExperienceManagerComponent.h"
-
-#include "Net/UnrealNetwork.h"
-#include "Engine/World.h"
-#include "Engine/StreamableManager.h"
-#include "GameFeaturesSubsystem.h"
-#include "GameFeaturesSubsystemSettings.h"
+﻿#include "MosesExperienceManagerComponent.h"
 
 #include "MosesExperienceDefinition.h"
 #include "UE5_Multi_Shooter/System/MosesAssetManager.h"
+#include "UE5_Multi_Shooter/MosesLogChannels.h"
+
+#include "Net/UnrealNetwork.h"
+#include "Engine/AssetManager.h"
+#include "Engine/StreamableManager.h"
+#include "Engine/Engine.h" // GEngine
+
+// Plugin path 만들기
+#include "Interfaces/IPluginManager.h"
+#include "Misc/Paths.h"
+
+// ------------------------------
+// OnScreen Helper
+// ------------------------------
+static void ScreenMsg(const FColor& Color, const FString& Msg, float Time = 8.f)
+{
+	if (GEngine)
+	{
+		GEngine->AddOnScreenDebugMessage(-1, Time, Color, Msg);
+	}
+}
 
 UMosesExperienceManagerComponent::UMosesExperienceManagerComponent(const FObjectInitializer& ObjectInitializer)
-	: Super(ObjectInitializer)   // ✅ 이게 핵심 (부모 생성자 호출)
+	: Super(ObjectInitializer)
 {
 	SetIsReplicatedByDefault(true);
+
+	// (가능하면 .h에서 기본값 초기화도 추천)
+	// 여기서 최소한의 안전 초기화
+	LoadState = EMosesExperienceLoadState::Unloaded;
+	bNotifiedReadyOnce = false;
+	PendingGFCount = 0;
+	CompletedGFCount = 0;
+	bAnyGFFailed = false;
+	CurrentExperience = nullptr;
+	PendingExperienceId = FPrimaryAssetId();
+	CurrentExperienceId = FPrimaryAssetId();
 }
 
 void UMosesExperienceManagerComponent::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
@@ -24,227 +47,263 @@ void UMosesExperienceManagerComponent::GetLifetimeReplicatedProps(TArray<FLifeti
 	DOREPLIFETIME(UMosesExperienceManagerComponent, CurrentExperienceId);
 }
 
-void UMosesExperienceManagerComponent::CallOrRegister_OnExperienceLoaded(FOnMosesExperienceLoaded::FDelegate&& Delegate)
+// ------------------------------
+// SERVER: set experience id (authoritative)
+// ------------------------------
+void UMosesExperienceManagerComponent::ServerSetCurrentExperience_Implementation(FPrimaryAssetId ExperienceId)
 {
+	check(GetOwner());
+	check(GetOwner()->HasAuthority());
+
+	static const FPrimaryAssetType ExperienceType(TEXT("Experience"));
+
+	ScreenMsg(FColor::Orange,
+		FString::Printf(TEXT("[EXP-MGR][ServerSet] In=%s State=%d"), *ExperienceId.ToString(), (int32)LoadState));
+
+	if (!ExperienceId.IsValid())
+	{
+		FailExperienceLoad(TEXT("ServerSetCurrentExperience: Invalid ExperienceId"));
+		return;
+	}
+
+	// 타입 교정 (혹시 다른 타입으로 들어오면 Experience로 맞춤)
+	if (ExperienceId.PrimaryAssetType != ExperienceType)
+	{
+		ScreenMsg(FColor::Orange,
+			FString::Printf(TEXT("[EXP-MGR][ServerSet] FixType -> Experience:%s"), *ExperienceId.PrimaryAssetName.ToString()));
+		ExperienceId = FPrimaryAssetId(ExperienceType, ExperienceId.PrimaryAssetName);
+	}
+
+	// 중복 방지
+	if (CurrentExperienceId == ExperienceId && LoadState != EMosesExperienceLoadState::Unloaded)
+	{
+		ScreenMsg(FColor::Silver,
+			FString::Printf(TEXT("[EXP-MGR][ServerSet] Ignore duplicate. Id=%s State=%d"),
+				*ExperienceId.ToString(), (int32)LoadState));
+		return;
+	}
+
+	ResetExperienceLoadState(); // ✅ 콜백 리스트는 지우면 안 됨(아래 구현 참고)
+	CurrentExperienceId = ExperienceId;
+
+	UE_LOG(LogMosesExp, Log, TEXT("[SERVER] Chose ExperienceId=%s"), *CurrentExperienceId.ToString());
+	ScreenMsg(FColor::Orange, FString::Printf(TEXT("[EXP-MGR][ServerSet] Chosen=%s"), *CurrentExperienceId.ToString()));
+
+	// 서버도 클라와 동일 로딩 경로를 타게 한다
+	OnRep_CurrentExperienceId();
+}
+
+// ------------------------------
+// Register callbacks
+// ------------------------------
+void UMosesExperienceManagerComponent::CallOrRegister_OnExperienceLoaded(FMosesExperienceLoadedDelegate&& Delegate)
+{
+	// 이미 로딩 완료면 즉시 실행
 	if (IsExperienceLoaded())
 	{
-		Delegate.Execute(CurrentExperienceDefinition);
+		ScreenMsg(FColor::Green, TEXT("[EXP-MGR][Register] Already READY -> ExecuteImmediately"));
+		Delegate.ExecuteIfBound(CurrentExperience);
+		return;
 	}
-	else
-	{
-		OnExperienceLoaded.Add(MoveTemp(Delegate));
-	}
+
+	// 로딩 전/중이면 콜백 등록
+	OnExperienceLoadedCallbacks.Add(MoveTemp(Delegate));
+	ScreenMsg(FColor::Cyan,
+		FString::Printf(TEXT("[EXP-MGR][Register] Added callback. Count=%d"), OnExperienceLoadedCallbacks.Num()));
 }
 
-void UMosesExperienceManagerComponent::ServerSetCurrentExperience(FPrimaryAssetId ExperienceId)
+const UMosesExperienceDefinition* UMosesExperienceManagerComponent::GetCurrentExperienceChecked() const
 {
-	//check(GetOwner());
-	//check(GetOwner()->HasAuthority()); // ✅ 서버만 결정
-
-	//// 이미 같은 값을 세팅했으면 스킵
-	//if (CurrentExperienceId == ExperienceId && LoadState != EMosesExperienceLoadState::Unloaded)
-	//{
-	//	return;
-	//}
-
-	//CurrentExperienceId = ExperienceId;
-
-	//UE_LOG(LogTemp, Log, TEXT("[YJ][Exp] SERVER chose ExperienceId = %s"), *CurrentExperienceId.ToString());
-
-	//// ✅ 서버는 즉시 로딩 시작 (클라도 OnRep로 시작)
-	//OnRep_CurrentExperienceId();
+	check(IsExperienceLoaded());
+	check(CurrentExperience);
+	return CurrentExperience;
 }
 
+// ------------------------------
+// RepNotify: start loading
+// ------------------------------
 void UMosesExperienceManagerComponent::OnRep_CurrentExperienceId()
 {
+	ScreenMsg(FColor::Yellow,
+		FString::Printf(TEXT("[EXP-MGR][OnRep] CurrentId=%s State=%d"),
+			*CurrentExperienceId.ToString(), (int32)LoadState));
+
 	if (!CurrentExperienceId.IsValid())
 	{
-		FailExperienceLoad(TEXT("Invalid CurrentExperienceId (replicated value is invalid)"));
+		FailExperienceLoad(TEXT("OnRep_CurrentExperienceId: Invalid CurrentExperienceId"));
 		return;
 	}
 
-	// 이미 로딩 시작했다면 중복 방지
+	// 중복 진입 방지
 	if (LoadState != EMosesExperienceLoadState::Unloaded)
 	{
+		ScreenMsg(FColor::Silver,
+			FString::Printf(TEXT("[EXP-MGR][OnRep] Ignore (State != Unloaded). State=%d"), (int32)LoadState));
 		return;
 	}
 
-	//UE_LOG(LogTemp, Log, TEXT("[Moses][Exp] Begin Load (NetMode=%d) Id=%s"),
-	//	(int32)GetOwner()->GetNetMode(),
-	//	*CurrentExperienceId.ToString());
-
-	//CurrentExperienceDefinition = LoadExperienceDefinitionFromId(CurrentExperienceId);
-	//if (!CurrentExperienceDefinition)
-	//{
-	//	FailExperienceLoad(FString::Printf(TEXT("Failed to load ExperienceDefinition from Id=%s"), *CurrentExperienceId.ToString()));
-	//	return;
-	//}
-
-	//StartExperienceLoad();
-}
-
-const UMosesExperienceDefinition* UMosesExperienceManagerComponent::LoadExperienceDefinitionFromId(const FPrimaryAssetId& ExperienceId) const
-{
-	UMosesAssetManager& AssetManager = UMosesAssetManager::Get();
-
-	const FSoftObjectPath AssetPath = AssetManager.GetPrimaryAssetPath(ExperienceId);
-	if (!AssetPath.IsValid())
-	{
-		UE_LOG(LogTemp, Error, TEXT("[Moses][Exp] GetPrimaryAssetPath failed: %s"), *ExperienceId.ToString());
-		return nullptr;
-	}
-
-	UObject* LoadedObject = AssetPath.TryLoad();
-	if (!LoadedObject)
-	{
-		UE_LOG(LogTemp, Error, TEXT("[Moses][Exp] TryLoad failed: %s (%s)"), *ExperienceId.ToString(), *AssetPath.ToString());
-		return nullptr;
-	}
-
-	TSubclassOf<UMosesExperienceDefinition> ExperienceClass;
-
-	// BP 기반이면 GeneratedClass가 실제 UClass
-	if (UBlueprint* BP = Cast<UBlueprint>(LoadedObject))
-	{
-		ExperienceClass = Cast<UClass>(BP->GeneratedClass);
-	}
-	else
-	{
-		ExperienceClass = Cast<UClass>(LoadedObject);
-	}
-
-	if (!ExperienceClass)
-	{
-		UE_LOG(LogTemp, Error, TEXT("[Moses][Exp] LoadedObject is not a valid Experience class: %s"), *LoadedObject->GetName());
-		return nullptr;
-	}
-
-	return GetDefault<UMosesExperienceDefinition>(ExperienceClass);
-}
-
-void UMosesExperienceManagerComponent::StartExperienceLoad()
-{
-	UE_LOG(LogTemp, Log, TEXT("[ExperienceManager] StartExperienceLoad"));
-
-	check(CurrentExperienceDefinition);
-	check(LoadState == EMosesExperienceLoadState::Unloaded);
-
+	PendingExperienceId = CurrentExperienceId;
 	LoadState = EMosesExperienceLoadState::Loading;
 
-	// ✅ Experience 자신을 "번들 root"로 등록
-	TSet<FPrimaryAssetId> BundleAssets;
-	BundleAssets.Add(CurrentExperienceDefinition->GetPrimaryAssetId());
-
-	// ✅ NetMode에 따라 로드할 번들을 결정
-	// - DedicatedServer는 Client번들 불필요
-	// - Client는 Server번들 불필요
-	TArray<FName> BundlesToLoad;
-	{
-		const ENetMode NetMode = GetOwner()->GetNetMode();
-
-		if (GIsEditor || NetMode != NM_DedicatedServer)
-		{
-			BundlesToLoad.Add(UGameFeaturesSubsystemSettings::LoadStateClient);
-		}
-		if (GIsEditor || NetMode != NM_Client)
-		{
-			BundlesToLoad.Add(UGameFeaturesSubsystemSettings::LoadStateServer);
-		}
-	}
-
-	UE_LOG(LogTemp, Log, TEXT("[Moses][Exp] Bundle Load Start: %s | Bundles=%s"),
-		*CurrentExperienceDefinition->GetPrimaryAssetId().ToString(),
-		*FString::JoinBy(BundlesToLoad, TEXT(","), [](const FName& N) { return N.ToString(); }));
-
-	const FStreamableDelegate OnLoaded =
-		FStreamableDelegate::CreateUObject(this, &ThisClass::OnExperienceLoadComplete);
+	UE_LOG(LogMosesExp, Log, TEXT("[EXP] Begin Load=%s"), *CurrentExperienceId.ToString());
+	ScreenMsg(FColor::Yellow, FString::Printf(TEXT("[EXP-MGR][Load] Begin %s"), *CurrentExperienceId.ToString()));
 
 	UMosesAssetManager& AssetManager = UMosesAssetManager::Get();
 
-	TSharedPtr<FStreamableHandle> Handle =
-		AssetManager.ChangeBundleStateForPrimaryAssets(
-			BundleAssets.Array(),
-			BundlesToLoad,
-			{},
-			false,
-			FStreamableDelegate(),
-			FStreamableManager::AsyncLoadHighPriority);
+	TArray<FPrimaryAssetId> AssetIds;
+	AssetIds.Add(CurrentExperienceId);
 
-	if (!Handle.IsValid())
+	// ExperienceDefinition만 먼저 로딩 (bundle 미사용)
+	AssetManager.LoadPrimaryAssets(
+		AssetIds,
+		{},
+		FStreamableDelegate::CreateUObject(this, &ThisClass::OnExperienceAssetsLoaded)
+	);
+}
+
+// ------------------------------
+// ExperienceDefinition loaded
+// ------------------------------
+void UMosesExperienceManagerComponent::OnExperienceAssetsLoaded()
+{
+	// stale callback 방지
+	if (PendingExperienceId != CurrentExperienceId)
 	{
-		// Handle이 아예 없을 때도 실패로 본다.
-		FailExperienceLoad(TEXT("ChangeBundleStateForPrimaryAssets returned null handle"));
+		UE_LOG(LogMosesExp, Warning, TEXT("[EXP] AssetsLoaded stale. Pending=%s Current=%s"),
+			*PendingExperienceId.ToString(), *CurrentExperienceId.ToString());
+
+		ScreenMsg(FColor::Silver,
+			FString::Printf(TEXT("[EXP-MGR][AssetsLoaded] STALE Pending=%s Current=%s"),
+				*PendingExperienceId.ToString(), *CurrentExperienceId.ToString()));
 		return;
 	}
 
-	if (Handle->HasLoadCompleted())
+	UMosesAssetManager& AssetManager = UMosesAssetManager::Get();
+
+	const UMosesExperienceDefinition* ExperienceDef =
+		AssetManager.GetPrimaryAssetObject<UMosesExperienceDefinition>(CurrentExperienceId);
+
+	if (!ExperienceDef)
 	{
-		FStreamableHandle::ExecuteDelegate(OnLoaded);
+		FailExperienceLoad(TEXT("OnExperienceAssetsLoaded: ExperienceDef null"));
+		return;
 	}
-	else
+
+	CurrentExperience = ExperienceDef;
+
+	UE_LOG(LogMosesExp, Log, TEXT("[EXP] Loaded ExperienceDefinition=%s"), *CurrentExperienceId.ToString());
+	ScreenMsg(FColor::Yellow, FString::Printf(TEXT("[EXP-MGR][AssetsLoaded] OK %s"), *CurrentExperienceId.ToString()));
+
+	StartLoadGameFeatures();
+}
+
+// ------------------------------
+// GameFeature URL
+// ------------------------------
+FString UMosesExperienceManagerComponent::MakeGameFeaturePluginURL(const FString& PluginName)
+{
+	TSharedPtr<IPlugin> Plugin = IPluginManager::Get().FindPlugin(PluginName);
+	if (!Plugin.IsValid())
 	{
-		Handle->BindCompleteDelegate(OnLoaded);
-		Handle->BindCancelDelegate(OnLoaded);
+		return FString();
+	}
+
+	FString DescriptorFile = Plugin->GetDescriptorFileName();
+	FPaths::NormalizeFilename(DescriptorFile);
+
+	return FString::Printf(TEXT("file:%s"), *DescriptorFile);
+}
+
+// ------------------------------
+// Activate GameFeatures
+// ------------------------------
+void UMosesExperienceManagerComponent::StartLoadGameFeatures()
+{
+	check(CurrentExperience);
+
+	LoadState = EMosesExperienceLoadState::LoadingGameFeatures;
+
+	const TArray<FString>& Features = CurrentExperience->GameFeaturesToEnable;
+
+	ScreenMsg(FColor::Cyan,
+		FString::Printf(TEXT("[EXP-MGR][GF] Start. Num=%d"), Features.Num()));
+
+	// GF가 없으면 바로 READY
+	if (Features.Num() == 0)
+	{
+		UE_LOG(LogMosesExp, Log, TEXT("[GF] None -> READY"));
+		ScreenMsg(FColor::Green, TEXT("[EXP-MGR][GF] None -> READY"));
+		OnExperienceFullLoadCompleted();
+		return;
+	}
+
+	PendingGFCount = Features.Num();
+	CompletedGFCount = 0;
+	bAnyGFFailed = false;
+
+	UGameFeaturesSubsystem& GFS = UGameFeaturesSubsystem::Get();
+
+	UE_LOG(LogMosesExp, Warning, TEXT("[GF] Enabling %d features..."), PendingGFCount);
+	ScreenMsg(FColor::Cyan, FString::Printf(TEXT("[EXP-MGR][GF] Enabling %d..."), PendingGFCount));
+
+	for (const FString& PluginName : Features)
+	{
+		const FString URL = MakeGameFeaturePluginURL(PluginName);
+
+		UE_LOG(LogMosesExp, Warning, TEXT("[GF] Request Activate: %s URL=%s"), *PluginName, *URL);
+		ScreenMsg(FColor::Cyan, FString::Printf(TEXT("[EXP-MGR][GF] Req %s"), *PluginName));
+
+		if (URL.IsEmpty())
+		{
+			// URL 생성 실패 = 플러그인 못 찾음
+			bAnyGFFailed = true;
+			CompletedGFCount++;
+			ScreenMsg(FColor::Red, FString::Printf(TEXT("[EXP-MGR][GF] URL EMPTY %s"), *PluginName));
+			continue;
+		}
+
+		GFS.LoadAndActivateGameFeaturePlugin(
+			URL,
+			FGameFeaturePluginLoadComplete::CreateUObject(
+				this,
+				&ThisClass::OnOneGameFeatureActivated,
+				PluginName
+			)
+		);
 	}
 }
 
-void UMosesExperienceManagerComponent::OnExperienceLoadComplete()
+void UMosesExperienceManagerComponent::OnOneGameFeatureActivated(const UE::GameFeatures::FResult& /*Result*/, FString PluginName)
 {
-	check(LoadState == EMosesExperienceLoadState::Loading);
+	CompletedGFCount++;
 
-	GameFeaturePluginURLs.Reset();
+	UE_LOG(LogMosesExp, Warning, TEXT("[GF] Activate Completed Callback: %s (%d/%d)"),
+		*PluginName, CompletedGFCount, PendingGFCount);
 
-	// ✅ ExperienceDefinition에 명시된 GameFeature Plugin을 URL로 변환
-	for (const FString& PluginName : CurrentExperienceDefinition->GameFeaturesToEnable)
+	ScreenMsg(FColor::Cyan,
+		FString::Printf(TEXT("[EXP-MGR][GF] Done %s (%d/%d)"),
+			*PluginName, CompletedGFCount, PendingGFCount));
+
+	if (CompletedGFCount >= PendingGFCount)
 	{
-		FString PluginURL;
-		if (UGameFeaturesSubsystem::Get().GetPluginURLByName(PluginName, PluginURL))
+		if (bAnyGFFailed)
 		{
-			GameFeaturePluginURLs.AddUnique(PluginURL);
+			FailExperienceLoad(TEXT("One or more GameFeatures had invalid URL"));
+			return;
 		}
-		else
-		{
-			// 실무: 못 찾으면 경고는 띄우되 당장 실패 처리할지는 정책
-			UE_LOG(LogTemp, Warning, TEXT("[Moses][Exp] GameFeature plugin name not found: %s"), *PluginName);
-		}
-	}
 
-	NumGameFeaturePluginsLoading = GameFeaturePluginURLs.Num();
+		UE_LOG(LogMosesExp, Warning, TEXT("[GF] Callbacks all arrived -> READY"));
+		ScreenMsg(FColor::Green, TEXT("[EXP-MGR][GF] All callbacks -> READY"));
 
-	UE_LOG(LogTemp, Log, TEXT("[Moses][Exp] Bundle Loaded. GameFeatures=%d"), NumGameFeaturePluginsLoading);
-
-	if (NumGameFeaturePluginsLoading > 0)
-	{
-		LoadState = EMosesExperienceLoadState::LoadingGameFeatures;
-
-		for (const FString& PluginURL : GameFeaturePluginURLs)
-		{
-			UGameFeaturesSubsystem::Get().LoadAndActivateGameFeaturePlugin(
-				PluginURL,
-				FGameFeaturePluginLoadComplete::CreateLambda(
-					[this, PluginURL](const auto& Result)
-					{
-						UE_LOG(LogTemp, Log, TEXT("[Moses][Exp] GameFeature Activated: %s"), *PluginURL);
-
-						if (--NumGameFeaturePluginsLoading <= 0)
-						{
-							OnExperienceFullLoadCompleted();
-						}
-					}
-				)
-			);
-		}
-	}
-	else
-	{
 		OnExperienceFullLoadCompleted();
 	}
 }
 
+// ------------------------------
+// READY
+// ------------------------------
 void UMosesExperienceManagerComponent::OnExperienceFullLoadCompleted()
 {
-	UE_LOG(LogTemp, Log, TEXT("[ExperienceManager] Experience Loaded (READY)"));
-
 	if (LoadState == EMosesExperienceLoadState::Failed)
 	{
 		return;
@@ -252,46 +311,71 @@ void UMosesExperienceManagerComponent::OnExperienceFullLoadCompleted()
 
 	LoadState = EMosesExperienceLoadState::Loaded;
 
-	// ✅ Ready 이벤트 중복 방지(실무 필수)
+	// READY 1회만
 	if (!bNotifiedReadyOnce)
 	{
 		bNotifiedReadyOnce = true;
 
-		UE_LOG(LogTemp, Log, TEXT("[Moses][Exp] ✅ FULLY LOADED (READY): %s"),
-			*CurrentExperienceDefinition->GetPrimaryAssetId().ToString());
+		UE_LOG(LogMosesExp, Log, TEXT("✅ READY: %s"), *CurrentExperienceId.ToString());
+		ScreenMsg(FColor::Green, FString::Printf(TEXT("[EXP-MGR][READY] %s"), *CurrentExperienceId.ToString()));
 
-		OnExperienceLoaded.Broadcast(CurrentExperienceDefinition);
-		OnExperienceLoaded.Clear();
+		// 멀티캐스트(있으면)
+		OnExperienceLoaded.Broadcast(CurrentExperience);
+
+		// ✅ CallOrRegister로 모아둔 콜백 실행
+		ScreenMsg(FColor::Green,
+			FString::Printf(TEXT("[EXP-MGR][READY] ExecCallbacks Count=%d"), OnExperienceLoadedCallbacks.Num()));
+
+		for (FMosesExperienceLoadedDelegate& D : OnExperienceLoadedCallbacks)
+		{
+			D.ExecuteIfBound(CurrentExperience);
+		}
+		OnExperienceLoadedCallbacks.Reset();
 	}
 
 	DebugDump();
+}
+
+// ------------------------------
+// Reset / Fail / Debug
+// ------------------------------
+void UMosesExperienceManagerComponent::ResetExperienceLoadState()
+{
+	LoadState = EMosesExperienceLoadState::Unloaded;
+
+	CurrentExperience = nullptr;
+	bNotifiedReadyOnce = false;
+	PendingExperienceId = FPrimaryAssetId();
+
+	// 🚫 절대 지우면 안 됨:
+	// GameMode(InitGameState)에서 미리 등록한 콜백이 여기서 날아가면 READY가 GameMode로 절대 전달 안 됨
+	// OnExperienceLoadedCallbacks.Reset();
+
+	PendingGFCount = 0;
+	CompletedGFCount = 0;
+	bAnyGFFailed = false;
+
+	ScreenMsg(FColor::Silver, TEXT("[EXP-MGR][Reset] State cleared (callbacks preserved)"));
 }
 
 void UMosesExperienceManagerComponent::FailExperienceLoad(const FString& Reason)
 {
 	LoadState = EMosesExperienceLoadState::Failed;
 
-	UE_LOG(LogTemp, Error, TEXT("[Moses][Exp] ❌ LOAD FAILED: %s"), *Reason);
+	UE_LOG(LogMosesExp, Error, TEXT("❌ LOAD FAILED: %s"), *Reason);
+	ScreenMsg(FColor::Red, FString::Printf(TEXT("[EXP-MGR][FAIL] %s"), *Reason));
+
 	DebugDump();
-
-	// 실무 정책:
-	// - 여기서 크래시를 내면 원인 찾기 쉬움(개발 단계)
-	// - 하지만 포트폴리오는 "안전하게 실패"도 보여줄 가치가 있음
-	// checkNoEntry(); // 개발 중이면 켜도 됨
-}
-
-const UMosesExperienceDefinition* UMosesExperienceManagerComponent::GetCurrentExperienceChecked() const
-{
-	check(IsExperienceLoaded());
-	return CurrentExperienceDefinition;
 }
 
 void UMosesExperienceManagerComponent::DebugDump() const
 {
-	UE_LOG(LogTemp, Log, TEXT("[Moses][Exp] Dump ---------------------------"));
-	UE_LOG(LogTemp, Log, TEXT("  State: %d (0=Unloaded,1=Loading,2=LoadingGF,3=Loaded,4=Failed)"), (int32)LoadState);
-	UE_LOG(LogTemp, Log, TEXT("  CurrentExperienceId: %s"), *CurrentExperienceId.ToString());
-	UE_LOG(LogTemp, Log, TEXT("  CurrentDefinition: %s"), CurrentExperienceDefinition ? *CurrentExperienceDefinition->GetName() : TEXT("null"));
-	UE_LOG(LogTemp, Log, TEXT("----------------------------------------"));
+	UE_LOG(LogMosesExp, Log, TEXT("Dump ---------------------------"));
+	UE_LOG(LogMosesExp, Log, TEXT("  State: %d"), (int32)LoadState);
+	UE_LOG(LogMosesExp, Log, TEXT("  ExperienceId: %s"), *CurrentExperienceId.ToString());
+	UE_LOG(LogMosesExp, Log, TEXT("  PendingId: %s"), *PendingExperienceId.ToString());
+	UE_LOG(LogMosesExp, Log, TEXT("  Experience: %s"), CurrentExperience ? *CurrentExperience->GetName() : TEXT("null"));
+	UE_LOG(LogMosesExp, Log, TEXT("  GF: Pending=%d Completed=%d AnyFailed=%d"),
+		PendingGFCount, CompletedGFCount, bAnyGFFailed ? 1 : 0);
+	UE_LOG(LogMosesExp, Log, TEXT("----------------------------------------"));
 }
-

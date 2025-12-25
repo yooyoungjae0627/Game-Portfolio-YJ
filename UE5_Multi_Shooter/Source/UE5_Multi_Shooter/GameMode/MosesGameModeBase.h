@@ -4,25 +4,29 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/GameModeBase.h"
+#include "UObject/PrimaryAssetId.h"     // FPrimaryAssetId
 #include "MosesGameModeBase.generated.h"
 
-//class UMosesExperienceDefinition;
+class UMosesExperienceDefinition;
 class UMosesPawnData;
 
 /**
  * GameModeBase (서버 전용 컨트롤 타워)
- * - 매치 규칙/스폰 흐름/Experience 선택 및 로딩 시작을 담당
  *
- * 핵심 정책:
- * - Experience 로딩 전에는 스폰을 막는다.
- * - Experience 로딩 완료 이벤트가 오면 그때 RestartPlayer로 스폰한다.
+ * 책임:
+ * - Experience 선택/로딩 시작
+ * - Experience READY 이후에만 스폰 허용 (SpawnGate)
+ * - 컨트롤러별 PawnData/PawnClass 결정 지원
+ *
+ * 핵심 정책(= 검증 포인트):
+ * 1) READY 전: HandleStartingNewPlayer에서 스폰을 막고(Pending 큐잉) 리턴
+ * 2) READY 후: Pending 플레이어들을 Flush하여 Super::HandleStartingNewPlayer로 정상 스폰 흐름 재개
  */
-
 UCLASS()
 class UE5_MULTI_SHOOTER_API AMosesGameModeBase : public AGameModeBase
 {
 	GENERATED_BODY()
-	
+
 public:
 	AMosesGameModeBase();
 
@@ -35,16 +39,29 @@ public:
 	/** 컨트롤러별 PawnClass 결정(PawnData의 PawnClass 우선) */
 	virtual UClass* GetDefaultPawnClassForController_Implementation(AController* InController) final;
 
-	/** Experience 로딩 완료 전이면 스폰(Super) 보류 */
+	/**
+	 * SpawnGate 핵심:
+	 * - READY 전이면 Super 호출을 막고 PendingStartPlayers에 큐잉한다.
+	 * - READY 후에는 Super::HandleStartingNewPlayer가 호출되도록 한다(Flush에서 호출).
+	 */
 	virtual void HandleStartingNewPlayer_Implementation(APlayerController* NewPlayer) final;
 
 	/** Defer Spawn으로 PawnData를 먼저 주입한 뒤 FinishSpawning */
 	virtual APawn* SpawnDefaultPawnAtTransform_Implementation(AController* NewPlayer, const FTransform& SpawnTransform) final;
 
+	/** 접속 시점 추적용(로그/디버깅) */
 	virtual void PostLogin(APlayerController* NewPlayer) override;
 
-	// ✅ 추가 추적 포인트(강추)
+	/**
+	 * RestartPlayer는 최종 스폰 지점.
+	 * - 안전장치: READY 전이면 호출되어도 스폰하지 않고 리턴(정책 강제)
+	 */
 	virtual void RestartPlayer(AController* NewPlayer) override;
+
+	/** 접속 종료 추적용(바로 튕김/Seamless Travel 문제 디버깅에 유용) */
+	virtual void Logout(AController* Exiting) override;
+
+	/** 스폰 포인트/스폰 마무리 추적용 */
 	virtual AActor* ChoosePlayerStart_Implementation(AController* Player) override;
 	virtual void FinishRestartPlayer(AController* NewPlayer, const FRotator& StartRotation) override;
 
@@ -59,9 +76,26 @@ private:
 	void OnMatchAssignmentGiven(FPrimaryAssetId ExperienceId);
 
 	/** Experience 로딩 완료 여부(스폰 게이트) */
-	//bool IsExperienceLoaded() const;
+	bool IsExperienceLoaded() const;
 
-	/** Experience 로딩 완료 콜백 → Pawn 없는 플레이어 RestartPlayer */
-	//void OnExperienceLoaded(const UMosesExperienceDefinition* CurrentExperience);
+	/**
+	 * Experience READY 콜백
+	 * - [EXP][READY] 로그가 찍히는 지점
+	 * - 여기서 SpawnGate를 해제하고 Pending 플레이어를 Flush한다.
+	 */
+	void OnExperienceLoaded(const UMosesExperienceDefinition* CurrentExperience);
 
+private:
+	/** READY 전 접속한 플레이어들을 임시로 보관(스폰 대기열) */
+	UPROPERTY()
+	TArray<TWeakObjectPtr<APlayerController>> PendingStartPlayers;
+
+	/** Flush 중 재진입 방지(READY 직후 여러 이벤트로 중복 호출되는 경우 방어) */
+	bool bFlushingPendingPlayers = false;
+
+	/** READY 이후 NextTick에 Pending 플레이어들을 Super::HandleStartingNewPlayer로 넘긴다 */
+	void FlushPendingPlayers();
+
+	/** Experience READY → SpawnGate 해제(NextTick Flush 예약) */
+	void OnExperienceReady_SpawnGateRelease();
 };

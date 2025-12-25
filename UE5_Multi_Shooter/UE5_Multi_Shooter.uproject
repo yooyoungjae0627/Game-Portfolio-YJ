@@ -12,7 +12,8 @@
 				"Engine",
 				"CoreUObject",
 				"ModularGameplay",
-				"EnhancedInput"
+				"EnhancedInput",
+				"GameFeatures"
 			]
 		}
 	],
@@ -64,6 +65,14 @@
 		},
 		{
 			"Name": "ModularGameplay",
+			"Enabled": true
+		},
+		{
+			"Name": "GF_Lobby",
+			"Enabled": true
+		},
+		{
+			"Name": "GF_Match",
 			"Enabled": true
 		}
 	]

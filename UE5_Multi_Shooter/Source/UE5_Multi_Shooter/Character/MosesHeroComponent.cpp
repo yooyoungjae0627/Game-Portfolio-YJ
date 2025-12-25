@@ -70,7 +70,7 @@ void UMosesHeroComponent::OnRegister()
 	{
 		if (!GetPawn<APawn>())
 		{
-			UE_LOG(LogMoses, Error, TEXT("this component has been added to a BP whose base class is not a Pawn!"));
+			//UE_LOG(LogMoses, Error, TEXT("this component has been added to a BP whose base class is not a Pawn!"));
 			return;
 		}
 	}
@@ -231,18 +231,18 @@ void UMosesHeroComponent::HandleChangeInitState(
 		{
 			if (Pawn->InputComponent != nullptr)
 			{
-				UE_LOG(LogMoses, Warning, TEXT("PawnInput=%s Class=%s Outer=%s IsCDO=%d"),
-					*GetNameSafe(Pawn->InputComponent),
+				//UE_LOG(LogMoses, Warning, TEXT("PawnInput=%s Class=%s Outer=%s IsCDO=%d"),
+		/*			*GetNameSafe(Pawn->InputComponent),
 					*GetNameSafe(Pawn->InputComponent ? Pawn->InputComponent->GetClass() : nullptr),
 					*GetNameSafe(Pawn->InputComponent ? Pawn->InputComponent->GetOuter() : nullptr),
-					Pawn->InputComponent && Pawn->InputComponent->HasAnyFlags(RF_ClassDefaultObject));
+					Pawn->InputComponent && Pawn->InputComponent->HasAnyFlags(RF_ClassDefaultObject));*/
 
 				if (APlayerController* PC = Cast<APlayerController>(Pawn->GetController()))
 				{
-					UE_LOG(LogMoses, Warning, TEXT("PCInput=%s Class=%s SamePtr=%d"),
-						*GetNameSafe(PC->InputComponent),
+					//UE_LOG(LogMoses, Warning, TEXT("PCInput=%s Class=%s SamePtr=%d"),
+		/*				*GetNameSafe(PC->InputComponent),
 						*GetNameSafe(PC->InputComponent ? PC->InputComponent->GetClass() : nullptr),
-						PC->InputComponent == Pawn->InputComponent);
+						PC->InputComponent == Pawn->InputComponent);*/
 				}
 
 				// EnhancedInput 기반으로 InputContext + 액션 바인딩 세팅

@@ -1,36 +1,58 @@
 ﻿// Fill out your copyright notice in the Description page of Project Settings.
 
-
 #include "MosesGameModeBase.h"
 
-//#include "MosesGameState.h"
-//#include "MosesExperienceDefinition.h"
-//#include "MosesExperienceManagerComponent.h"
+#include "MosesGameState.h"
+#include "MosesExperienceDefinition.h"
+#include "MosesExperienceManagerComponent.h"
 
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
-//#include "Project_YJ_A/Player/YJPlayerController.h"
-//#include "Project_YJ_A/Player/YJPlayerState.h"
-//#include "Project_YJ_A/Character/YJCharacter.h"
+#include "UE5_Multi_Shooter/Player/MosesPlayerController.h"
+#include "UE5_Multi_Shooter/Player/MosesPlayerState.h"
+#include "UE5_Multi_Shooter/Character/MosesCharacter.h"
+#include "UE5_Multi_Shooter/Character/MosesPawnExtensionComponent.h"
 #include "UE5_Multi_Shooter/Character/MosesPawnData.h"
-//#include "Project_YJ_A/Character/YJPawnExtensionComponent.h"
 
+#include "Engine/NetConnection.h"
 #include "Kismet/GameplayStatics.h"
+
+static FString GetConnAddr(APlayerController* PC)
+{
+	if (!PC) return TEXT("PC=None");
+	if (UNetConnection* Conn = PC->GetNetConnection())
+	{
+		return Conn->LowLevelGetRemoteAddress(true); // ip:port
+	}
+	return TEXT("Conn=None");
+}
 
 AMosesGameModeBase::AMosesGameModeBase()
 {
 	// 서버 기본 클래스 셋업(프로젝트 규칙의 베이스)
-	//GameStateClass = AYJGameState::StaticClass();
-	//PlayerControllerClass = AYJPlayerController::StaticClass();
-	//PlayerStateClass = AYJPlayerState::StaticClass();
-	//DefaultPawnClass = AYJCharacter::StaticClass();
+	GameStateClass = AMosesGameState::StaticClass();
+	PlayerControllerClass = AMosesPlayerController::StaticClass();
+	PlayerStateClass = AMosesPlayerState::StaticClass();
+	DefaultPawnClass = AMosesCharacter::StaticClass();
 }
 
 void AMosesGameModeBase::InitGame(const FString& MapName, const FString& Options, FString& ErrorMessage)
 {
-	// 맵 로드 직후(OptionsString F 가능)
 	Super::InitGame(MapName, Options, ErrorMessage);
 
-	// 이 시점엔 GameState/컴포넌트 준비가 덜 될 수 있어 NextTick에서 Experience 결정
+	if (GEngine)
+	{
+		GEngine->AddOnScreenDebugMessage(
+			-1,
+			8.f,
+			FColor::Red,
+			FString::Printf(TEXT("[GM][InitGame] Map=%s Options=%s"), *MapName, *Options)
+		);
+	}
+
+	UE_LOG(LogMosesExp, Warning, TEXT("[GM][InitGame] Map=%s Options=%s NetMode=%d World=%s"),
+		*MapName, *Options, (int32)GetNetMode(), *GetNameSafe(GetWorld()));
+
+	// Experience pick/assign는 다음 틱에서(월드/옵션 세팅 안정화)
 	GetWorld()->GetTimerManager().SetTimerForNextTick(this, &ThisClass::HandleMatchAssignmentIfNotExpectingOne);
 }
 
@@ -38,14 +60,24 @@ void AMosesGameModeBase::InitGameState()
 {
 	Super::InitGameState();
 
-	// ExperienceManager의 "로드 완료" 이벤트를 받아 스폰을 재개한다.
-	//UYJExperienceManagerComponent* ExperienceManagerComponent =
-	//	GameState->FindComponentByClass<UYJExperienceManagerComponent>();
-	//check(ExperienceManagerComponent);
+	if (GEngine)
+	{
+		GEngine->AddOnScreenDebugMessage(
+			-1, 8.f, FColor::Cyan,
+			FString::Printf(TEXT("[GM][InitGameState] GS=%s"), *GetNameSafe(GameState))
+		);
+	}
 
-	//ExperienceManagerComponent->CallOrRegister_OnExperienceLoaded(
-	//	FOnYJExperienceLoaded::FDelegate::CreateUObject(this, &ThisClass::OnExperienceLoaded)
-	//);
+	UMosesExperienceManagerComponent* ExperienceManagerComponent =
+		GameState->FindComponentByClass<UMosesExperienceManagerComponent>();
+	check(ExperienceManagerComponent);
+
+	UE_LOG(LogMosesExp, Warning, TEXT("[GM][InitGameState] Register OnExperienceLoaded (GS=%s)"),
+		*GetNameSafe(GameState));
+
+	ExperienceManagerComponent->CallOrRegister_OnExperienceLoaded(
+		FOnMosesExperienceLoaded::FDelegate::CreateUObject(this, &ThisClass::OnExperienceLoaded)
+	);
 }
 
 UClass* AMosesGameModeBase::GetDefaultPawnClassForController_Implementation(AController* InController)
@@ -53,10 +85,10 @@ UClass* AMosesGameModeBase::GetDefaultPawnClassForController_Implementation(ACon
 	// PawnData에 PawnClass가 있으면 그걸 사용(모드/직업별 Pawn 확장)
 	if (const UMosesPawnData* PawnData = GetPawnDataForController(InController))
 	{
-		//if (PawnData->PawnClass)
-		//{
-		//	return PawnData->PawnClass;
-		//}
+		if (PawnData->PawnClass)
+		{
+			return PawnData->PawnClass;
+		}
 	}
 
 	return Super::GetDefaultPawnClassForController_Implementation(InController);
@@ -64,20 +96,26 @@ UClass* AMosesGameModeBase::GetDefaultPawnClassForController_Implementation(ACon
 
 void AMosesGameModeBase::HandleStartingNewPlayer_Implementation(APlayerController* NewPlayer)
 {
-	//UE_LOG(LogTemp, Warning, TEXT("[SpawnGate] HandleStartingNewPlayer PC=%s ExpLoaded=%d"),
-	//	*GetNameSafe(NewPlayer), IsExperienceLoaded());
+	UE_LOG(LogTemp, Warning, TEXT("[SpawnGate] HandleStartingNewPlayer PC=%s ExpLoaded=%d"),
+		*GetNameSafe(NewPlayer), IsExperienceLoaded());
 
-	//if (IsExperienceLoaded())
-	//{
-	//	UE_LOG(LogTemp, Warning, TEXT("[SpawnGate] -> Super::HandleStartingNewPlayer"));
-	//	Super::HandleStartingNewPlayer_Implementation(NewPlayer);
-	//}
-	//else
-	//{
-	//	UE_LOG(LogTemp, Warning, TEXT("[SpawnGate] BLOCKED (waiting READY)"));
-	//}
+	if (!IsValid(NewPlayer))
+	{
+		return;
+	}
+
+	if (IsExperienceLoaded())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[SpawnGate] -> Super::HandleStartingNewPlayer"));
+		Super::HandleStartingNewPlayer_Implementation(NewPlayer);
+		return;
+	}
+
+	// READY 전이면 큐에 넣고, READY에서 Flush로 재시작
+	PendingStartPlayers.AddUnique(NewPlayer);
+	UE_LOG(LogTemp, Warning, TEXT("[SpawnGate] BLOCKED (waiting READY) -> queued. Pending=%d"),
+		PendingStartPlayers.Num());
 }
-
 
 APawn* AMosesGameModeBase::SpawnDefaultPawnAtTransform_Implementation(AController* NewPlayer, const FTransform& SpawnTransform)
 {
@@ -92,13 +130,13 @@ APawn* AMosesGameModeBase::SpawnDefaultPawnAtTransform_Implementation(AControlle
 		if (APawn* SpawnedPawn = GetWorld()->SpawnActor<APawn>(PawnClass, SpawnTransform, SpawnInfo))
 		{
 			// PawnExtension에 PawnData를 먼저 주입 → 이후 초기화가 PawnData 기준으로 진행
-			//if (UMosesPawnExtensionComponent* PawnExtComp = UMosesPawnExtensionComponent::FindPawnExtensionComponent(SpawnedPawn))
-			//{
-			//	if (const UMosesPawnData* PawnData = GetPawnDataForController(NewPlayer))
-			//	{
-			//		PawnExtComp->SetPawnData(PawnData);
-			//	}
-			//}
+			if (UMosesPawnExtensionComponent* PawnExtComp = UMosesPawnExtensionComponent::FindPawnExtensionComponent(SpawnedPawn))
+			{
+				if (const UMosesPawnData* PawnData = GetPawnDataForController(NewPlayer))
+				{
+					PawnExtComp->SetPawnData(PawnData);
+				}
+			}
 
 			SpawnedPawn->FinishSpawning(SpawnTransform);
 			return SpawnedPawn;
@@ -110,116 +148,202 @@ APawn* AMosesGameModeBase::SpawnDefaultPawnAtTransform_Implementation(AControlle
 
 void AMosesGameModeBase::HandleMatchAssignmentIfNotExpectingOne()
 {
+	static const FPrimaryAssetType ExperienceType(TEXT("Experience"));
+
 	FPrimaryAssetId ExperienceId;
+	const FString MapName = GetWorld() ? GetWorld()->GetMapName() : TEXT("WorldNone");
 
-	// 1) URL 옵션 우선 (?Experience=Exp_Lobby 같은 식)
-	if (ExperienceId.IsValid() && UGameplayStatics::HasOption(OptionsString, TEXT("Experience")) == false)
+	// ✅ (1) 함수에 들어왔는지부터 화면으로 확인
+	if (GEngine)
 	{
-		const FString ExperienceFromOptions = UGameplayStatics::ParseOption(OptionsString, TEXT("Experience"));
-
-		// ✅ PrimaryAssetType은 AssetManager 설정의 타입명과 동일해야 한다.
-		// Project Settings > AssetManager 에서 "YJExperienceDefinition" 타입으로 등록했으면 그걸 사용.
-		ExperienceId = FPrimaryAssetId(
-			FPrimaryAssetType(TEXT("MosesExperienceDefinition")),
-			FName(*ExperienceFromOptions)
+		GEngine->AddOnScreenDebugMessage(
+			-1, 8.f, FColor::Yellow,
+			FString::Printf(TEXT("[EXP][Pick] Enter Map=%s Options=%s"), *MapName, *OptionsString)
 		);
-
-		UE_LOG(LogTemp, Log, TEXT("[Moses][Exp] OptionsString chose Experience=%s -> %s"),
-			*ExperienceFromOptions, *ExperienceId.ToString());
 	}
 
-	// 2) 옵션이 없으면 맵 이름 기반 폴백(로비/매치 분리 DoD용)
+	// 1) 옵션으로 Experience 지정 가능: ?Experience=Exp_Lobby (또는 Exp_Match)
+	if (UGameplayStatics::HasOption(OptionsString, TEXT("Experience")))
+	{
+		const FString ExperienceFromOptions = UGameplayStatics::ParseOption(OptionsString, TEXT("Experience"));
+		ExperienceId = FPrimaryAssetId(ExperienceType, FName(*ExperienceFromOptions));
+
+		UE_LOG(LogMosesExp, Warning, TEXT("[EXP][Pick] FromOptions Experience=%s (Map=%s)"),
+			*ExperienceId.ToString(), *MapName);
+
+		// ✅ (2) 옵션에서 뽑았다는 걸 화면으로 확인
+		if (GEngine)
+		{
+			GEngine->AddOnScreenDebugMessage(
+				-1, 8.f, FColor::Yellow,
+				FString::Printf(TEXT("[EXP][Pick] FromOptions -> %s"), *ExperienceId.ToString())
+			);
+		}
+	}
+
+	// 2) 옵션이 없으면 맵 이름으로 로비/매치 판단해서 기본값 선택
 	if (!ExperienceId.IsValid())
 	{
-		// MapName은 /Game/Maps/Lobby 같은 경로로 들어올 수 있음
-		const FString LowerMap = GetWorld()->GetMapName().ToLower();
-
+		const FString LowerMap = MapName.ToLower();
 		const bool bIsLobbyLike = LowerMap.Contains(TEXT("lobby"));
-
 		const FName DefaultExpName = bIsLobbyLike ? FName(TEXT("Exp_Lobby")) : FName(TEXT("Exp_Match"));
 
-		ExperienceId = FPrimaryAssetId(
-			FPrimaryAssetType(TEXT("MosesExperienceDefinition")),
-			DefaultExpName
-		);
+		ExperienceId = FPrimaryAssetId(ExperienceType, DefaultExpName);
 
-		UE_LOG(LogTemp, Log, TEXT("[Moses][Exp] Fallback chose Experience=%s (Map=%s)"),
-			*DefaultExpName.ToString(), *GetWorld()->GetMapName());
+		UE_LOG(LogMosesExp, Warning, TEXT("[EXP][Pick] Fallback Experience=%s (Map=%s)"),
+			*ExperienceId.ToString(), *MapName);
+
+		// ✅ (3) Fallback으로 골랐다는 걸 화면으로 확인
+		if (GEngine)
+		{
+			GEngine->AddOnScreenDebugMessage(
+				-1, 8.f, FColor::Yellow,
+				FString::Printf(TEXT("[EXP][Pick] Fallback -> %s"), *ExperienceId.ToString())
+			);
+		}
+	}
+
+	// ✅ (4) 최종 선택 결과 화면 확인
+	if (GEngine)
+	{
+		GEngine->AddOnScreenDebugMessage(
+			-1, 8.f, FColor::Yellow,
+			FString::Printf(TEXT("[EXP][Pick] Chosen=%s (Valid=%d)"), *ExperienceId.ToString(), ExperienceId.IsValid() ? 1 : 0)
+		);
 	}
 
 	check(ExperienceId.IsValid());
+
+	// ✅ (5) Assign으로 넘기기 직전 화면 확인(여기까지 오면 Pick은 통과)
+	if (GEngine)
+	{
+		GEngine->AddOnScreenDebugMessage(
+			-1, 8.f, FColor::Orange,
+			FString::Printf(TEXT("[EXP][Assign] Call -> %s"), *ExperienceId.ToString())
+		);
+	}
+
 	OnMatchAssignmentGiven(ExperienceId);
 }
 
-//bool AMosesGameModeBase::IsExperienceLoaded() const
-//{
-//	// Experience 로딩 완료 여부(스폰 게이트 판단)
-//	//check(GameState);
-//
-//	//UMosesExperienceManagerComponent* ExperienceManagerComponent =
-//	//	GameState->FindComponentByClass<UMosesExperienceManagerComponent>();
-//	//check(ExperienceManagerComponent);
-//
-//	return ExperienceManagerComponent->IsExperienceLoaded();
-//}
 
-//void AMosesGameModeBase::OnExperienceLoaded(const UMosesExperienceDefinition* CurrentExperience)
-//{
-//	UE_LOG(LogTemp, Warning, TEXT("[READY] OnExperienceLoaded Exp=%s"),
-//		*GetNameSafe(CurrentExperience));
-//
-//	for (FConstPlayerControllerIterator It = GetWorld()->GetPlayerControllerIterator(); It; ++It)
-//	{
-//		APlayerController* PC = Cast<APlayerController>(*It);
-//
-//		const bool bHasPawn = (PC && PC->GetPawn());
-//		const bool bCanRestart = (PC && PlayerCanRestart(PC));
-//
-//		UE_LOG(LogTemp, Warning, TEXT("[READY] PC=%s HasPawn=%d CanRestart=%d"),
-//			*GetNameSafe(PC), bHasPawn, bCanRestart);
-//
-//		if (PC && !bHasPawn && bCanRestart)
-//		{
-//			UE_LOG(LogTemp, Warning, TEXT("[READY] -> RestartPlayer(%s)"), *GetNameSafe(PC));
-//			RestartPlayer(PC);
-//			UE_LOG(LogTemp, Warning, TEXT("[READY] <- RestartPlayer PawnNow=%s"),
-//				*GetNameSafe(PC->GetPawn()));
-//		}
-//	}
-//}
+bool AMosesGameModeBase::IsExperienceLoaded() const
+{
+	// Experience 로딩 완료 여부(스폰 게이트 판단)
+	check(GameState);
 
+	UMosesExperienceManagerComponent* ExperienceManagerComponent =
+		GameState->FindComponentByClass<UMosesExperienceManagerComponent>();
+	check(ExperienceManagerComponent);
+
+	return ExperienceManagerComponent->IsExperienceLoaded();
+}
+
+void AMosesGameModeBase::OnExperienceLoaded(const UMosesExperienceDefinition* CurrentExperience)
+{
+	// 🔴 이 줄 추가
+	if (GEngine)
+	{
+		GEngine->AddOnScreenDebugMessage(
+			-1,
+			8.f,
+			FColor::Green,
+			FString::Printf(TEXT("[EXP][READY] %s"), *GetNameSafe(CurrentExperience))
+		);
+	}
+
+	// ✅ Day4-C 증명용 핵심 로그
+	UE_LOG(LogMosesExp, Warning, TEXT("[EXP][READY] Loaded Exp=%s"), *GetNameSafe(CurrentExperience));
+
+	// READY에서 SpawnGate 해제(NextTick Flush)
+	OnExperienceReady_SpawnGateRelease();
+}
 
 void AMosesGameModeBase::OnMatchAssignmentGiven(FPrimaryAssetId ExperienceId)
 {
-	UE_LOG(LogTemp, Log, TEXT("[GameMode] Experience 결정: %s"), *ExperienceId.ToString());
+	if (GEngine)
+	{
+		GEngine->AddOnScreenDebugMessage(
+			-1, 8.f, FColor::Orange,
+			FString::Printf(TEXT("[EXP][Assign] %s"), *ExperienceId.ToString())
+		);
+	}
 
-	// ExperienceManager에게 선택된 Experience 로딩을 지시
-	//check(ExperienceId.IsValid());
+	UE_LOG(LogMosesExp, Warning, TEXT("[EXP][Assign] -> ServerSetCurrentExperience %s"), *ExperienceId.ToString());
 
-	//UMosesExperienceManagerComponent* ExperienceManagerComponent =
-	//	GameState->FindComponentByClass<UMosesExperienceManagerComponent>();
-	//check(ExperienceManagerComponent);
+	UMosesExperienceManagerComponent* ExperienceManagerComponent =
+		GameState->FindComponentByClass<UMosesExperienceManagerComponent>();
+	check(ExperienceManagerComponent);
 
-	//ExperienceManagerComponent->ServerSetCurrentExperience(ExperienceId);
+	ExperienceManagerComponent->ServerSetCurrentExperience(ExperienceId);
+
+	UE_LOG(LogMosesExp, Warning, TEXT("[EXP][Assign] <- ServerSetCurrentExperience called"));
 }
 
 void AMosesGameModeBase::PostLogin(APlayerController* NewPlayer)
 {
 	Super::PostLogin(NewPlayer);
-	UE_LOG(LogTemp, Warning, TEXT("[SPAWN] PostLogin PC=%s HasPawn=%d"),
-		*GetNameSafe(NewPlayer), NewPlayer && NewPlayer->GetPawn() ? 1 : 0);
+
+	const FString Addr = GetConnAddr(NewPlayer);
+	const FString PSName = (NewPlayer && NewPlayer->PlayerState) ? NewPlayer->PlayerState->GetPlayerName() : TEXT("PS=None");
+
+	UE_LOG(LogMosesSpawn, Warning, TEXT("[NET][PostLogin] PC=%s PSName=%s Addr=%s ExpLoaded=%d"),
+		*GetNameSafe(NewPlayer), *PSName, *Addr, IsExperienceLoaded());
+
+	UNetConnection* Conn = NewPlayer ? NewPlayer->GetNetConnection() : nullptr;
+	const FString RemoteAddr = Conn ? Conn->LowLevelGetRemoteAddress(true) : TEXT("None");
+
+	if (NewPlayer && NewPlayer->PlayerState)
+	{
+		UE_LOG(LogMosesSpawn, Warning,
+			TEXT("[SERVER][PlayerState OK] PlayerId=%d | PS=%s | RemoteAddr=%s"),
+			NewPlayer->PlayerState->GetPlayerId(),
+			*GetNameSafe(NewPlayer->PlayerState),
+			*RemoteAddr
+		);
+	}
+	else
+	{
+		UE_LOG(LogMosesSpawn, Error,
+			TEXT("[SERVER][PlayerState MISSING] PC=%s | RemoteAddr=%s"),
+			*GetNameSafe(NewPlayer),
+			*RemoteAddr
+		);
+	}
 }
 
 void AMosesGameModeBase::RestartPlayer(AController* NewPlayer)
 {
-	//UE_LOG(LogTemp, Warning, TEXT("[SPAWN] RestartPlayer Controller=%s ExpLoaded=%d"),
-	//	*GetNameSafe(NewPlayer), IsExperienceLoaded());
+	UE_LOG(LogTemp, Warning, TEXT("[SPAWN] RestartPlayer Controller=%s ExpLoaded=%d"),
+		*GetNameSafe(NewPlayer), IsExperienceLoaded());
 
-	//Super::RestartPlayer(NewPlayer);
+	// ✅ READY 전 스폰 절대 금지(혹시 다른 경로에서 호출돼도 막아줌)
+	if (!IsExperienceLoaded())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[SPAWN] RestartPlayer BLOCKED (not READY)"));
+		return;
+	}
 
-	//APawn* PawnNow = NewPlayer ? NewPlayer->GetPawn() : nullptr;
-	//UE_LOG(LogTemp, Warning, TEXT("[SPAWN] RestartPlayer DONE Pawn=%s"),
-	//	*GetNameSafe(PawnNow));
+	Super::RestartPlayer(NewPlayer);
+
+	APawn* PawnNow = NewPlayer ? NewPlayer->GetPawn() : nullptr;
+	UE_LOG(LogTemp, Warning, TEXT("[SPAWN] RestartPlayer DONE Pawn=%s"),
+		*GetNameSafe(PawnNow));
+}
+
+void AMosesGameModeBase::Logout(AController* Exiting)
+{
+	Super::Logout(Exiting);
+
+	APlayerController* PC = Cast<APlayerController>(Exiting);
+	const FString Addr = PC ? GetConnAddr(PC) : TEXT("PC=None");
+
+	UE_LOG(LogMosesSpawn, Warning, TEXT("[NET][Logout] Controller=%s PC=%s Pawn=%s PS=%s Addr=%s"),
+		*GetNameSafe(Exiting),
+		*GetNameSafe(PC),
+		*GetNameSafe(PC ? PC->GetPawn() : nullptr),
+		*GetNameSafe(PC ? PC->PlayerState : nullptr),
+		*Addr);
 }
 
 AActor* AMosesGameModeBase::ChoosePlayerStart_Implementation(AController* Player)
@@ -249,31 +373,74 @@ void AMosesGameModeBase::FinishRestartPlayer(AController* NewPlayer, const FRota
 const UMosesPawnData* AMosesGameModeBase::GetPawnDataForController(const AController* InController) const
 {
 	// PawnData 우선순위: PlayerState > Experience DefaultPawnData
-	//if (InController)
-	//{
-	//	if (const AMosesPlayerState* YJPS = InController->GetPlayerState<AMosesPlayerState>())
-	//	{
-	//		if (const UMosesPawnData* PawnData = YJPS->GetPawnData<UMosesPawnData>())
-	//		{
-	//			return PawnData;
-	//		}
-	//	}
-	//}
+	if (InController)
+	{
+		if (const AMosesPlayerState* YJPS = InController->GetPlayerState<AMosesPlayerState>())
+		{
+			if (const UMosesPawnData* PawnData = YJPS->GetPawnData<UMosesPawnData>())
+			{
+				return PawnData;
+			}
+		}
+	}
 
-	//check(GameState);
+	check(GameState);
 
-	//UMosesExperienceManagerComponent* ExperienceManagerComponent =
-	//	GameState->FindComponentByClass<UMosesExperienceManagerComponent>();
-	//check(ExperienceManagerComponent);
+	UMosesExperienceManagerComponent* ExperienceManagerComponent =
+		GameState->FindComponentByClass<UMosesExperienceManagerComponent>();
+	check(ExperienceManagerComponent);
 
-	//if (ExperienceManagerComponent->IsExperienceLoaded())
-	//{
-	//	const UMosesExperienceDefinition* Experience = ExperienceManagerComponent->GetCurrentExperienceChecked();
-	//	return Experience ? Experience->DefaultPawnData : nullptr;
-	//}
+	if (ExperienceManagerComponent->IsExperienceLoaded())
+	{
+		const UMosesExperienceDefinition* Experience = ExperienceManagerComponent->GetCurrentExperienceChecked();
+		return Experience ? Experience->DefaultPawnData : nullptr;
+	}
 
 	return nullptr;
 }
 
+// ------------------------------
+// SpawnGate Release / Flush
+// ------------------------------
+void AMosesGameModeBase::OnExperienceReady_SpawnGateRelease()
+{
+	UE_LOG(LogTemp, Warning, TEXT("[READY] Experience READY -> Release SpawnGate. Pending=%d"),
+		PendingStartPlayers.Num());
 
+	// 델리게이트 순서 문제 회피: PS(PawnData) 세팅 등이 끝나게 NextTick에서 Flush
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().SetTimerForNextTick(this, &AMosesGameModeBase::FlushPendingPlayers);
+	}
+}
 
+void AMosesGameModeBase::FlushPendingPlayers()
+{
+	if (bFlushingPendingPlayers)
+	{
+		return;
+	}
+	bFlushingPendingPlayers = true;
+
+	const int32 PendingCount = PendingStartPlayers.Num();
+	UE_LOG(LogTemp, Warning, TEXT("[SpawnGate] UNBLOCKED -> FlushPendingPlayers Count=%d ExpLoaded=%d"),
+		PendingCount, IsExperienceLoaded());
+
+	for (TWeakObjectPtr<APlayerController>& WeakPC : PendingStartPlayers)
+	{
+		APlayerController* PC = WeakPC.Get();
+		if (!IsValid(PC))
+		{
+			continue;
+		}
+
+		UE_LOG(LogTemp, Warning, TEXT("[READY] -> Super::HandleStartingNewPlayer PC=%s"),
+			*GetNameSafe(PC));
+
+		// Super 경로를 타는 게 안전: 내부적으로 RestartPlayer까지 정상 플로우 수행
+		Super::HandleStartingNewPlayer_Implementation(PC);
+	}
+
+	PendingStartPlayers.Reset();
+	bFlushingPendingPlayers = false;
+}

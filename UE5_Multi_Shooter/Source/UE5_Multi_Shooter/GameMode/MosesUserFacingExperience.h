@@ -40,7 +40,7 @@ public:
 	FPrimaryAssetId MapID;
 
 	/** ภ๛ฟ๋วา Experience (PrimaryAsset: YJExperienceDefinition) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Experience, meta = (AllowedTypes = "YJExperienceDefinition"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Experience, meta = (AllowedTypes = "MosesExperienceDefinition"))
 	FPrimaryAssetId ExperienceID;
 	
 	

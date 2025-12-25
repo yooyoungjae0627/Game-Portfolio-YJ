@@ -3,48 +3,51 @@
 
 #include "MosesGameInstance.h"
 
-//#include "Components/GameFrameworkComponentManager.h"
-//#include "Project_YJ_A/YJGameplayTags.h"
+#include "Components/GameFrameworkComponentManager.h"
+#include "UE5_Multi_Shooter/MosesGameplayTags.h"
+#include "UE5_Multi_Shooter/MosesLogChannels.h"
 
 void UMosesGameInstance::Init()
 {
 	Super::Init();
+
+	UE_LOG(LogMosesExp, Log, TEXT("[GI] Init"));
 
 	// 🔥 GameInstance 시작 시 실행되는 초기화 구간
 	// 여기서 앞서 정의한 GameplayTags(InitState들)를
 	// GameFrameworkComponentManager에 등록해 상태 흐름을 구성한다.
 
 	// GameFrameworkComponentManager 가져오기 (Actor/Component 초기화 상태 관리용 매니저)
-	//UGameFrameworkComponentManager* ComponentManager = GetSubsystem<UGameFrameworkComponentManager>(this);
-	//if (ensure(ComponentManager)) // 없으면 크래시 방지 + 로그 발생
-	//{
-	//	// 네이티브 GameplayTags 싱글톤에서 InitState 태그들 가져오기
-	//	const FYJGameplayTags& GameplayTags = FYJGameplayTags::Get();
+	UGameFrameworkComponentManager* ComponentManager = GetSubsystem<UGameFrameworkComponentManager>(this);
+	if (ensure(ComponentManager)) // 없으면 크래시 방지 + 로그 발생
+	{
+		// 네이티브 GameplayTags 싱글톤에서 InitState 태그들 가져오기
+		const FMosesGameplayTags& GameplayTags = FMosesGameplayTags::Get();
 
-	//	/**
-	//	 * RegisterInitState(Tag, bOptional, RequiredBeforeTag)
-	//	 *
-	//	 * - Tag                : 등록할 초기화 상태 태그
-	//	 * - bOptional          : true = 선택적 상태 / false = 필수 상태
-	//	 * - RequiredBeforeTag  : 어떤 태그 이전에 수행해야 하는지 (상태 선행 조건)
-	//	 *
-	//	 * 여기서는 단계가 아래처럼 연결된다(상태머신 구축):
-	//	 *
-	//	 * InitState.Spawned → InitState.DataAvailable → InitState.DataInitialized → InitState.GameplayReady
-	//	 */
+		/**
+		 * RegisterInitState(Tag, bOptional, RequiredBeforeTag)
+		 *
+		 * - Tag                : 등록할 초기화 상태 태그
+		 * - bOptional          : true = 선택적 상태 / false = 필수 상태
+		 * - RequiredBeforeTag  : 어떤 태그 이전에 수행해야 하는지 (상태 선행 조건)
+		 *
+		 * 여기서는 단계가 아래처럼 연결된다(상태머신 구축):
+		 *
+		 * InitState.Spawned → InitState.DataAvailable → InitState.DataInitialized → InitState.GameplayReady
+		 */
 
-	//	 // [1단계] 스폰됨(Spawned) 상태 등록 (최초 상태, 선행 필요 없음)
-	//	ComponentManager->RegisterInitState(GameplayTags.InitState_Spawned, false, FGameplayTag());
+		 // [1단계] 스폰됨(Spawned) 상태 등록 (최초 상태, 선행 필요 없음)
+		ComponentManager->RegisterInitState(GameplayTags.InitState_Spawned, false, FGameplayTag());
 
-	//	// [2단계] 데이터 사용 가능(DataAvailable) → Spawned 이후 진행됨
-	//	ComponentManager->RegisterInitState(GameplayTags.InitState_DataAvailable, false, GameplayTags.InitState_Spawned);
+		// [2단계] 데이터 사용 가능(DataAvailable) → Spawned 이후 진행됨
+		ComponentManager->RegisterInitState(GameplayTags.InitState_DataAvailable, false, GameplayTags.InitState_Spawned);
 
-	//	// [3단계] 데이터 내부 초기화 완료(DataInitialized) → DataAvailable 이후 진행됨
-	//	ComponentManager->RegisterInitState(GameplayTags.InitState_DataInitialized, false, GameplayTags.InitState_DataAvailable);
+		// [3단계] 데이터 내부 초기화 완료(DataInitialized) → DataAvailable 이후 진행됨
+		ComponentManager->RegisterInitState(GameplayTags.InitState_DataInitialized, false, GameplayTags.InitState_DataAvailable);
 
-	//	// [4단계] 실제 게임 플레이 준비(GameplayReady) → DataInitialized 이후 최종 완료 상태
-	//	ComponentManager->RegisterInitState(GameplayTags.InitState_GameplayReady, false, GameplayTags.InitState_DataInitialized);
-	//}
+		// [4단계] 실제 게임 플레이 준비(GameplayReady) → DataInitialized 이후 최종 완료 상태
+		ComponentManager->RegisterInitState(GameplayTags.InitState_GameplayReady, false, GameplayTags.InitState_DataInitialized);
+	}
 }
 
 void UMosesGameInstance::Shutdown()

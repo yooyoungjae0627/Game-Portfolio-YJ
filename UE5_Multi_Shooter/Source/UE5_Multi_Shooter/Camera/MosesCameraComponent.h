@@ -23,7 +23,7 @@ class UE5_MULTI_SHOOTER_API UMosesCameraComponent : public UCameraComponent
 	GENERATED_BODY()
 	
 public:
-	//UMosesCameraComponent(const FObjectInitializer& ObjectInitializer = FObjectInitializer::Get());
+	UMosesCameraComponent(const FObjectInitializer& ObjectInitializer = FObjectInitializer::Get());
 
 
 	//"이 액터에 내가 원하는 타입의 컴포넌트가 붙어 있으면 찾아줘"
@@ -46,8 +46,8 @@ public:
 	virtual void GetCameraView(float DeltaTime, FMinimalViewInfo& DesiredView) final;
 
 	/** 카메라의 blending 기능을 지원하는 stack */
-	//UPROPERTY()
-	//TObjectPtr<UMosesCameraModeStack> CameraModeStack;
+	UPROPERTY()
+	TObjectPtr<UMosesCameraModeStack> CameraModeStack;
 
 	/** 현재 CameraMode를 가져오는 Delegate */
 	FMosesCameraModeDelegate DetermineCameraModeDelegate;

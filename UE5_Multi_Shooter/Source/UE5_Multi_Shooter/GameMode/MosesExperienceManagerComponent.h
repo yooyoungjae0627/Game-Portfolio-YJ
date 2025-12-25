@@ -1,14 +1,17 @@
-﻿// Fill out your copyright notice in the Description page of Project Settings.
+﻿#pragma once
 
-#pragma once
-
+#include "CoreMinimal.h"
 #include "Components/GameStateComponent.h"
 #include "UObject/PrimaryAssetId.h"
+
+// UE::GameFeatures::FResult 타입을 콜백에서 쓰므로 헤더에서 포함
+#include "GameFeaturesSubsystem.h"
+
 #include "MosesExperienceManagerComponent.generated.h"
 
 class UMosesExperienceDefinition;
 
-/** Experience 로딩 상태 */
+/** Experience 로딩 단계 */
 UENUM()
 enum class EMosesExperienceLoadState : uint8
 {
@@ -19,84 +22,83 @@ enum class EMosesExperienceLoadState : uint8
 	Failed
 };
 
-/** 로딩 완료(Ready) 시 호출되는 델리게이트 */
+/** Loaded(READY) 순간 1회 브로드캐스트 */
 DECLARE_MULTICAST_DELEGATE_OneParam(FOnMosesExperienceLoaded, const UMosesExperienceDefinition* /*Experience*/);
 
+/** CallOrRegister용 1회성 콜백 */
+using FMosesExperienceLoadedDelegate = TDelegate<void(const UMosesExperienceDefinition* /*Experience*/)>;
 
 UCLASS(ClassGroup = (Custom), meta = (BlueprintSpawnableComponent))
 class UE5_MULTI_SHOOTER_API UMosesExperienceManagerComponent : public UGameStateComponent
 {
 	GENERATED_BODY()
-	
+
 public:
-	UMosesExperienceManagerComponent(const FObjectInitializer& ObjectInitializer);
+	UMosesExperienceManagerComponent(const FObjectInitializer& ObjectInitializer = FObjectInitializer::Get());
 
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 
-public:
-	/** ✅ Ready 이벤트: 이미 Loaded면 즉시 실행, 아니면 완료 때 실행 */
-	void CallOrRegister_OnExperienceLoaded(FOnMosesExperienceLoaded::FDelegate&& Delegate);
-
-	/** ✅ 서버 전용: 이번 판 Experience 결정 */
+	/** 서버가 Experience 결정(Authority) */
+	UFUNCTION(Server, Reliable)
 	void ServerSetCurrentExperience(FPrimaryAssetId ExperienceId);
 
-	/** 로딩 완료? */
-	bool IsExperienceLoaded() const { return LoadState == EMosesExperienceLoadState::Loaded; }
+	/** READY 보장 패턴: Loaded면 즉시, 아니면 Loaded 순간 1회 */
+	void CallOrRegister_OnExperienceLoaded(FMosesExperienceLoadedDelegate&& Delegate);
 
-	/** 로딩 실패? */
+	bool IsExperienceLoaded() const { return LoadState == EMosesExperienceLoadState::Loaded; }
 	bool HasLoadFailed() const { return LoadState == EMosesExperienceLoadState::Failed; }
 
-	/** Loaded 이후 안전 접근 */
 	const UMosesExperienceDefinition* GetCurrentExperienceChecked() const;
 
-	/** 외부 구독 이벤트 */
 	FOnMosesExperienceLoaded OnExperienceLoaded;
 
-private:
-	/** ✅ 서버가 결정한 ExperienceId를 클라에게 복제 */
-	UPROPERTY(ReplicatedUsing = OnRep_CurrentExperienceId)
-	FPrimaryAssetId CurrentExperienceId;
-
-	/** 클라에서 ExperienceId 받으면 로드 시작 */
+protected:
+	/** ExperienceId 복제되면(서버/클라) 여기서 로딩 시작 */
 	UFUNCTION()
 	void OnRep_CurrentExperienceId();
 
-private:
-	/** 로딩된 ExperienceDefinition(CDO) */
-	UPROPERTY(Transient)
-	TObjectPtr<const UMosesExperienceDefinition> CurrentExperienceDefinition = nullptr;
+	/** ExperienceDefinition 로딩 완료 */
+	void OnExperienceAssetsLoaded();
 
-	/** 상태 */
-	EMosesExperienceLoadState LoadState = EMosesExperienceLoadState::Unloaded;
+	/** Experience가 요구하는 GameFeature들을 Load+Activate */
+	void StartLoadGameFeatures();
 
-	/** ✅ Ready 이벤트가 중복으로 나가지 않게 1회 가드 */
-	bool bNotifiedReadyOnce = false;
+	/**
+	 * UE5 GameFeatures 콜백 시그니처(중요)
+	 * - LoadAndActivateGameFeaturePlugin의 Complete 델리게이트는
+	 *   (const UE::GameFeatures::FResult&) 를 받는다.
+	 * - PluginName은 CreateUObject로 캡처해 뒤에 인자로 받는다.
+	 */
+	void OnOneGameFeatureActivated(const UE::GameFeatures::FResult& Result, FString PluginName);
 
-	/** GameFeature plugin urls */
-	TArray<FString> GameFeaturePluginURLs;
+	/** PluginName -> file:/.../Plugin.uplugin */
+	static FString MakeGameFeaturePluginURL(const FString& PluginName);
 
-	/** 로딩 중 plugin 개수 */
-	int32 NumGameFeaturePluginsLoading = 0;
-
-private:
-	/** ExperienceDefinition 로딩 (Id → CDO) */
-	const UMosesExperienceDefinition* LoadExperienceDefinitionFromId(const FPrimaryAssetId& ExperienceId) const;
-
-	/** Experience 번들 로딩 시작 */
-	void StartExperienceLoad();
-
-	/** 번들 로딩 완료 */
-	void OnExperienceLoadComplete();
-
-	/** 최종 완료 */
+	/** 최종 READY 처리 */
 	void OnExperienceFullLoadCompleted();
 
-	/** 실패 처리(크래시 대신 로그 + 상태 Failed) */
 	void FailExperienceLoad(const FString& Reason);
+	void ResetExperienceLoadState();
+	void DebugDump() const;
 
 private:
-	/** ✅ (선택) 디버그: 현재 상태 덤프 */
-	void DebugDump() const;
-	
-	
+	UPROPERTY(ReplicatedUsing = OnRep_CurrentExperienceId)
+	FPrimaryAssetId CurrentExperienceId;
+
+	UPROPERTY(Transient)
+	TObjectPtr<const UMosesExperienceDefinition> CurrentExperience = nullptr;
+
+	EMosesExperienceLoadState LoadState = EMosesExperienceLoadState::Unloaded;
+	bool bNotifiedReadyOnce = false;
+
+	/** stale callback 방지 */
+	FPrimaryAssetId PendingExperienceId;
+
+	/** CallOrRegister용 1회성 콜백들 */
+	TArray<FMosesExperienceLoadedDelegate> OnExperienceLoadedCallbacks;
+
+	/** GF 로딩 추적 */
+	int32 PendingGFCount = 0;
+	int32 CompletedGFCount = 0;
+	bool bAnyGFFailed = false;
 };
