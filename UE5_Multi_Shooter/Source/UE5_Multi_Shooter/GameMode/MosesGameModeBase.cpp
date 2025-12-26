@@ -505,33 +505,65 @@ void AMosesGameModeBase::OnExperienceReady_SpawnGateRelease()
 	}
 }
 
+// ------------------------------------------------------------
+// Experience READY 이후, "대기 중이던 플레이어"들을 한꺼번에 시작시키는 함수
+// ------------------------------------------------------------
 void AMosesGameModeBase::FlushPendingPlayers()
 {
+	// [재진입 방지]
+	// Flush 도중에(예: Super 내부에서 또 다른 경로로 Flush가 호출되거나)
+	// READY 이벤트가 중복으로 들어오는 상황에서 중복 실행을 막기 위한 가드
 	if (bFlushingPendingPlayers)
 	{
 		return;
 	}
+
 	bFlushingPendingPlayers = true;
 
+	// 대기열에 쌓여 있던 플레이어 수(Experience 로딩 전에는 스폰을 막고 여기 넣어둠)
 	const int32 PendingCount = PendingStartPlayers.Num();
-	UE_LOG(LogTemp, Warning, TEXT("[SpawnGate] UNBLOCKED -> FlushPendingPlayers Count=%d ExpLoaded=%d"),
-		PendingCount, IsExperienceLoaded());
 
+	// 이제 Experience가 READY라서 스폰 게이트를 해제(UNBLOCK)하고 Flush 시작
+	UE_LOG(LogTemp, Warning,
+		TEXT("[SpawnGate] UNBLOCKED -> FlushPendingPlayers Count=%d ExpLoaded=%d"),
+		PendingCount, IsExperienceLoaded()
+	);
+
+	// PendingStartPlayers는 TWeakObjectPtr을 쓰는게 안전함:
+	// - 대기 중에 PC가 Disconnect/Destroyed 될 수 있어서
+	// - Strong reference를 들고 있으면 위험(댕글링/GC 문제)해질 수 있음
 	for (TWeakObjectPtr<APlayerController>& WeakPC : PendingStartPlayers)
 	{
+		// Weak → Strong로 꺼내고 유효성 검사
 		APlayerController* PC = WeakPC.Get();
 		if (!IsValid(PC))
 		{
+			// 대기 중 접속 종료 등으로 사라진 PC는 스킵
 			continue;
 		}
 
-		UE_LOG(LogTemp, Warning, TEXT("[READY] -> Super::HandleStartingNewPlayer PC=%s"),
-			*GetNameSafe(PC));
+		UE_LOG(LogTemp, Warning,
+			TEXT("[READY] -> Super::HandleStartingNewPlayer PC=%s"),
+			*GetNameSafe(PC)
+		);
 
-		// Super 경로를 타는 게 안전: 내부적으로 RestartPlayer까지 정상 플로우 수행
+		// [중요] Super::HandleStartingNewPlayer 를 직접 호출하는 이유
+		// - 우리가 오버라이드한 HandleStartingNewPlayer는 "Experience READY 전이면 막기" 로직이 있음
+		// - READY가 된 지금은 "엔진 기본 흐름"을 그대로 타는 게 가장 안전함
+		//
+		// Super 내부에서 일반적으로 이어지는 플로우:
+		// HandleStartingNewPlayer
+		//   → RestartPlayer
+		//      → SpawnDefaultPawnFor / ChoosePlayerStart
+		//      → Possess
+		//      → (Pawn BeginPlay 등 정상 라이프사이클)
 		Super::HandleStartingNewPlayer_Implementation(PC);
 	}
 
+	// Flush가 끝났으니 대기열 비움
+	// (같은 PC를 중복 처리하지 않도록)
 	PendingStartPlayers.Reset();
+
+	// 재진입 가드 해제
 	bFlushingPendingPlayers = false;
 }
