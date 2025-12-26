@@ -155,32 +155,97 @@ void AMosesGameModeBase::HandleStartingNewPlayer_Implementation(APlayerControlle
 	);
 }
 
-APawn* AMosesGameModeBase::SpawnDefaultPawnAtTransform_Implementation(AController* NewPlayer, const FTransform& SpawnTransform)
+// ------------------------------------------------------------
+// Pawn을 실제로 생성하는 단계 (엔진 스폰 파이프라인의 핵심 지점)
+// ------------------------------------------------------------
+// 호출 위치(엔진 흐름):
+//   GameMode::RestartPlayer()
+//     → RestartPlayerAtPlayerStart()
+//       → RestartPlayerAtTransform()
+//         → SpawnDefaultPawnAtTransform()   ★ 여기 ★
+//
+// 즉:
+// - HandleStartingNewPlayer()를 통과한 이후
+// - RestartPlayer()가 호출되었을 때
+// - "실제로 Pawn을 하나 만들어라"는 시점에 엔진이 이 함수를 호출한다.
+//
+// 이 함수의 역할 요약:
+// - Pawn을 스폰하되
+// - Pawn이 완성되기 *전에*
+// - PawnData를 먼저 주입해서
+// - Pawn이 태어나는 순간부터 "완성된 데이터 상태"를 보장한다.
+//
+APawn* AMosesGameModeBase::SpawnDefaultPawnAtTransform_Implementation(
+	AController* NewPlayer,
+	const FTransform& SpawnTransform
+)
 {
-	// Pawn 생성 전에 PawnData를 주입하기 위해 Defer Spawn 사용
+	// --------------------------------------------------------
+	// Defer Spawn 설정
+	// --------------------------------------------------------
+	// bDeferConstruction = true
+	// → SpawnActor 시점에는 Pawn의 Construction Script / BeginPlay가 실행되지 않음
+	// → 우리가 원하는 데이터를 먼저 주입할 "틈"을 만든다.
 	FActorSpawnParameters SpawnInfo;
 	SpawnInfo.Instigator = GetInstigator();
 	SpawnInfo.ObjectFlags |= RF_Transient;
 	SpawnInfo.bDeferConstruction = true;
 
+	// --------------------------------------------------------
+	// 어떤 Pawn 클래스를 스폰할지 결정
+	// --------------------------------------------------------
+	// 이 함수는 보통:
+	// - GameMode 기본 PawnClass
+	// - 또는 PawnData / Controller / Team / Experience 기준으로
+	//   동적으로 다른 Pawn 클래스를 반환하도록 오버라이드 가능
 	if (UClass* PawnClass = GetDefaultPawnClassForController(NewPlayer))
 	{
-		if (APawn* SpawnedPawn = GetWorld()->SpawnActor<APawn>(PawnClass, SpawnTransform, SpawnInfo))
+		// ----------------------------------------------------
+		// Pawn 인스턴스 생성 (아직 "미완성 상태")
+		// ----------------------------------------------------
+		if (APawn* SpawnedPawn =
+			GetWorld()->SpawnActor<APawn>(PawnClass, SpawnTransform, SpawnInfo))
 		{
-			// PawnExtension에 PawnData를 먼저 주입 → 이후 초기화가 PawnData 기준으로 진행
-			if (UMosesPawnExtensionComponent* PawnExtComp = UMosesPawnExtensionComponent::FindPawnExtensionComponent(SpawnedPawn))
+			// ------------------------------------------------
+			// ★ 핵심 설계 포인트 ★
+			// Pawn이 완성되기 전에 PawnData를 주입한다
+			// ------------------------------------------------
+			// 이유:
+			// - PawnExtensionComponent는 PawnData를 기준으로
+			//   Ability, Input, Camera, Attribute 등을 초기화한다.
+			// - PawnData 없이 BeginPlay가 호출되면
+			//   "빈 캐릭터"로 초기화되는 위험이 있다.
+			if (UMosesPawnExtensionComponent* PawnExtComp =
+				UMosesPawnExtensionComponent::FindPawnExtensionComponent(SpawnedPawn))
 			{
-				if (const UMosesPawnData* PawnData = GetPawnDataForController(NewPlayer))
+				// 서버 기준으로 "이 Controller가 사용할 PawnData"를 가져온다.
+				// (PlayerState에 READY 시점에 세팅된 그 PawnData)
+				if (const UMosesPawnData* PawnData =
+					GetPawnDataForController(NewPlayer))
 				{
+					// PawnExtension에 PawnData를 먼저 세팅
+					// → 아직 BeginPlay 전이므로 안전
 					PawnExtComp->SetPawnData(PawnData);
 				}
 			}
 
+			// ------------------------------------------------
+			// Pawn 완성
+			// ------------------------------------------------
+			// FinishSpawning 호출 시점에서:
+			// - Construction Script 실행
+			// - Components 초기화
+			// - BeginPlay 호출
+			//
+			// 즉, 이 시점부터 Pawn은
+			// "PawnData가 이미 들어있는 상태"로 살아나게 된다.
 			SpawnedPawn->FinishSpawning(SpawnTransform);
+
 			return SpawnedPawn;
 		}
 	}
 
+	// Pawn 생성 실패
 	return nullptr;
 }
 
