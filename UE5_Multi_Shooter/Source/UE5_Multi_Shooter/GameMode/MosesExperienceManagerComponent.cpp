@@ -149,21 +149,25 @@ const UMosesExperienceDefinition* UMosesExperienceManagerComponent::GetCurrentEx
 }
 
 // ------------------------------
-// RepNotify: start loading
+// RepNotify: 서버가 CurrentExperienceId를 바꾸면 클라에서 호출됨
+// 목적: "서버가 지정한 Experience"를 클라 쪽에서 로딩 시작 트리거로 사용
 // ------------------------------
 void UMosesExperienceManagerComponent::OnRep_CurrentExperienceId()
 {
+	// [Debug] 현재 받은 ExperienceId + 로딩 상태 출력
 	ScreenMsg(FColor::Yellow,
 		FString::Printf(TEXT("[EXP-MGR][OnRep] CurrentId=%s State=%d"),
 			*CurrentExperienceId.ToString(), (int32)LoadState));
 
-	if (!CurrentExperienceId.IsValid())
+	// [Guard 1] 서버가 보낸 Id가 비정상이면 즉시 실패 처리
+	if (CurrentExperienceId.IsValid() == false)
 	{
 		FailExperienceLoad(TEXT("OnRep_CurrentExperienceId: Invalid CurrentExperienceId"));
 		return;
 	}
 
-	// 중복 진입 방지
+	// [Guard 2] RepNotify는 여러 번 올 수 있음(재전송/재복제/상태변화 등)
+	//          -> 이미 로딩을 시작했거나 끝난 상태면 중복 로딩 방지
 	if (LoadState != EMosesExperienceLoadState::Unloaded)
 	{
 		ScreenMsg(FColor::Silver,
@@ -171,21 +175,25 @@ void UMosesExperienceManagerComponent::OnRep_CurrentExperienceId()
 		return;
 	}
 
+	// [State] 이제부터 "이 Experience를 로딩 중" 상태로 전이
 	PendingExperienceId = CurrentExperienceId;
 	LoadState = EMosesExperienceLoadState::Loading;
 
+	// [Debug] 로딩 시작 로그
 	UE_LOG(LogMosesExp, Log, TEXT("[EXP] Begin Load=%s"), *CurrentExperienceId.ToString());
 	ScreenMsg(FColor::Yellow, FString::Printf(TEXT("[EXP-MGR][Load] Begin %s"), *CurrentExperienceId.ToString()));
 
+	// [Load] AssetManager를 통해 ExperienceDefinition(Primary Asset) 로딩 시작
+	//        - 여기서는 bundle 없이 "정의(Definition)만" 먼저 당겨오고,
+	//        - 로딩 완료 콜백(OnExperienceAssetsLoaded)에서 다음 단계 진행
 	UMosesAssetManager& AssetManager = UMosesAssetManager::Get();
 
 	TArray<FPrimaryAssetId> AssetIds;
 	AssetIds.Add(CurrentExperienceId);
 
-	// ExperienceDefinition만 먼저 로딩 (bundle 미사용)
 	AssetManager.LoadPrimaryAssets(
 		AssetIds,
-		{},
+		{}, // bundles 미사용(필요하면 "Client" / "Server" 등 번들로 확장 가능)
 		FStreamableDelegate::CreateUObject(this, &ThisClass::OnExperienceAssetsLoaded)
 	);
 }

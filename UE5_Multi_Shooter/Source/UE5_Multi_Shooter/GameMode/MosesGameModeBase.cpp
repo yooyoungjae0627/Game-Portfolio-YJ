@@ -96,25 +96,63 @@ UClass* AMosesGameModeBase::GetDefaultPawnClassForController_Implementation(ACon
 
 void AMosesGameModeBase::HandleStartingNewPlayer_Implementation(APlayerController* NewPlayer)
 {
-	UE_LOG(LogTemp, Warning, TEXT("[SpawnGate] HandleStartingNewPlayer PC=%s ExpLoaded=%d"),
-		*GetNameSafe(NewPlayer), IsExperienceLoaded());
+	// HandleStartingNewPlayer
+	// - 서버 전용
+	// - PostLogin 이후, "이 플레이어를 실제 게임에 투입해도 되는지" 판단하는 단계
+	// - 기본 구현에서는 여기서 Pawn 스폰 / Possess 흐름이 시작됨
+	UE_LOG(LogTemp, Warning,
+		TEXT("[SpawnGate] HandleStartingNewPlayer PC=%s ExpLoaded=%d"),
+		*GetNameSafe(NewPlayer),
+		IsExperienceLoaded()
+	);
 
-	if (!IsValid(NewPlayer))
+	// 안전 체크
+	if (IsValid(NewPlayer) == false)
 	{
+		// 비정상 PlayerController면 즉시 중단
 		return;
 	}
 
+	// ------------------------------
+	// Experience 로딩 완료 여부 체크
+	// ------------------------------
+
 	if (IsExperienceLoaded())
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[SpawnGate] -> Super::HandleStartingNewPlayer"));
+		// Experience가 READY 상태라면
+		// → 엔진 기본 스폰 파이프라인으로 그대로 진행
+		// → Super::HandleStartingNewPlayer 안에서:
+		//    - RestartPlayer
+		//    - Pawn 스폰
+		//    - Possess
+		//    - BeginPlay 호출
+		UE_LOG(LogTemp, Warning,
+			TEXT("[SpawnGate] -> Super::HandleStartingNewPlayer")
+		);
+
 		Super::HandleStartingNewPlayer_Implementation(NewPlayer);
 		return;
 	}
 
-	// READY 전이면 큐에 넣고, READY에서 Flush로 재시작
+	// ------------------------------
+	// Experience 로딩 전(READY 아님)
+	// ------------------------------
+
+	// 아직 Experience가 로딩 중이면
+	// → Pawn 스폰을 허용하면 안 됨
+	//   (Ability, Input, PawnData, GameFeature 미적용 상태 위험)
+	//
+	// 따라서:
+	// - 플레이어를 즉시 스폰하지 않고
+	// - 대기 큐(PendingStartPlayers)에 보관
+	// - Experience READY 시점에 Flush하여
+	//   다시 HandleStartingNewPlayer를 실행
 	PendingStartPlayers.AddUnique(NewPlayer);
-	UE_LOG(LogTemp, Warning, TEXT("[SpawnGate] BLOCKED (waiting READY) -> queued. Pending=%d"),
-		PendingStartPlayers.Num());
+
+	UE_LOG(LogTemp, Warning,
+		TEXT("[SpawnGate] BLOCKED (waiting READY) -> queued. Pending=%d"),
+		PendingStartPlayers.Num()
+	);
 }
 
 APawn* AMosesGameModeBase::SpawnDefaultPawnAtTransform_Implementation(AController* NewPlayer, const FTransform& SpawnTransform)
@@ -146,6 +184,10 @@ APawn* AMosesGameModeBase::SpawnDefaultPawnAtTransform_Implementation(AControlle
 	return nullptr;
 }
 
+// 이 로직은 GameMode에 있기 때문에
+// 서버에서만 실행되고,
+// 클라이언트는 Experience 선택 결과를
+// GameState나 ExperienceManager를 통해 전달받는다.
 void AMosesGameModeBase::HandleMatchAssignmentIfNotExpectingOne()
 {
 	static const FPrimaryAssetType ExperienceType(TEXT("Experience"));
@@ -182,7 +224,7 @@ void AMosesGameModeBase::HandleMatchAssignmentIfNotExpectingOne()
 	}
 
 	// 2) 옵션이 없으면 맵 이름으로 로비/매치 판단해서 기본값 선택
-	if (!ExperienceId.IsValid())
+	if (ExperienceId.IsValid() == false)
 	{
 		const FString LowerMap = MapName.ToLower();
 		const bool bIsLobbyLike = LowerMap.Contains(TEXT("lobby"));
@@ -287,19 +329,59 @@ void AMosesGameModeBase::OnMatchAssignmentGiven(FPrimaryAssetId ExperienceId)
 
 void AMosesGameModeBase::PostLogin(APlayerController* NewPlayer)
 {
+	// GameModeBase::PostLogin
+	// - 서버 전용 함수
+	// - 클라이언트가 서버에 성공적으로 접속(Login)한 직후 호출됨
+	// - 이 시점부터 해당 PlayerController는 서버에서 "유효한 플레이어"로 취급됨
 	Super::PostLogin(NewPlayer);
 
+	// ------------------------------
+	// 기본 디버그 정보 수집
+	// ------------------------------
+
+	// 접속 주소(IP:Port) 추출 (디버깅용)
 	const FString Addr = GetConnAddr(NewPlayer);
-	const FString PSName = (NewPlayer && NewPlayer->PlayerState) ? NewPlayer->PlayerState->GetPlayerName() : TEXT("PS=None");
 
-	UE_LOG(LogMosesSpawn, Warning, TEXT("[NET][PostLogin] PC=%s PSName=%s Addr=%s ExpLoaded=%d"),
-		*GetNameSafe(NewPlayer), *PSName, *Addr, IsExperienceLoaded());
+	// PlayerState가 이미 생성되었는지 확인
+	// PostLogin 시점에서는 정상적이라면 PlayerState는 이미 생성 완료 상태
+	const FString PSName =
+		(NewPlayer && NewPlayer->PlayerState)
+		? NewPlayer->PlayerState->GetPlayerName()
+		: TEXT("PS=None");
 
+	// 서버 관점 로그
+	// - 어떤 PC가 들어왔는지
+	// - PlayerState가 있는지
+	// - Experience(게임 규칙/모드)가 이미 로딩 완료 상태인지 확인
+	UE_LOG(LogMosesSpawn, Warning,
+		TEXT("[NET][PostLogin] PC=%s PSName=%s Addr=%s ExpLoaded=%d"),
+		*GetNameSafe(NewPlayer),
+		*PSName,
+		*Addr,
+		IsExperienceLoaded()
+	);
+
+	// ------------------------------
+	// 네트워크 연결 정보 확인
+	// ------------------------------
+
+	// PlayerController → NetConnection
+	// - Dedicated Server 환경에서는 실제 원격 클라이언트의 소켓 연결
 	UNetConnection* Conn = NewPlayer ? NewPlayer->GetNetConnection() : nullptr;
-	const FString RemoteAddr = Conn ? Conn->LowLevelGetRemoteAddress(true) : TEXT("None");
+
+	// 원격 클라이언트 IP 주소 (LowLevel 네트워크 주소)
+	const FString RemoteAddr =
+		Conn ? Conn->LowLevelGetRemoteAddress(true) : TEXT("None");
+
+	// ------------------------------
+	// PlayerState 검증
+	// ------------------------------
 
 	if (NewPlayer && NewPlayer->PlayerState)
 	{
+		// 정상 케이스
+		// - PlayerState는 PostLogin 이전에 생성됨
+		// - PlayerId는 서버에서 유니크하게 할당됨
 		UE_LOG(LogMosesSpawn, Warning,
 			TEXT("[SERVER][PlayerState OK] PlayerId=%d | PS=%s | RemoteAddr=%s"),
 			NewPlayer->PlayerState->GetPlayerId(),
@@ -309,6 +391,9 @@ void AMosesGameModeBase::PostLogin(APlayerController* NewPlayer)
 	}
 	else
 	{
+		// 비정상 케이스 (이론상 거의 발생하면 안 됨)
+		// - PlayerState 생성 실패
+		// - 커스텀 GameMode / PlayerState 설정 문제 가능성
 		UE_LOG(LogMosesSpawn, Error,
 			TEXT("[SERVER][PlayerState MISSING] PC=%s | RemoteAddr=%s"),
 			*GetNameSafe(NewPlayer),
@@ -316,6 +401,7 @@ void AMosesGameModeBase::PostLogin(APlayerController* NewPlayer)
 		);
 	}
 }
+
 
 void AMosesGameModeBase::RestartPlayer(AController* NewPlayer)
 {
