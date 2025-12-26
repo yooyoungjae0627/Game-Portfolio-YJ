@@ -1,29 +1,26 @@
-// Fill out your copyright notice in the Description page of Project Settings.
-
-#pragma once
+ï»¿#pragma once
 
 #include "MosesGameModeBase.h"
 #include "MosesLobbyGameMode.generated.h"
 
-/**
- * ALobbyGameMode
- * - ·Îºñ Àü¿ë ¼­¹ö ±ÔÄ¢
- * - Ready/Start(ÃßÈÄ È®Àå) + Match·Î ServerTravel Æ®¸®°Å ´ã´ç
- *
- * ¼³°è ¿øÄ¢:
- * - Experience ·Îµù/½ºÆù °ÔÀÌÆ®´Â AMosesGameModeBase°¡ ´ã´çÇÑ´Ù.
- * - ·Îºñ GMÀº "·Îºñ ±ÔÄ¢"°ú "Travel"¸¸ ´ã´çÇÑ´Ù.
- */
+class AMosesPlayerController;
 
+/**
+ * Lobby GameMode
+ * - ë¡œë¹„ ì „ìš© ê·œì¹™ + Matchë¡œ ServerTravel íŠ¸ë¦¬ê±° ë‹´ë‹¹
+ */
 UCLASS()
 class UE5_MULTI_SHOOTER_API AMosesLobbyGameMode : public AMosesGameModeBase
 {
 	GENERATED_BODY()
-	
+
 public:
 	AMosesLobbyGameMode();
 
-	/** ¼­¹ö ÄÜ¼Ö¿¡¼­ ¸ÅÄ¡·Î ÀÌµ¿ */
+	// PC Server RPCê°€ ë„ì°©í•œ ë’¤, ì„œë²„ê°€ ìµœì¢… ì²˜ë¦¬í•˜ëŠ” ë£¨íŠ¸
+	void HandleStartGameRequest(AMosesPlayerController* RequestPC);
+
+	/** ì„œë²„ ì½˜ì†”ì—ì„œ ë§¤ì¹˜ë¡œ ì´ë™ */
 	UFUNCTION(Exec)
 	void TravelToMatch();
 
@@ -31,18 +28,29 @@ protected:
 	virtual void InitGame(const FString& MapName, const FString& Options, FString& ErrorMessage) override;
 	virtual void BeginPlay() override;
 
-	/** Travel Á÷Àü/ÈÄ PS À¯Áö Áõ¸í¿ë ·Î±× Æ÷ÀÎÆ® */
+	/** ë³µê·€ í›„ ì •ì±… ì ìš©/ì¦ëª… ë¡œê·¸ìš© */
+	virtual void PostLogin(APlayerController* NewPlayer) override;
+
+	/** Travel ì§ì „/í›„ PS ìœ ì§€ ì¦ëª…ìš© ë¡œê·¸ í¬ì¸íŠ¸ */
 	virtual void HandleSeamlessTravelPlayer(AController*& C) override;
 	virtual void GetSeamlessTravelActorList(bool bToTransition, TArray<AActor*>& ActorList) override;
 
 private:
-	/** Match ¸Ê URL Á¤Ã¥À» ÇÑ °÷¿¡¼­ °íÁ¤ */
+	/** Match ë§µ URL ì •ì±…ì„ í•œ ê³³ì—ì„œ ê³ ì • */
 	FString GetMatchMapURL() const;
 
-	/** PS À¯Áö/Àç»ı¼º °ËÁõÀ» À§ÇÑ PlayerArray ´ıÇÁ */
+	/** PS ìœ ì§€/ì¬ìƒì„± ê²€ì¦ì„ ìœ„í•œ PlayerArray ë¤í”„(ê¸°ì¡´) */
 	void DumpPlayerStates(const TCHAR* Prefix) const;
 
-	/** ¼­¹ö¿¡¼­¸¸ ServerTravelÇÏµµ·Ï ¹æ¾î */
+	/** DoD ê³ ì • í¬ë§· ë¤í”„(AMosesPlayerStateë§Œ) */
+	void DumpAllDODPlayerStates(const TCHAR* Where) const;
+
+	/** ì„œë²„ì—ì„œë§Œ ServerTravelí•˜ë„ë¡ ë°©ì–´ */
 	bool CanDoServerTravel() const;
-	
+
+	/** ë¡œë¹„ ë³µê·€ ì •ì±…: Ready ì´ˆê¸°í™”(ì¶”ì²œ) */
+	void ApplyReturnPolicy(APlayerController* PC);
+
+	int32 GetPlayerCount() const;
+	int32 GetReadyCount() const;
 };

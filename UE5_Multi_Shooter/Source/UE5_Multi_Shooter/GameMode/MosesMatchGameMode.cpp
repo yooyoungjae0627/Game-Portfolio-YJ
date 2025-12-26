@@ -1,6 +1,7 @@
 ﻿#include "MosesMatchGameMode.h"
 
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
+#include "UE5_Multi_Shooter/Player/MosesPlayerState.h"
 
 #include "Engine/World.h"
 #include "TimerManager.h"
@@ -17,11 +18,6 @@ AMosesMatchGameMode::AMosesMatchGameMode()
 
 void AMosesMatchGameMode::InitGame(const FString& MapName, const FString& Options, FString& ErrorMessage)
 {
-	/**
-	 * 매치는 Exp_Match 강제(옵션에 없을 때만)
-	 * - Base는 OptionsString을 읽어서 Experience를 선택한다.
-	 * - 여기서 강제하면 “룰/모드 분리”가 더 명확해짐.
-	 */
 	FString FinalOptions = Options;
 	if (!UGameplayStatics::HasOption(Options, TEXT("Experience")))
 	{
@@ -39,9 +35,13 @@ void AMosesMatchGameMode::BeginPlay()
 
 	UE_LOG(LogMosesExp, Warning, TEXT("[DOD][Travel] MatchGM Seamless=%d"), bUseSeamlessTravel ? 1 : 0);
 
+	// ✅ F2(2) 필수: MatchGM BeginPlay Dump
+	DumpAllDODPlayerStates(TEXT("MatchGM:BeginPlay"));
+
+	// 기존 덤프 유지(원하면 제거)
 	DumpPlayerStates(TEXT("[MatchGM][BeginPlay]"));
 
-	// (선택) 매치 시작 N초 후 자동 로비 복귀 테스트
+	// (선택) 자동 복귀
 	if (AutoReturnToLobbySeconds > 0.f && HasAuthority())
 	{
 		GetWorldTimerManager().SetTimer(
@@ -59,7 +59,6 @@ void AMosesMatchGameMode::PostLogin(APlayerController* NewPlayer)
 {
 	Super::PostLogin(NewPlayer);
 
-	// ✅ UniqueId.ToString()는 OnlineSubsystem 의존성 문제로 빼자(너 프로젝트 빌드 깨짐 방지)
 	APlayerState* PS = NewPlayer ? NewPlayer->PlayerState : nullptr;
 
 	UE_LOG(LogMosesSpawn, Warning,
@@ -99,7 +98,6 @@ bool AMosesMatchGameMode::CanDoServerTravel() const
 	return true;
 }
 
-
 FString AMosesMatchGameMode::GetLobbyMapURL() const
 {
 	return TEXT("/Game/Map/L_Lobby");
@@ -128,6 +126,28 @@ void AMosesMatchGameMode::DumpPlayerStates(const TCHAR* Prefix) const
 	}
 }
 
+void AMosesMatchGameMode::DumpAllDODPlayerStates(const TCHAR* Where) const
+{
+	const AGameStateBase* GS = GameState;
+	if (!GS)
+	{
+		UE_LOG(LogMosesSpawn, Warning, TEXT("[DOD][PS][DS][%s] GameState=None"), Where);
+		return;
+	}
+
+	UE_LOG(LogMosesSpawn, Warning, TEXT("[DOD][PS][DS][%s] ---- DumpAllPS Begin ----"), Where);
+
+	for (APlayerState* RawPS : GS->PlayerArray)
+	{
+		if (AMosesPlayerState* PS = Cast<AMosesPlayerState>(RawPS))
+		{
+			PS->DOD_PS_Log(this, Where);
+		}
+	}
+
+	UE_LOG(LogMosesSpawn, Warning, TEXT("[DOD][PS][DS][%s] ---- DumpAllPS End ----"), Where);
+}
+
 void AMosesMatchGameMode::TravelToLobby()
 {
 	if (!CanDoServerTravel())
@@ -136,6 +156,10 @@ void AMosesMatchGameMode::TravelToLobby()
 		return;
 	}
 
+	// ✅ G1 + F: 복귀 직전 DoD Dump
+	DumpAllDODPlayerStates(TEXT("Match:BeforeTravelToLobby"));
+
+	// 기존 덤프 유지(원하면 제거)
 	DumpPlayerStates(TEXT("[MatchGM][BeforeTravelToLobby]"));
 
 	const FString URL = GetLobbyMapURL();
@@ -164,13 +188,11 @@ void AMosesMatchGameMode::HandleSeamlessTravelPlayer(AController*& C)
 	Super::HandleSeamlessTravelPlayer(C);
 
 	APlayerController* PC = Cast<APlayerController>(C);
-	APlayerState* PS = PC ? PC->PlayerState : nullptr;
-
-	UE_LOG(LogMosesSpawn, Warning,
-		TEXT("[MatchGM] HandleSeamlessTravelPlayer PC=%p PS=%p PSName=%s PlayerId=%d PlayerName=%s"),
-		PC,
-		PS,
-		*GetNameSafe(PS),
-		PS ? PS->GetPlayerId() : -1,
-		PS ? *PS->GetPlayerName() : TEXT("None"));
+	if (PC)
+	{
+		if (AMosesPlayerState* PS = PC->GetPlayerState<AMosesPlayerState>())
+		{
+			PS->DOD_PS_Log(this, TEXT("GM:HandleSeamlessTravelPlayer"));
+		}
+	}
 }

@@ -1,4 +1,3 @@
-// MosesPlayerController.h
 #pragma once
 
 #include "CoreMinimal.h"
@@ -32,7 +31,7 @@ public:
 	UFUNCTION(Exec)
 	void YJ_SetChar(int32 InId);
 
-	// 클라에서 입력해도 서버로 "전달"되도록 구성 (서버 창 입력 불가 대비)
+	// 클라에서 입력해도 서버로 "전달"되도록 구성
 	UFUNCTION(Exec)
 	void TravelToMatch_Exec();
 

@@ -3,12 +3,13 @@
 #include "MosesGameState.h"
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
 
+#include "UE5_Multi_Shooter/Player/MosesPlayerState.h"
+
 #include "GameFramework/GameStateBase.h"
 #include "GameFramework/PlayerState.h"
+#include "GameFramework/PlayerController.h"
 #include "Engine/World.h"
-
 #include "Kismet/GameplayStatics.h"
-
 
 AMosesLobbyGameMode::AMosesLobbyGameMode()
 {
@@ -16,18 +17,14 @@ AMosesLobbyGameMode::AMosesLobbyGameMode()
 	bUseSeamlessTravel = true;
 }
 
+void AMosesLobbyGameMode::HandleStartGameRequest(AMosesPlayerController* RequestPC)
+{
+}
+
 void AMosesLobbyGameMode::InitGame(const FString& MapName, const FString& Options, FString& ErrorMessage)
 {
-	/**
-	 * ✅ 여기서 로비 Experience를 강제하고 싶으면 Options에 경험치 파라미터를 추가해서 Super로 전달 가능.
-	 * - 네 Base는 OptionsString에서 ?Experience= 를 읽고, 없으면 맵 이름으로 fallback도 함.
-	 * - "항상 로비는 Exp_Lobby"를 강제하려면 아래처럼 박아두면 됨.
-	 *
-	 * 주의:
-	 * - 이미 Options에 Experience가 들어올 수 있으니 중복 방지를 위해 "없을 때만" 붙이는 걸 추천.
-	 */
 	FString FinalOptions = Options;
-	if (!UGameplayStatics::HasOption(Options, TEXT("Experience")))
+	if (UGameplayStatics::HasOption(Options, TEXT("Experience")) == false)
 	{
 		FinalOptions += TEXT("?Experience=Exp_Lobby");
 	}
@@ -43,7 +40,45 @@ void AMosesLobbyGameMode::BeginPlay()
 
 	UE_LOG(LogMosesExp, Warning, TEXT("[DOD][Travel] LobbyGM Seamless=%d"), bUseSeamlessTravel ? 1 : 0);
 
+	// ✅ G2: 복귀 후 로비에서도 자동으로 찍히게
+	DumpAllDODPlayerStates(TEXT("LobbyGM:BeginPlay_AfterReturn"));
+
+	// 기존 덤프(PS 포인터/이름만)
 	DumpPlayerStates(TEXT("[LobbyGM][BeginPlay]"));
+}
+
+void AMosesLobbyGameMode::PostLogin(APlayerController* NewPlayer)
+{
+	Super::PostLogin(NewPlayer);
+
+	// ✅ G3: 복귀 후 정책 적용(Ready 초기화) + 로그 증명
+	ApplyReturnPolicy(NewPlayer);
+}
+
+void AMosesLobbyGameMode::ApplyReturnPolicy(APlayerController* PC)
+{
+	if (!PC) return;
+
+	if (AMosesPlayerState* PS = PC->GetPlayerState<AMosesPlayerState>())
+	{
+		// 정책(추천): 로비(복귀 포함)에서는 Ready를 0으로 초기화
+		PS->bReady = false;
+
+		// SelectedCharacterId 유지 정책(편의). 리셋 원하면 아래 주석 해제
+		// PS->SelectedCharacterId = 0;
+
+		PS->DOD_PS_Log(this, TEXT("Lobby:Policy_ResetReadyOnReturn"));
+	}
+}
+
+int32 AMosesLobbyGameMode::GetPlayerCount() const
+{
+	return int32();
+}
+
+int32 AMosesLobbyGameMode::GetReadyCount() const
+{
+	return int32();
 }
 
 bool AMosesLobbyGameMode::CanDoServerTravel() const
@@ -64,7 +99,6 @@ bool AMosesLobbyGameMode::CanDoServerTravel() const
 		return false;
 	}
 
-	// 서버라도 혹시 권한이 이상하면 막기
 	if (!HasAuthority())
 	{
 		UE_LOG(LogMosesSpawn, Warning, TEXT("[DOD][Travel] REJECT (NoAuthority)"));
@@ -75,12 +109,10 @@ bool AMosesLobbyGameMode::CanDoServerTravel() const
 	return true;
 }
 
-
 FString AMosesLobbyGameMode::GetMatchMapURL() const
 {
 	// 정책 고정: Dedicated Server가 이미 떠 있으므로 일반적으로 ?listen 불필요
 	return TEXT("/Game/Map/L_Match");
-	// 필요하면: return TEXT("/Game/Maps/L_Match?listen");
 }
 
 void AMosesLobbyGameMode::DumpPlayerStates(const TCHAR* Prefix) const
@@ -105,6 +137,28 @@ void AMosesLobbyGameMode::DumpPlayerStates(const TCHAR* Prefix) const
 	}
 }
 
+void AMosesLobbyGameMode::DumpAllDODPlayerStates(const TCHAR* Where) const
+{
+	const AGameStateBase* GS = GameState;
+	if (!GS)
+	{
+		UE_LOG(LogMosesSpawn, Warning, TEXT("[DOD][PS][DS][%s] GameState=None"), Where);
+		return;
+	}
+
+	UE_LOG(LogMosesSpawn, Warning, TEXT("[DOD][PS][DS][%s] ---- DumpAllPS Begin ----"), Where);
+
+	for (APlayerState* RawPS : GS->PlayerArray)
+	{
+		if (AMosesPlayerState* PS = Cast<AMosesPlayerState>(RawPS))
+		{
+			PS->DOD_PS_Log(this, Where);
+		}
+	}
+
+	UE_LOG(LogMosesSpawn, Warning, TEXT("[DOD][PS][DS][%s] ---- DumpAllPS End ----"), Where);
+}
+
 void AMosesLobbyGameMode::TravelToMatch()
 {
 	if (!CanDoServerTravel())
@@ -113,6 +167,10 @@ void AMosesLobbyGameMode::TravelToMatch()
 		return;
 	}
 
+	// ✅ F2(1) 필수: Travel 직전 DoD Dump
+	DumpAllDODPlayerStates(TEXT("Lobby:BeforeTravelToMatch"));
+
+	// 기존 덤프도 유지(원하면 빼도 됨)
 	DumpPlayerStates(TEXT("[LobbyGM][BeforeTravelToMatch]"));
 
 	const FString URL = GetMatchMapURL();
@@ -123,10 +181,6 @@ void AMosesLobbyGameMode::TravelToMatch()
 
 void AMosesLobbyGameMode::GetSeamlessTravelActorList(bool bToTransition, TArray<AActor*>& ActorList)
 {
-	/**
-	 * 기본적으로 PlayerController/PlayerState는 엔진에서 처리.
-	 * 여기서는 추가 유지 Actor가 필요할 때만 넣는다.
-	 */
 	Super::GetSeamlessTravelActorList(bToTransition, ActorList);
 
 	UE_LOG(LogMosesSpawn, Warning, TEXT("[LobbyGM] GetSeamlessTravelActorList bToTransition=%d ActorListNum=%d"),
@@ -137,14 +191,12 @@ void AMosesLobbyGameMode::HandleSeamlessTravelPlayer(AController*& C)
 {
 	Super::HandleSeamlessTravelPlayer(C);
 
-	APlayerController* PC = Cast<APlayerController>(C);
-	APlayerState* PS = PC ? PC->PlayerState : nullptr;
-
-	UE_LOG(LogMosesSpawn, Warning,
-		TEXT("[LobbyGM] HandleSeamlessTravelPlayer PC=%p PS=%p PSName=%s PlayerId=%d PlayerName=%s"),
-		PC,
-		PS,
-		*GetNameSafe(PS),
-		PS ? PS->GetPlayerId() : -1,
-		PS ? *PS->GetPlayerName() : TEXT("None"));
+	if (APlayerController* PC = Cast<APlayerController>(C))
+	{
+		if (AMosesPlayerState* PS = PC->GetPlayerState<AMosesPlayerState>())
+		{
+			// ✅ (선택) SeamlessTravel 인계 과정에서의 고정 포맷 1줄 로그
+			PS->DOD_PS_Log(this, TEXT("GM:HandleSeamlessTravelPlayer"));
+		}
+	}
 }

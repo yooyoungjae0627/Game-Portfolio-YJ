@@ -1,13 +1,12 @@
-#pragma once
+ï»¿#pragma once
 
 #include "CoreMinimal.h"
 #include "MosesGameModeBase.h"
 #include "MosesMatchGameMode.generated.h"
 
 /**
- * Match Àü¿ë GameMode
- * - Base(MosesGameModeBase)°¡ Experience ·Îµù/½ºÆù °ÔÀÌÆ®/Spawn ÆÄÀÌÇÁ¶óÀÎÀ» ÀüºÎ ´ã´çÇÑ´Ù.
- * - ¿©±â¼­´Â "¸ÅÄ¡ ±ÔÄ¢" + "·Îºñ º¹±Í Travel" + "µğ¹ö±× ·Î±×"¸¸ ´ã´çÇÑ´Ù.
+ * Match ì „ìš© GameMode
+ * - ë§¤ì¹˜ ê·œì¹™ + ë¡œë¹„ ë³µê·€ Travel + ë””ë²„ê·¸ ë¡œê·¸
  */
 UCLASS()
 class UE5_MULTI_SHOOTER_API AMosesMatchGameMode : public AMosesGameModeBase
@@ -17,11 +16,11 @@ class UE5_MULTI_SHOOTER_API AMosesMatchGameMode : public AMosesGameModeBase
 public:
 	AMosesMatchGameMode();
 
-	/** ¼­¹ö ÄÜ¼Ö¿¡¼­ ·Îºñ·Î º¹±Í (Day4 Å×½ºÆ®¿ë) */
+	/** ì„œë²„ ì½˜ì†”ì—ì„œ ë¡œë¹„ë¡œ ë³µê·€ (Day4 í…ŒìŠ¤íŠ¸ìš©) */
 	UFUNCTION(Exec)
 	void TravelToLobby();
 
-	/** (¼±ÅÃ) ¸ÅÄ¡ ½ÃÀÛ ÈÄ NÃÊ µÚ ÀÚµ¿ º¹±Í Å×½ºÆ® */
+	/** (ì„ íƒ) ë§¤ì¹˜ ì‹œì‘ í›„ Nì´ˆ ë’¤ ìë™ ë³µê·€ í…ŒìŠ¤íŠ¸ */
 	UPROPERTY(EditDefaultsOnly, Category = "Match|Debug")
 	float AutoReturnToLobbySeconds = 0.0f;
 
@@ -29,10 +28,10 @@ protected:
 	virtual void InitGame(const FString& MapName, const FString& Options, FString& ErrorMessage) override;
 	virtual void BeginPlay() override;
 
-	/** ¸ÅÄ¡ ÁøÀÔ/À¯Áö °ËÁõ ·Î±×(PC/PS À¯Áö È®ÀÎ) */
+	/** ë§¤ì¹˜ ì§„ì…/ìœ ì§€ ê²€ì¦ ë¡œê·¸(PC/PS ìœ ì§€ í™•ì¸) */
 	virtual void PostLogin(APlayerController* NewPlayer) override;
 
-	/** Seamless Travel ÀÎ°è °úÁ¤ ·Î±× */
+	/** Seamless Travel ì¸ê³„ ê³¼ì • ë¡œê·¸ */
 	virtual void HandleSeamlessTravelPlayer(AController*& C) override;
 	virtual void GetSeamlessTravelActorList(bool bToTransition, TArray<AActor*>& ActorList) override;
 
@@ -40,7 +39,10 @@ private:
 	FString GetLobbyMapURL() const;
 	void DumpPlayerStates(const TCHAR* Prefix) const;
 
-	/** ¼­¹ö¿¡¼­¸¸ TravelÇÏµµ·Ï ¹æ¾î (¿£Áø CanServerTravel°ú ÀÌ¸§ Ãæµ¹ ¹æÁö) */
+	/** âœ… DoD ê³ ì • í¬ë§· ë¤í”„(AMosesPlayerStateë§Œ) */
+	void DumpAllDODPlayerStates(const TCHAR* Where) const;
+
+	/** ì„œë²„ì—ì„œë§Œ Travelí•˜ë„ë¡ ë°©ì–´ */
 	bool CanDoServerTravel() const;
 
 	FTimerHandle AutoReturnTimerHandle;

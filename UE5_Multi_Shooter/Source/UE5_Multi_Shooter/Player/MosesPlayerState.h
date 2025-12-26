@@ -1,4 +1,4 @@
-#pragma once
+ï»¿#pragma once
 
 #include "CoreMinimal.h"
 #include "GameFramework/PlayerState.h"
@@ -9,12 +9,12 @@ class UMosesExperienceDefinition;
 
 /**
  * PlayerState
- * - ÇÃ·¹ÀÌ¾îº° "À¯ÁöµÇ´Â µ¥ÀÌÅÍ" ÀúÀå¼Ò (Seamless Travel¿¡¼­µµ À¯Áö ´ë»ó)
- * - Experience ·Îµù ¿Ï·á ½ÃÁ¡¿¡ PawnData¸¦ È®Á¤/ÀúÀåÇÑ´Ù.
+ * - í”Œë ˆì´ì–´ë³„ "ìœ ì§€ë˜ëŠ” ë°ì´í„°" ì €ì¥ì†Œ (Seamless Travelì—ì„œë„ ìœ ì§€ ëŒ€ìƒ)
+ * - Experience ë¡œë”© ì™„ë£Œ ì‹œì ì— PawnDataë¥¼ í™•ì •/ì €ì¥í•œë‹¤.
  *
- * Day4 ÇÙ½É:
- * - PersistentId/SelectedCharacterId/bReady µîÀ» ³Ö°í
- * - ·Îºñ->¸ÅÄ¡->·Îºñ ¿Õº¹¿¡¼­µµ °ªÀÌ À¯ÁöµÊÀ» ·Î±×·Î Áõ¸íÇÑ´Ù.
+ * Day4 í•µì‹¬:
+ * - PersistentId/SelectedCharacterId/bReady ë“±ì„ ë„£ê³ 
+ * - ë¡œë¹„->ë§¤ì¹˜->ë¡œë¹„ ì™•ë³µì—ì„œë„ ê°’ì´ ìœ ì§€ë¨ì„ ë¡œê·¸ë¡œ ì¦ëª…í•œë‹¤.
  */
 UCLASS()
 class UE5_MULTI_SHOOTER_API AMosesPlayerState : public APlayerState
@@ -24,53 +24,59 @@ class UE5_MULTI_SHOOTER_API AMosesPlayerState : public APlayerState
 public:
 	AMosesPlayerState();
 
-	/** ExperienceManagerÀÇ ·Îµù ¿Ï·á ÀÌº¥Æ®¸¦ µî·ÏÇÏ´Â Å¸ÀÌ¹Ö */
+	/** ExperienceManagerì˜ ë¡œë”© ì™„ë£Œ ì´ë²¤íŠ¸ë¥¼ ë“±ë¡í•˜ëŠ” íƒ€ì´ë° */
 	virtual void PostInitializeComponents() final;
 
-	/** PlayerState°¡ º¸°ü ÁßÀÎ PawnData Á¶È¸ */
+	/** PlayerStateê°€ ë³´ê´€ ì¤‘ì¸ PawnData ì¡°íšŒ */
 	template <class T>
 	const T* GetPawnData() const { return Cast<T>(PawnData); }
 
-	/** µğ¹ö±ë ÇÑ ÁÙ ·Î±×¿ë */
+	/** ë””ë²„ê¹… í•œ ì¤„ ë¡œê·¸ìš© (ê¸°ì¡´ ìœ ì§€) */
 	FString MakeDebugString() const;
 
-	// ----- Lobby¿¡¼­ ¼³Á¤µÇ´Â "À¯Áö °ª" -----
+	/** âœ… DoD ê³ ì • í¬ë§· 1ì¤„ ë¡œê·¸ (grep íŒì •ìš©) */
+	void DOD_PS_Log(const UObject* WorldContext, const TCHAR* Where) const;
 
-	/** ÇÃ·¹ÀÌ¾î °íÁ¤ ID(¼­¹ö¿¡¼­ »ı¼º). Travel Àü/ÈÄ µ¿ÀÏ¼º Áõ¸í ÇÙ½É */
+	// ----- Lobbyì—ì„œ ì„¤ì •ë˜ëŠ” "ìœ ì§€ ê°’" -----
+
+	/** í”Œë ˆì´ì–´ ê³ ì • ID(ì„œë²„ì—ì„œ ìƒì„±). Travel ì „/í›„ ë™ì¼ì„± ì¦ëª… í•µì‹¬ */
 	UPROPERTY(Replicated, VisibleAnywhere, BlueprintReadOnly, Category = "Persist")
 	FGuid PersistentId;
 
-	/** ·Î±× °¡µ¶¼º¿ë ÀÌ¸§ */
+	/** ë¡œê·¸ ê°€ë…ì„±ìš© ì´ë¦„ */
 	UPROPERTY(Replicated, VisibleAnywhere, BlueprintReadOnly, Category = "Persist")
 	FString DebugName;
 
-	/** ·Îºñ¿¡¼­ ¼±ÅÃÇÑ Ä³¸¯ÅÍ(¶Ç´Â Å¬·¡½º/ÇÁ¸®¼Â ID) */
+	/** ë¡œë¹„ì—ì„œ ì„ íƒí•œ ìºë¦­í„°(ë˜ëŠ” í´ë˜ìŠ¤/í”„ë¦¬ì…‹ ID) */
 	UPROPERTY(Replicated, VisibleAnywhere, BlueprintReadOnly, Category = "Persist")
 	int32 SelectedCharacterId = 0;
 
-	/** ·Îºñ Ready */
+	/** ë¡œë¹„ Ready */
 	UPROPERTY(Replicated, VisibleAnywhere, BlueprintReadOnly, Category = "Lobby")
 	bool bReady = false;
 
-	// ¼­¹ö Àü¿ë ¼¼ÅÍ(¼­¹ö ±ÇÇÑÀ¸·Î¸¸ º¯°æ)
+	// ì„œë²„ ì „ìš© ì„¸í„°(ì„œë²„ ê¶Œí•œìœ¼ë¡œë§Œ ë³€ê²½)
 	void ServerSetSelectedCharacterId(int32 InId);
 	void ServerSetReady(bool bInReady);
 
-	// Seamless Travel Àç»ı¼º ´ëºñ(»óÈ²¿¡ µû¶ó È£ÃâµÉ ¼ö ÀÖÀ½)
+	// Seamless Travel ì¬ìƒì„± ëŒ€ë¹„(ìƒí™©ì— ë”°ë¼ í˜¸ì¶œë  ìˆ˜ ìˆìŒ)
 	virtual void CopyProperties(APlayerState* PlayerState) override;
 	virtual void OverrideWith(APlayerState* PlayerState) override;
 
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 
 private:
-	/** Experience ·Îµù ¿Ï·á Äİ¹é ¡æ PawnData È®Á¤/ÀúÀå */
+	/** Experience ë¡œë”© ì™„ë£Œ ì½œë°± â†’ PawnData í™•ì •/ì €ì¥ */
 	void OnExperienceLoaded(const UMosesExperienceDefinition* CurrentExperience);
 
-	/** PawnData ÃÖÃÊ 1È¸ ¼¼ÆÃ(Áßº¹ ¼¼ÆÃ ¹æÁö) */
+	/** PawnData ìµœì´ˆ 1íšŒ ì„¸íŒ…(ì¤‘ë³µ ì„¸íŒ… ë°©ì§€) */
 	void SetPawnData(const UMosesPawnData* InPawnData);
 
+	/** âœ… ì„œë²„ì—ì„œë§Œ PersistentId ë¶€ì—¬(ì•ˆì „) */
+	void EnsurePersistentId_ServerOnly();
+
 private:
-	/** ÇÃ·¹ÀÌ¾îº° PawnData(Experience ±âº»°ª ¶Ç´Â Ä¿½ºÅÒ °ª) */
+	/** í”Œë ˆì´ì–´ë³„ PawnData(Experience ê¸°ë³¸ê°’ ë˜ëŠ” ì»¤ìŠ¤í…€ ê°’) */
 	UPROPERTY()
 	TObjectPtr<const UMosesPawnData> PawnData;
 };

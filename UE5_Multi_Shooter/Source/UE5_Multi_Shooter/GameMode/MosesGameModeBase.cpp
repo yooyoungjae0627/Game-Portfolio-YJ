@@ -153,7 +153,7 @@ void AMosesGameModeBase::HandleMatchAssignmentIfNotExpectingOne()
 	FPrimaryAssetId ExperienceId;
 	const FString MapName = GetWorld() ? GetWorld()->GetMapName() : TEXT("WorldNone");
 
-	// ✅ (1) 함수에 들어왔는지부터 화면으로 확인
+	// (1) 함수에 들어왔는지부터 화면으로 확인
 	if (GEngine)
 	{
 		GEngine->AddOnScreenDebugMessage(
@@ -171,7 +171,7 @@ void AMosesGameModeBase::HandleMatchAssignmentIfNotExpectingOne()
 		UE_LOG(LogMosesExp, Warning, TEXT("[EXP][Pick] FromOptions Experience=%s (Map=%s)"),
 			*ExperienceId.ToString(), *MapName);
 
-		// ✅ (2) 옵션에서 뽑았다는 걸 화면으로 확인
+		// (2) 옵션에서 뽑았다는 걸 화면으로 확인
 		if (GEngine)
 		{
 			GEngine->AddOnScreenDebugMessage(
@@ -193,7 +193,7 @@ void AMosesGameModeBase::HandleMatchAssignmentIfNotExpectingOne()
 		UE_LOG(LogMosesExp, Warning, TEXT("[EXP][Pick] Fallback Experience=%s (Map=%s)"),
 			*ExperienceId.ToString(), *MapName);
 
-		// ✅ (3) Fallback으로 골랐다는 걸 화면으로 확인
+		// (3) Fallback으로 골랐다는 걸 화면으로 확인
 		if (GEngine)
 		{
 			GEngine->AddOnScreenDebugMessage(
@@ -203,7 +203,7 @@ void AMosesGameModeBase::HandleMatchAssignmentIfNotExpectingOne()
 		}
 	}
 
-	// ✅ (4) 최종 선택 결과 화면 확인
+	// (4) 최종 선택 결과 화면 확인
 	if (GEngine)
 	{
 		GEngine->AddOnScreenDebugMessage(
@@ -214,7 +214,7 @@ void AMosesGameModeBase::HandleMatchAssignmentIfNotExpectingOne()
 
 	check(ExperienceId.IsValid());
 
-	// ✅ (5) Assign으로 넘기기 직전 화면 확인(여기까지 오면 Pick은 통과)
+	// (5) Assign으로 넘기기 직전 화면 확인(여기까지 오면 Pick은 통과)
 	if (GEngine)
 	{
 		GEngine->AddOnScreenDebugMessage(
@@ -241,7 +241,6 @@ bool AMosesGameModeBase::IsExperienceLoaded() const
 
 void AMosesGameModeBase::OnExperienceLoaded(const UMosesExperienceDefinition* CurrentExperience)
 {
-	// 🔴 이 줄 추가
 	if (GEngine)
 	{
 		GEngine->AddOnScreenDebugMessage(
@@ -252,7 +251,6 @@ void AMosesGameModeBase::OnExperienceLoaded(const UMosesExperienceDefinition* Cu
 		);
 	}
 
-	// ✅ Day4-C 증명용 핵심 로그
 	UE_LOG(LogMosesExp, Warning, TEXT("[EXP][READY] Loaded Exp=%s"), *GetNameSafe(CurrentExperience));
 
 	// READY에서 SpawnGate 해제(NextTick Flush)
@@ -261,6 +259,7 @@ void AMosesGameModeBase::OnExperienceLoaded(const UMosesExperienceDefinition* Cu
 
 void AMosesGameModeBase::OnMatchAssignmentGiven(FPrimaryAssetId ExperienceId)
 {
+	// 화면 디버그: 서버가 어떤 Experience를 선택했는지 보여주기
 	if (GEngine)
 	{
 		GEngine->AddOnScreenDebugMessage(
@@ -269,14 +268,20 @@ void AMosesGameModeBase::OnMatchAssignmentGiven(FPrimaryAssetId ExperienceId)
 		);
 	}
 
+	// 로그: "지금부터 Experience를 서버에 세팅할 거다"
 	UE_LOG(LogMosesExp, Warning, TEXT("[EXP][Assign] -> ServerSetCurrentExperience %s"), *ExperienceId.ToString());
 
+	// GameMode는 서버에만 있으니,
+	// 서버가 가진 GameState에서 ExperienceManagerComponent를 찾는다
 	UMosesExperienceManagerComponent* ExperienceManagerComponent =
 		GameState->FindComponentByClass<UMosesExperienceManagerComponent>();
 	check(ExperienceManagerComponent);
 
+	// 서버 RPC 호출:
+	// "이번 매치의 Experience를 이걸로 확정해!"
 	ExperienceManagerComponent->ServerSetCurrentExperience(ExperienceId);
 
+	// 로그: 호출 끝
 	UE_LOG(LogMosesExp, Warning, TEXT("[EXP][Assign] <- ServerSetCurrentExperience called"));
 }
 

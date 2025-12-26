@@ -20,7 +20,7 @@ class UE5_MULTI_SHOOTER_API AMosesGameState : public AGameStateBase
 public:
 	AMosesGameState(const FObjectInitializer& ObjectInitializer);
 
-	///** Experience 로딩/Ready를 담당 */
+	/** Experience 로딩/Ready를 담당 */
 	UPROPERTY()
 	TObjectPtr<UMosesExperienceManagerComponent> ExperienceManagerComponent;
 	

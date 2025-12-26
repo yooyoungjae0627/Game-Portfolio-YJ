@@ -13,7 +13,7 @@ void UMosesGameInstance::Init()
 
 	UE_LOG(LogMosesExp, Log, TEXT("[GI] Init"));
 
-	// 🔥 GameInstance 시작 시 실행되는 초기화 구간
+	// GameInstance 시작 시 실행되는 초기화 구간
 	// 여기서 앞서 정의한 GameplayTags(InitState들)를
 	// GameFrameworkComponentManager에 등록해 상태 흐름을 구성한다.
 
@@ -53,7 +53,7 @@ void UMosesGameInstance::Init()
 void UMosesGameInstance::Shutdown()
 {
 	Super::Shutdown();
-	// 🔥 Game 종료 시 호출
+	// Game 종료 시 호출
 	// 특별한 정리는 필요 없으므로 현재는 기본 동작만 수행
 }
 

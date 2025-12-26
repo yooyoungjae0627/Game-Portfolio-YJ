@@ -1,5 +1,4 @@
-// MosesPlayerController.cpp
-#include "MosesPlayerController.h"
+ï»¿#include "MosesPlayerController.h"
 
 #include "UE5_Multi_Shooter/GameMode/MosesLobbyGameMode.h"
 #include "UE5_Multi_Shooter/GameMode/MosesMatchGameMode.h"
@@ -21,21 +20,20 @@ void AMosesPlayerController::BeginPlay()
 {
 	Super::BeginPlay();
 
-	AMosesPlayerState* PS = GetPlayerState<AMosesPlayerState>();
-	UE_LOG(LogMosesSpawn, Warning, TEXT("[PC] BeginPlay PC=%p PS=%s"),
-		this,
-		PS ? *PS->MakeDebugString() : TEXT("PS=None"));
+	if (AMosesPlayerState* PS = GetPlayerState<AMosesPlayerState>())
+	{
+		PS->DOD_PS_Log(this, TEXT("PC:BeginPlay"));
+	}
 }
 
 void AMosesPlayerController::OnPossess(APawn* InPawn)
 {
 	Super::OnPossess(InPawn);
 
-	AMosesPlayerState* PS = GetPlayerState<AMosesPlayerState>();
-	UE_LOG(LogMosesSpawn, Warning, TEXT("[PC] OnPossess PC=%p Pawn=%s PS=%s"),
-		this,
-		*GetNameSafe(InPawn),
-		PS ? *PS->MakeDebugString() : TEXT("PS=None"));
+	if (AMosesPlayerState* PS = GetPlayerState<AMosesPlayerState>())
+	{
+		PS->DOD_PS_Log(this, TEXT("PC:OnPossess"));
+	}
 }
 
 // --------------------
@@ -46,7 +44,9 @@ void AMosesPlayerController::Server_SetReady_Implementation(bool bInReady)
 	if (AMosesPlayerState* PS = GetPlayerState<AMosesPlayerState>())
 	{
 		PS->ServerSetReady(bInReady);
-		UE_LOG(LogMosesSpawn, Warning, TEXT("[PC->Server] SetReady=%d %s"), bInReady ? 1 : 0, *PS->MakeDebugString());
+
+		// âœ… E3 ì„œë²„ ë°˜ì˜ ì¦ëª… ë¡œê·¸ (ê³ ì • í¬ë§·)
+		PS->DOD_PS_Log(this, TEXT("Lobby:AfterServer_SetReady"));
 	}
 }
 
@@ -55,7 +55,9 @@ void AMosesPlayerController::Server_SetSelectedCharacterId_Implementation(int32 
 	if (AMosesPlayerState* PS = GetPlayerState<AMosesPlayerState>())
 	{
 		PS->ServerSetSelectedCharacterId(InId);
-		UE_LOG(LogMosesSpawn, Warning, TEXT("[PC->Server] SetChar=%d %s"), InId, *PS->MakeDebugString());
+
+		// âœ… E3 ì„œë²„ ë°˜ì˜ ì¦ëª… ë¡œê·¸ (ê³ ì • í¬ë§·)
+		PS->DOD_PS_Log(this, TEXT("Lobby:AfterServer_SetChar"));
 	}
 }
 
@@ -81,7 +83,7 @@ void AMosesPlayerController::TravelToMatch_Exec()
 		return;
 	}
 
-	// ¼­¹ö¿¡¼­ Á÷Á¢ È£Ãâ °¡´ÉÇÑ °æ¿ì(¸®½¼¼­¹ö PC µî)
+	// ì„œë²„ì—ì„œ ì§ì ‘ í˜¸ì¶œ ê°€ëŠ¥í•œ ê²½ìš°(ë¦¬ìŠ¨ì„œë²„ PC ë“±)
 	if (HasAuthority())
 	{
 		UE_LOG(LogMosesSpawn, Warning, TEXT("[DOD][Travel] ACCEPT (Server)"));
@@ -89,7 +91,7 @@ void AMosesPlayerController::TravelToMatch_Exec()
 		return;
 	}
 
-	// Å¬¶ó¿¡¼­ ÀÔ·Â -> ¼­¹ö RPC·Î Àü´Þ
+	// í´ë¼ì—ì„œ ìž…ë ¥ -> ì„œë²„ RPCë¡œ ì „ë‹¬
 	UE_LOG(LogMosesSpawn, Warning, TEXT("[DOD][Travel] SEND TO SERVER (Client)"));
 	Server_TravelToMatch();
 }
@@ -116,7 +118,6 @@ void AMosesPlayerController::TravelToLobby_Exec()
 
 void AMosesPlayerController::Server_TravelToMatch_Implementation()
 {
-	// ¼­¹ö¿¡¼­¸¸ ½ÇÇàµÇ¾î¾ß ÇÔ
 	if (!HasAuthority())
 	{
 		UE_LOG(LogMosesSpawn, Warning, TEXT("[DOD][Travel] REJECT (NoAuthority)"));
