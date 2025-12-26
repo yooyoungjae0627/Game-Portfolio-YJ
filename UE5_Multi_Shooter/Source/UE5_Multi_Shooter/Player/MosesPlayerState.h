@@ -34,7 +34,7 @@ public:
 	/** 디버깅 한 줄 로그용 (기존 유지) */
 	FString MakeDebugString() const;
 
-	/** ✅ DoD 고정 포맷 1줄 로그 (grep 판정용) */
+	/** DoD 고정 포맷 1줄 로그 (grep 판정용) */
 	void DOD_PS_Log(const UObject* WorldContext, const TCHAR* Where) const;
 
 	// ----- Lobby에서 설정되는 "유지 값" -----
@@ -72,7 +72,7 @@ private:
 	/** PawnData 최초 1회 세팅(중복 세팅 방지) */
 	void SetPawnData(const UMosesPawnData* InPawnData);
 
-	/** ✅ 서버에서만 PersistentId 부여(안전) */
+	/** 서버에서만 PersistentId 부여(안전) */
 	void EnsurePersistentId_ServerOnly();
 
 private:

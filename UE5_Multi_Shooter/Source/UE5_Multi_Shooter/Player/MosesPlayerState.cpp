@@ -42,33 +42,53 @@ void AMosesPlayerState::EnsurePersistentId_ServerOnly()
 }
 
 // ----------------------------------------------------
-// Experience 로딩 완료 시점에 PlayerState가 해야 할 초기화
+// Experience 로딩 완료 시점에 PlayerState가 반응하는 함수
 // ----------------------------------------------------
+// ⚠️ 중요 개념 요약
+// - 이 함수는 PlayerState에 있으므로 "서버/클라 모두에서 호출될 수 있음"
+// - 하지만, 내부 로직은 GetAuthGameMode()를 사용하므로
+//   "실제로 의미 있는 동작은 서버에서만 수행"된다.
+//
+// 역할 요약:
+// - 서버: 이 플레이어가 어떤 PawnData(직업/캐릭터 세트)를 사용할지 결정
+// - 클라: 이 함수는 호출될 수 있으나, 실제 로직은 실행되지 않음
+//
 void AMosesPlayerState::OnExperienceLoaded(const UMosesExperienceDefinition* CurrentExperience)
 {
-	// ※ 주의: 이 함수가 "호출 자체"는 서버/클라 어디서든 가능할 수 있음.
-	// 하지만 아래 로직은 GameMode를 사용하므로 "서버 전용 로직"이 된다.
-
-	// GetAuthGameMode는 서버에만 유효:
-	// - GameMode는 서버에만 존재(Authority only)
-	// - 클라이언트에서는 보통 nullptr
+	// ------------------------------------------------
+	// 서버 전용 분기
+	// ------------------------------------------------
+	// GameMode는 서버에만 존재하는 객체이다.
+	// 따라서 GetAuthGameMode()가 nullptr이 아니면
+	// "지금 이 코드는 서버에서 실행 중"임을 의미한다.
 	if (AMosesGameModeBase* GameMode = GetWorld()->GetAuthGameMode<AMosesGameModeBase>())
 	{
-		// PlayerState의 Owner는 보통 Controller(서버 기준: PlayerController)임
-		AController* OwnerController = Cast<AController>(GetOwner()); // PlayerState Owner = Controller
+		// PlayerState의 Owner는 서버 기준으로
+		// 해당 플레이어의 Controller(PlayerController)이다.
+		AController* OwnerController = Cast<AController>(GetOwner());
 
-		// GameMode 정책에 따라 "이 컨트롤러가 어떤 PawnData를 써야 하는지" 결정
-		// (예: Experience/Team/캐릭터 선택 등에 따라 PawnData가 달라질 수 있음)
-		const UMosesPawnData* NewPawnData = GameMode->GetPawnDataForController(OwnerController);
+		// GameMode 정책에 따라
+		// "이 Controller가 어떤 PawnData를 써야 하는지"를 결정한다.
+		// - Experience 종류
+		// - 팀
+		// - 로비에서 선택한 캐릭터
+		// 등의 정보를 종합해 서버가 단일 진실(Source of Truth)을 만든다.
+		const UMosesPawnData* NewPawnData =
+			GameMode->GetPawnDataForController(OwnerController);
 
-		// 서버에서 PawnData를 못 찾으면 스폰/능력치/입력 세팅이 깨지므로 강제 크래시로 조기 발견
+		// 서버에서 PawnData를 못 찾으면
+		// 이후 스폰/Ability/Input 초기화가 전부 망가질 수 있으므로
+		// 즉시 크래시로 문제를 드러내는 것이 낫다.
 		check(NewPawnData);
 
-		// PlayerState에 PawnData를 1회 세팅 (정책상 한번만)
+		// PlayerState에 PawnData를 세팅한다.
+		// 이 값은:
+		// - 서버에서는 스폰 정책의 기준이 되고
+		// - Replication을 통해 클라이언트로 전달된다.
 		SetPawnData(NewPawnData);
 
 		UE_LOG(LogTemp, Warning,
-			TEXT("[PS][PawnData] SetPawnData PS=%s PC=%s PawnData=%s"),
+			TEXT("[PS][PawnData][SERVER] SetPawnData PS=%s PC=%s PawnData=%s"),
 			*GetNameSafe(this),
 			*GetNameSafe(OwnerController),
 			*GetNameSafe(NewPawnData)
@@ -76,12 +96,19 @@ void AMosesPlayerState::OnExperienceLoaded(const UMosesExperienceDefinition* Cur
 	}
 	else
 	{
-		// 공부 포인트:
-		// 클라이언트에서는 여기로 떨어질 확률이 높다(= GameMode가 없기 때문).
-		// 즉, 현재 구현은 "서버에서 PawnData를 세팅"하는 의도에 맞다.
-		// (필요하면 여기에서 클라용 처리 대신, RepNotify(OnRep_PawnData)를 쓰는 게 정석)
+		// ------------------------------------------------
+		// 클라이언트 분기 (실제 로직 없음)
+		// ------------------------------------------------
+		// 클라이언트에서는:
+		// - GameMode가 존재하지 않기 때문에
+		// - 항상 이 else 경로로 들어온다.
+		//
+		// 즉, 클라이언트는 PawnData를 "결정"하지 않는다.
+		// 클라이언트는 서버가 PlayerState에 세팅한 PawnData를
+		// Replication(OnRep_PawnData)을 통해 전달받아 사용해야 한다.
 	}
 }
+
 
 // ----------------------------------------------------
 // PawnData 세팅 함수 (정책: 최초 1회만 세팅)

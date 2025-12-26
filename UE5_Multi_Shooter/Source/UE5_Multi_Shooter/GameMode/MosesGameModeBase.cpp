@@ -408,8 +408,8 @@ void AMosesGameModeBase::RestartPlayer(AController* NewPlayer)
 	UE_LOG(LogTemp, Warning, TEXT("[SPAWN] RestartPlayer Controller=%s ExpLoaded=%d"),
 		*GetNameSafe(NewPlayer), IsExperienceLoaded());
 
-	// ✅ READY 전 스폰 절대 금지(혹시 다른 경로에서 호출돼도 막아줌)
-	if (!IsExperienceLoaded())
+	// READY 전 스폰 절대 금지(혹시 다른 경로에서 호출돼도 막아줌)
+	if (IsExperienceLoaded() == false)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("[SPAWN] RestartPlayer BLOCKED (not READY)"));
 		return;
