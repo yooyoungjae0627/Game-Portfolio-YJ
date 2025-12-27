@@ -9,8 +9,6 @@
 
 AMosesPlayerState::AMosesPlayerState()
 {
-	// ctor에서는 Authority가 애매할 수 있어서 여기서 강제 생성하지 않는다.
-	// PersistentId는 PostInitializeComponents에서 서버 권한일 때만 보장한다.
 }
 
 void AMosesPlayerState::PostInitializeComponents()
@@ -30,6 +28,45 @@ void AMosesPlayerState::PostInitializeComponents()
 	ExperienceManagerComponent->CallOrRegister_OnExperienceLoaded(
 		FOnMosesExperienceLoaded::FDelegate::CreateUObject(this, &ThisClass::OnExperienceLoaded)
 	);
+}
+
+void AMosesPlayerState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
+{
+	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+
+	DOREPLIFETIME(AMosesPlayerState, PersistentId);
+	DOREPLIFETIME(AMosesPlayerState, DebugName);
+	DOREPLIFETIME(AMosesPlayerState, SelectedCharacterId);
+	DOREPLIFETIME(AMosesPlayerState, bReady);
+	DOREPLIFETIME(AMosesPlayerState, RoomId);
+	DOREPLIFETIME(AMosesPlayerState, bIsRoomHost);
+}
+
+void AMosesPlayerState::CopyProperties(APlayerState* PlayerState)
+{
+	Super::CopyProperties(PlayerState);
+
+	if (AMosesPlayerState* Dest = Cast<AMosesPlayerState>(PlayerState))
+	{
+		Dest->PersistentId = PersistentId;
+		Dest->DebugName = DebugName;
+		Dest->SelectedCharacterId = SelectedCharacterId;
+		Dest->bReady = bReady;
+		// PawnData는 경험치 로딩 흐름에서 다시 잡힐 수 있으니 정책에 맞게 선택
+	}
+}
+
+void AMosesPlayerState::OverrideWith(APlayerState* PlayerState)
+{
+	Super::OverrideWith(PlayerState);
+
+	if (AMosesPlayerState* Src = Cast<AMosesPlayerState>(PlayerState))
+	{
+		PersistentId = Src->PersistentId;
+		DebugName = Src->DebugName;
+		SelectedCharacterId = Src->SelectedCharacterId;
+		bReady = Src->bReady;
+	}
 }
 
 void AMosesPlayerState::EnsurePersistentId_ServerOnly()
@@ -136,20 +173,35 @@ void AMosesPlayerState::SetPawnData(const UMosesPawnData* InPawnData)
 
 void AMosesPlayerState::ServerSetSelectedCharacterId(int32 InId)
 {
-	if (!HasAuthority())
+	if (HasAuthority() == false)
 	{
 		return;
 	}
+
 	SelectedCharacterId = InId;
 }
 
 void AMosesPlayerState::ServerSetReady(bool bInReady)
 {
-	if (!HasAuthority())
+	if (HasAuthority() == false)
 	{
 		return;
 	}
+
 	bReady = bInReady;
+}
+
+void AMosesPlayerState::ServerSetRoom(const FGuid& InRoomId, bool bInIsHost)
+{
+	// PlayerState는 서버가 “단일 진실(Source of Truth)”로 들고 있고,
+	// RoomId / Host 같은 로비 상태는 여기서 복제해주면 UI가 자동 갱신된다.
+	if (HasAuthority() == false)
+	{
+		return;
+	}
+
+	RoomId = InRoomId;
+	bIsRoomHost = bInIsHost;
 }
 
 FString AMosesPlayerState::MakeDebugString() const
@@ -176,7 +228,7 @@ void AMosesPlayerState::DOD_PS_Log(const UObject* WorldContext, const TCHAR* Whe
 		(NM == NM_ListenServer) ? TEXT("LS") :
 		(NM == NM_Client) ? TEXT("CL") : TEXT("ST");
 
-	// ✅ 고정 1줄 포맷: grep 판정용
+	// 고정 1줄 포맷: grep 판정용
 	UE_LOG(LogTemp, Warning, TEXT("[DOD][PS][%s][%s] PS=%p PID=%s Char=%d Ready=%d Name=%s"),
 		NMStr,
 		Where,
@@ -186,41 +238,4 @@ void AMosesPlayerState::DOD_PS_Log(const UObject* WorldContext, const TCHAR* Whe
 		bReady ? 1 : 0,
 		*GetPlayerName()
 	);
-}
-
-void AMosesPlayerState::CopyProperties(APlayerState* PlayerState)
-{
-	Super::CopyProperties(PlayerState);
-
-	if (AMosesPlayerState* Dest = Cast<AMosesPlayerState>(PlayerState))
-	{
-		Dest->PersistentId = PersistentId;
-		Dest->DebugName = DebugName;
-		Dest->SelectedCharacterId = SelectedCharacterId;
-		Dest->bReady = bReady;
-		// PawnData는 경험치 로딩 흐름에서 다시 잡힐 수 있으니 정책에 맞게 선택
-	}
-}
-
-void AMosesPlayerState::OverrideWith(APlayerState* PlayerState)
-{
-	Super::OverrideWith(PlayerState);
-
-	if (AMosesPlayerState* Src = Cast<AMosesPlayerState>(PlayerState))
-	{
-		PersistentId = Src->PersistentId;
-		DebugName = Src->DebugName;
-		SelectedCharacterId = Src->SelectedCharacterId;
-		bReady = Src->bReady;
-	}
-}
-
-void AMosesPlayerState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
-{
-	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
-
-	DOREPLIFETIME(AMosesPlayerState, PersistentId);
-	DOREPLIFETIME(AMosesPlayerState, DebugName);
-	DOREPLIFETIME(AMosesPlayerState, SelectedCharacterId);
-	DOREPLIFETIME(AMosesPlayerState, bReady);
 }

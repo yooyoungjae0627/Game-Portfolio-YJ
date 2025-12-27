@@ -15,6 +15,7 @@ class UE5_MULTI_SHOOTER_API AMosesGameState : public AGameStateBase
 {
 	GENERATED_BODY()
 	
+protected:
 	virtual void BeginPlay() override;
 
 public:

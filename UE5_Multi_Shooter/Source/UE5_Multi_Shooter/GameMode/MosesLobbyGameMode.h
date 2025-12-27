@@ -17,23 +17,26 @@ class UE5_MULTI_SHOOTER_API AMosesLobbyGameMode : public AMosesGameModeBase
 public:
 	AMosesLobbyGameMode();
 
-	// PC Server RPC가 도착한 뒤, 서버가 최종 처리하는 루트
+	/** (Server) Start 버튼 요청 처리: 룰 검증 + Travel */
 	void HandleStartGameRequest(AMosesPlayerController* RequestPC);
 
-	/** 서버 콘솔에서 매치로 이동 */
-	UFUNCTION(Exec)
-	void TravelToMatch();
-
-protected:
+	// 기존
 	virtual void InitGame(const FString& MapName, const FString& Options, FString& ErrorMessage) override;
 	virtual void BeginPlay() override;
 
 	/** 복귀 후 정책 적용/증명 로그용 */
 	virtual void PostLogin(APlayerController* NewPlayer) override;
 
+	virtual void Logout(AController* Exiting) override;
+
 	/** Travel 직전/후 PS 유지 증명용 로그 포인트 */
 	virtual void HandleSeamlessTravelPlayer(AController*& C) override;
+	
 	virtual void GetSeamlessTravelActorList(bool bToTransition, TArray<AActor*>& ActorList) override;
+
+	/** 서버 콘솔에서 매치로 이동 */
+	UFUNCTION(Exec)
+	void TravelToMatch();
 
 private:
 	/** Match 맵 URL 정책을 한 곳에서 고정 */

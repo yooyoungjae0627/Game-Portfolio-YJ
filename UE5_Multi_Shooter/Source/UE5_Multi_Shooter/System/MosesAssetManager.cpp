@@ -30,7 +30,7 @@ void UMosesAssetManager::StartInitialLoading()
 {
 	Super::StartInitialLoading();
 
-	// ✅ Day3: 스캔 확인 로그 (A 검증용)
+	// 스캔 확인 로그 (A 검증용)
 	TArray<FPrimaryAssetId> FoundAssets;
 	GetPrimaryAssetIdList(ExperienceType(), FoundAssets);
 
@@ -55,7 +55,7 @@ UObject* UMosesAssetManager::SynchronousLoadAsset(const FSoftObjectPath& AssetPa
 		return nullptr;
 	}
 
-	// ✅ 옵션: 로딩 시간 측정 로그
+	// 옵션: 로딩 시간 측정 로그
 	const double Start = FPlatformTime::Seconds();
 
 	checkf(UAssetManager::IsValid(), TEXT("AssetManager must be valid when loading assets: %s"), *AssetPath.ToString());

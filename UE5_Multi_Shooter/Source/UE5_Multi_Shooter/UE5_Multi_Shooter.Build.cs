@@ -21,9 +21,10 @@ public class UE5_Multi_Shooter : ModuleRules
             "GameplayTags",    // GAS 태그 시스템
             "ModularGameplay", // GameFeature 기반 구조
             "GameFeatures",    // GameFeature 플러그인
-            "Projects"        // ✅ IPluginManager 해결
-
-            //"CommonUser"       // CommonUser 서브시스템
+            "Projects",        // PluginManager 해결
+            "NetCore",
+            "UMG",
+            "CommonUI",   
         });
 
         // 필요하면 Private 쪽에도 가능

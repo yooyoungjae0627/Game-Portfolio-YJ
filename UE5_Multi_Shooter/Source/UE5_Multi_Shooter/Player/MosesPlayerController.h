@@ -17,21 +17,36 @@ protected:
 	virtual void OnPossess(APawn* InPawn) override;
 
 public:
-	// ---- Lobby에서 UI가 호출할 서버 RPC ----
+	// ---------------------------
+	// Client → Server RPC (Lobby)
+	// ---------------------------
+
+	/** UI: “방 만들기” */
+	UFUNCTION(Server, Reliable)
+	void Server_CreateRoom(int32 MaxPlayers);
+
+	/** UI: “방 참가” */
+	UFUNCTION(Server, Reliable)
+	void Server_JoinRoom(const FGuid& RoomId);
+
+	/** UI: “방 나가기” */
+	UFUNCTION(Server, Reliable)
+	void Server_LeaveRoom();
+
+	/** UI: “Start Game” (호스트만) */
+	UFUNCTION(Server, Reliable)
+	void Server_RequestStartGame();
+
+	// (기존 RPC: Ready/Char 선택은 유지)
 	UFUNCTION(Server, Reliable)
 	void Server_SetReady(bool bInReady);
 
 	UFUNCTION(Server, Reliable)
 	void Server_SetSelectedCharacterId(int32 InId);
 
-	// ---- 디버그용 콘솔 ----
-	UFUNCTION(Exec)
-	void YJ_SetReady(int32 InReady01);
-
-	UFUNCTION(Exec)
-	void YJ_SetChar(int32 InId);
-
-	// 클라에서 입력해도 서버로 "전달"되도록 구성
+	// ---------------------------
+	// Dev Exec Helpers (기존 Travel 유지)
+	// ---------------------------
 	UFUNCTION(Exec)
 	void TravelToMatch_Exec();
 
@@ -49,4 +64,20 @@ private:
 	// 서버에서 GM에게 위임하는 실제 함수
 	void DoServerTravelToMatch();
 	void DoServerTravelToLobby();
+
+	// Lobby Preview Camera
+	UPROPERTY(EditDefaultsOnly, Category = "Lobby|Camera")
+	FName LobbyPreviewCameraTag = TEXT("LobbyPreviewCamera");
+
+	UPROPERTY(EditDefaultsOnly, Category = "Lobby|Camera")
+	float LobbyPreviewCameraDelay = 0.2f;
+
+	FTimerHandle LobbyPreviewCameraTimerHandle;
+
+private:
+	void ApplyLobbyPreviewCamera();
+
+	/** "로비 컨텍스트"인지 판단 (단일 맵에서 로비/매치 공존용) */
+	bool IsLobbyContext() const;
+
 };
