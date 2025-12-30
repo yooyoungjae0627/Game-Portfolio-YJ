@@ -1,4 +1,4 @@
-#pragma once
+ï»¿#pragma once
 
 #include "Blueprint/UserWidget.h"
 #include "MosesLobbyWidget.generated.h"
@@ -10,9 +10,9 @@ class UEditableTextBox;
 /**
  * UMosesLobbyWidget
  *
- * - WBP_LobbyÀÇ ·ÎÁ÷ ´ã´ç(C++)
- * - µğÀÚÀÌ³Ê´Â WBP¿¡¼­ À¯Áö
- * - ¹öÆ° Å¬¸¯/Ã¼Å© ÀÌº¥Æ® -> PlayerController RPC È£Ãâ
+ * - WBP_Lobbyì˜ ë¡œì§ ë‹´ë‹¹(C++)
+ * - ë””ìì´ë„ˆëŠ” WBPì—ì„œ ìœ ì§€
+ * - ë²„íŠ¼ í´ë¦­/ì²´í¬ ì´ë²¤íŠ¸ -> PlayerController RPC í˜¸ì¶œ
  */
 UCLASS()
 class UE5_MULTI_SHOOTER_API UMosesLobbyWidget : public UUserWidget
@@ -22,28 +22,8 @@ class UE5_MULTI_SHOOTER_API UMosesLobbyWidget : public UUserWidget
 protected:
 	virtual void NativeConstruct() override;
 
-	/** Owning Player¸¦ MosesPlayerController·Î Ä³½ºÆÃÇØ¼­ ¹İÈ¯ */
+	/** Owning Playerë¥¼ MosesPlayerControllerë¡œ ìºìŠ¤íŒ…í•´ì„œ ë°˜í™˜ */
 	class AMosesPlayerController* GetMosesPC() const;
-
-	// ---- UI Widgets (WBP¿¡¼­ "Is Variable" Ã¼Å© + ÀÌ¸§ ÀÏÄ¡ ÇÊ¿ä) ----
-	UPROPERTY(meta = (BindWidget))
-	TObjectPtr<UButton> Button_CreateRoom;
-
-	UPROPERTY(meta = (BindWidget))
-	TObjectPtr<UButton> Button_JoinRoom;
-
-	UPROPERTY(meta = (BindWidget))
-	TObjectPtr<UButton> Button_LeaveRoom;
-
-	UPROPERTY(meta = (BindWidget))
-	TObjectPtr<UButton> Button_StartGame;
-
-	UPROPERTY(meta = (BindWidget))
-	TObjectPtr<UCheckBox> CheckBox_Ready;
-
-	// Join RoomId ÀÔ·Â¿ë
-	UPROPERTY(meta = (BindWidgetOptional))
-	TObjectPtr<UEditableTextBox> TextBox_RoomId;
 
 	// ---- Event handlers ----
 	UFUNCTION()
@@ -61,8 +41,39 @@ protected:
 	UFUNCTION()
 	void OnReadyChanged(bool bIsChecked);
 
+public:
+	// âœ… Subsystemì´ CreateRoom ê²°ê³¼ë¡œ ë°›ì€ RoomIdë¥¼ ìœ„ì ¯ì— ìë™ ì…ë ¥
+	void SetRoomIdText(const FGuid& RoomId);
+
+	/** Start ë²„íŠ¼ í™œì„±í™” ì¡°ê±´ ê²€ì‚¬ */
+	bool CanStartGame() const;
+
+	/** Start ë²„íŠ¼ ìƒíƒœ ê°±ì‹  */
+	void UpdateStartButton();
+
 private:
-	/** ÀÓ½Ã: CreateRoom MaxPlayers */
+	// ---- UI Widgets (WBPì—ì„œ "Is Variable" ì²´í¬ + ì´ë¦„ ì¼ì¹˜ í•„ìš”) ----
+	UPROPERTY(meta = (BindWidget))
+	TObjectPtr<UButton> Button_CreateRoom;
+
+	UPROPERTY(meta = (BindWidget))
+	TObjectPtr<UButton> Button_JoinRoom;
+
+	UPROPERTY(meta = (BindWidget))
+	TObjectPtr<UButton> Button_LeaveRoom;
+
+	UPROPERTY(meta = (BindWidget))
+	TObjectPtr<UButton> Button_StartGame;
+
+	UPROPERTY(meta = (BindWidget))
+	TObjectPtr<UCheckBox> CheckBox_Ready;
+
+	// Join RoomId ì…ë ¥ìš©
+	UPROPERTY(meta = (BindWidget))
+	TObjectPtr<UEditableTextBox> TextBox_RoomId;
+
+private:
+	/** ì„ì‹œ: CreateRoom MaxPlayers */
 	UPROPERTY(EditAnywhere, Category = "Lobby|Debug")
-	int32 DebugMaxPlayers = 4;
+	int32 DebugMaxPlayers = 3;
 };

@@ -1,4 +1,5 @@
 ﻿#include "MosesLobbyLocalPlayerSubsystem.h"
+#include "UE5_Multi_Shooter/UI/MosesLobbyWidget.h"  
 
 #include "Blueprint/UserWidget.h"
 #include "EnhancedInputSubsystems.h"
@@ -32,30 +33,50 @@ TEXT("/GF_Lobby/Lobby/Input/IMC_Lobby.IMC_Lobby");
  */
 void UMosesLobbyLocalPlayerSubsystem::EnsureAssetsLoaded()
 {
+	// ---- IMC ----
 	if (!IMC_Lobby && !bTriedLoadIMC)
 	{
 		bTriedLoadIMC = true;
 
 		IMC_Lobby = Cast<UInputMappingContext>(
-			StaticLoadObject(
-				UInputMappingContext::StaticClass(),
-				nullptr,
-				LobbyIMCPath
-			)
-		);
+			StaticLoadObject(UInputMappingContext::StaticClass(), nullptr, LobbyIMCPath));
 
 		if (!IMC_Lobby)
 		{
-			UE_LOG(LogTemp, Error,
-				TEXT("[LobbyUI] Failed to load IMC: %s"), LobbyIMCPath);
+			UE_LOG(LogTemp, Error, TEXT("[LobbyUI] Failed to load IMC: %s"), LobbyIMCPath);
 		}
 		else
 		{
-			UE_LOG(LogTemp, Warning,
-				TEXT("[LobbyUI] Loaded IMC: %s"), LobbyIMCPath);
+			UE_LOG(LogTemp, Warning, TEXT("[LobbyUI] Loaded IMC: %s"), LobbyIMCPath);
+		}
+	}
+
+	// ---- WidgetClass ----
+	if (!LobbyWidgetClass && !bTriedLoadWidgetClass)
+	{
+		bTriedLoadWidgetClass = true;
+
+		UClass* Loaded = StaticLoadClass(UUserWidget::StaticClass(), nullptr, LobbyWidgetPath);
+		if (!Loaded)
+		{
+			UE_LOG(LogTemp, Error, TEXT("[LobbyUI] Failed to load widget class: %s"), LobbyWidgetPath);
+		}
+		else
+		{
+			LobbyWidgetClass = Loaded;
+			UE_LOG(LogTemp, Warning, TEXT("[LobbyUI] Loaded WidgetClass: %s"), LobbyWidgetPath);
 		}
 	}
 }
+
+void UMosesLobbyLocalPlayerSubsystem::NotifyRoomStateChanged()
+{
+	if (LobbyWidget.IsValid())
+	{
+		LobbyWidget->UpdateStartButton();
+	}
+}
+
 
 /**
  * ActivateLobbyUI
@@ -80,74 +101,54 @@ void UMosesLobbyLocalPlayerSubsystem::ActivateLobbyUI()
 	ULocalPlayer* LP = GetLocalPlayer();
 	if (!LP)
 	{
-		UE_LOG(LogTemp, Error,
-			TEXT("[LobbyUI] ActivateLobbyUI REJECT: No LocalPlayer"));
+		UE_LOG(LogTemp, Error, TEXT("[LobbyUI] ActivateLobbyUI REJECT: No LocalPlayer"));
 		return;
 	}
 
-	// 에셋 보장 로드 + 입력 매핑 적용
 	EnsureAssetsLoaded();
 	AddLobbyMapping();
 
-	// UI 중복 생성 방지
 	if (LobbyWidget.IsValid())
 	{
-		UE_LOG(LogTemp, Warning,
-			TEXT("[LobbyUI] ActivateLobbyUI SKIP: LobbyWidget already exists"));
+		UE_LOG(LogTemp, Warning, TEXT("[LobbyUI] ActivateLobbyUI SKIP: LobbyWidget already exists"));
 		return;
 	}
 
-	// Widget Class 로드
-	UClass* WidgetClass =
-		StaticLoadClass(UUserWidget::StaticClass(), nullptr, LobbyWidgetPath);
-
-	if (!WidgetClass)
+	if (!LobbyWidgetClass)
 	{
-		UE_LOG(LogTemp, Error,
-			TEXT("[LobbyUI] Failed to load widget class: %s"), LobbyWidgetPath);
+		UE_LOG(LogTemp, Error, TEXT("[LobbyUI] ActivateLobbyUI REJECT: LobbyWidgetClass is null"));
 		return;
 	}
 
 	APlayerController* PC = LP->GetPlayerController(GetWorld());
 	if (!PC)
 	{
-		UE_LOG(LogTemp, Error,
-			TEXT("[LobbyUI] ActivateLobbyUI REJECT: No PlayerController"));
+		UE_LOG(LogTemp, Error, TEXT("[LobbyUI] ActivateLobbyUI REJECT: No PlayerController"));
 		return;
 	}
 
-	// Widget 인스턴스 생성
-	UUserWidget* Widget = CreateWidget<UUserWidget>(PC, WidgetClass);
-	if (!Widget)
+	UUserWidget* RawWidget = CreateWidget<UUserWidget>(PC, LobbyWidgetClass);
+	UMosesLobbyWidget* TypedWidget = Cast<UMosesLobbyWidget>(RawWidget);
+
+	if (!TypedWidget)
 	{
-		UE_LOG(LogTemp, Error,
-			TEXT("[LobbyUI] ActivateLobbyUI REJECT: CreateWidget failed"));
+		UE_LOG(LogTemp, Error, TEXT("[LobbyUI] ActivateLobbyUI REJECT: CreateWidget/Cast failed (UMosesLobbyWidget)"));
+		if (RawWidget) RawWidget->RemoveFromParent();
 		return;
 	}
 
-	Widget->AddToViewport();
-	LobbyWidget = Widget;
+	TypedWidget->AddToViewport();
+	LobbyWidget = TypedWidget;
 
-	/**
-	 * 입력 모드 설정
-	 *
-	 * 핵심 포인트:
-	 * - SetWidgetToFocus:
-	 *   → UI 클릭 안 먹는 문제 방지
-	 *
-	 * - DoNotLock + HideCursor=false:
-	 *   → 로비에서 마우스 자유 이동
-	 */
 	FInputModeGameAndUI InputMode;
-	InputMode.SetWidgetToFocus(Widget->TakeWidget());
+	InputMode.SetWidgetToFocus(TypedWidget->TakeWidget());
 	InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
 	InputMode.SetHideCursorDuringCapture(false);
 
 	PC->SetInputMode(InputMode);
 	PC->SetShowMouseCursor(true);
 
-	UE_LOG(LogTemp, Warning,
-		TEXT("[LobbyUI] Lobby UI successfully activated"));
+	UE_LOG(LogTemp, Warning, TEXT("[LobbyUI] Lobby UI successfully activated"));
 }
 
 /**
@@ -168,35 +169,31 @@ void UMosesLobbyLocalPlayerSubsystem::DeactivateLobbyUI()
 
 	RemoveLobbyMapping();
 
-	// UI 제거
+	// ✅ UI 제거
 	if (LobbyWidget.IsValid())
 	{
 		LobbyWidget->RemoveFromParent();
 		LobbyWidget = nullptr;
 
-		UE_LOG(LogTemp, Warning,
-			TEXT("[LobbyUI] Lobby UI removed"));
+		UE_LOG(LogTemp, Warning, TEXT("[LobbyUI] Lobby UI removed"));
 	}
 	else
 	{
-		UE_LOG(LogTemp, Warning,
-			TEXT("[LobbyUI] DeactivateLobbyUI: LobbyWidget already invalid"));
+		UE_LOG(LogTemp, Warning, TEXT("[LobbyUI] DeactivateLobbyUI: LobbyWidget already invalid"));
 	}
 
-	// 입력 모드 원복
+	// ✅ 입력 모드 원복
 	ULocalPlayer* LP = GetLocalPlayer();
 	if (!LP)
 	{
-		UE_LOG(LogTemp, Warning,
-			TEXT("[LobbyUI] DeactivateLobbyUI: No LocalPlayer"));
+		UE_LOG(LogTemp, Warning, TEXT("[LobbyUI] DeactivateLobbyUI: No LocalPlayer"));
 		return;
 	}
 
 	APlayerController* PC = LP->GetPlayerController(GetWorld());
 	if (!PC)
 	{
-		UE_LOG(LogTemp, Warning,
-			TEXT("[LobbyUI] DeactivateLobbyUI: No PlayerController"));
+		UE_LOG(LogTemp, Warning, TEXT("[LobbyUI] DeactivateLobbyUI: No PlayerController"));
 		return;
 	}
 
@@ -204,9 +201,9 @@ void UMosesLobbyLocalPlayerSubsystem::DeactivateLobbyUI()
 	PC->SetInputMode(InputMode);
 	PC->SetShowMouseCursor(false);
 
-	UE_LOG(LogTemp, Warning,
-		TEXT("[LobbyUI] Input mode restored (GameOnly)"));
+	UE_LOG(LogTemp, Warning, TEXT("[LobbyUI] Input mode restored (GameOnly)"));
 }
+
 
 void UMosesLobbyLocalPlayerSubsystem::AddLobbyMapping()
 {
@@ -277,3 +274,17 @@ void UMosesLobbyLocalPlayerSubsystem::RemoveLobbyMapping()
 
 	UE_LOG(LogTemp, Warning, TEXT("[LobbyUI] Lobby IMC removed"));
 }
+
+void UMosesLobbyLocalPlayerSubsystem::NotifyRoomCreated(const FGuid& NewRoomId)
+{
+	if (!LobbyWidget.IsValid())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[LobbyUI] NotifyRoomCreated SKIP: LobbyWidget invalid"));
+		return;
+	}
+
+	LobbyWidget->SetRoomIdText(NewRoomId);
+	UE_LOG(LogTemp, Warning, TEXT("[LobbyUI] NotifyRoomCreated OK RoomId=%s"),
+		*NewRoomId.ToString(EGuidFormats::DigitsWithHyphens));
+}
+

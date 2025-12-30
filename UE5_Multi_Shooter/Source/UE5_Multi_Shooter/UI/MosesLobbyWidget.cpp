@@ -7,6 +7,8 @@
 #include "Components/EditableTextBox.h"
 
 #include "UE5_Multi_Shooter/Player/MosesPlayerController.h"
+#include "UE5_Multi_Shooter/Player/MosesPlayerState.h"
+#include "UE5_Multi_Shooter/GameMode/GameState/MosesLobbyGameState.h"
 
 void UMosesLobbyWidget::NativeConstruct()
 {
@@ -58,7 +60,18 @@ void UMosesLobbyWidget::NativeConstruct()
 		UE_LOG(LogTemp, Error, TEXT("[LobbyUI] CheckBox_Ready is null (BindWidget failed)"));
 	}
 
+	if (!TextBox_RoomId)
+	{
+		UE_LOG(LogTemp, Error, TEXT("[LobbyUI] TextBox_RoomId is null (BindWidget failed)"));
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[LobbyUI] TextBox_RoomId bind OK"));
+	}
+
 	UE_LOG(LogTemp, Warning, TEXT("[LobbyUI] UMosesLobbyWidget::NativeConstruct complete"));
+
+	UpdateStartButton(); // 최초 상태 반영
 }
 
 AMosesPlayerController* UMosesLobbyWidget::GetMosesPC() const
@@ -110,6 +123,7 @@ void UMosesLobbyWidget::OnReadyChanged(bool bIsChecked)
 	}
 
 	MPC->Server_SetReady(bIsChecked);
+	UpdateStartButton(); // 내 Ready 바뀌었으니 갱신
 }
 
 void UMosesLobbyWidget::OnClicked_StartGame()
@@ -154,5 +168,56 @@ void UMosesLobbyWidget::OnClicked_JoinRoom()
 	MPC->Server_JoinRoom(RoomId);  
 }
 
+void UMosesLobbyWidget::SetRoomIdText(const FGuid& RoomId)
+{
+	if (!TextBox_RoomId)
+	{
+		UE_LOG(LogTemp, Error, TEXT("[LobbyUI] SetRoomIdText FAIL: TextBox_RoomId is null (BindWidget failed)"));
+		return;
+	}
 
+	const FString Str = RoomId.ToString(EGuidFormats::DigitsWithHyphens);
+	TextBox_RoomId->SetText(FText::FromString(Str));
 
+	UE_LOG(LogTemp, Warning, TEXT("[LobbyUI] RoomId AutoFilled: %s"), *Str);
+}
+
+bool UMosesLobbyWidget::CanStartGame() const
+{
+	const AMosesPlayerState* PS = GetOwningPlayerState<AMosesPlayerState>();
+	if (!PS || !PS->bIsRoomHost)
+	{
+		return false;
+	}
+
+	const AMosesLobbyGameState* LGS =
+		GetWorld() ? GetWorld()->GetGameState<AMosesLobbyGameState>() : nullptr;
+	if (!LGS)
+	{
+		return false;
+	}
+
+	const FMosesLobbyRoomItem* Room = LGS->FindRoom(PS->RoomId);
+	if (!Room)
+	{
+		return false;
+	}
+
+	return Room->MemberPids.Num() == Room->MaxPlayers
+		&& Room->IsAllReady();
+}
+
+void UMosesLobbyWidget::UpdateStartButton()
+{
+	if (!Button_StartGame)
+	{
+		return;
+	}
+
+	const bool bEnable = CanStartGame();
+	Button_StartGame->SetIsEnabled(bEnable);
+
+	UE_LOG(LogTemp, Warning,
+		TEXT("[LobbyUI] UpdateStartButton: %s"),
+		bEnable ? TEXT("ENABLED") : TEXT("DISABLED"));
+}

@@ -3,6 +3,7 @@
 #include "Subsystems/LocalPlayerSubsystem.h"
 #include "MosesLobbyLocalPlayerSubsystem.generated.h"
 
+class UMosesLobbyWidget;   // 구체 위젯 타입(룸ID 자동 입력 등) 호출하려고 필요
 class UInputMappingContext;
 class UUserWidget;
 
@@ -31,6 +32,9 @@ class UE5_MULTI_SHOOTER_API UMosesLobbyLocalPlayerSubsystem
 	GENERATED_BODY()
 
 public:
+	/** Room 상태 변경 시 UI 갱신용 */
+	void NotifyRoomStateChanged();
+
 	/**
 	 * GF_Lobby 활성 시 호출
 	 *
@@ -49,17 +53,20 @@ public:
 	 */
 	void DeactivateLobbyUI();
 
-private:
-	/**
-	 * 현재 활성화된 Lobby UI
-	 *
-	 * - WeakPtr 사용 이유:
-	 *   · 레벨 이동 / GC / 외부 Remove 대비
-	 *   · 유효성 체크 후 안전 접근
-	 */
-	UPROPERTY()
-	TWeakObjectPtr<UUserWidget> LobbyWidget;
+	// ✅ (PC ClientRPC -> Subsystem -> Widget) RoomId 자동 채우기 진입점
+	void NotifyRoomCreated(const FGuid& NewRoomId);
 
+private:
+	/** IMC / Widget 에셋 로드 보장 */
+	void EnsureAssetsLoaded();
+
+	/** Lobby IMC 적용 (중복 방지 포함) */
+	void AddLobbyMapping();
+
+	/** Lobby IMC 제거 */
+	void RemoveLobbyMapping();
+
+private:
 	/**
 	 * 로비 전용 Input Mapping Context
 	 *
@@ -89,12 +96,18 @@ private:
 	bool bTriedLoadWidgetClass = false;
 
 private:
-	/** IMC / Widget 에셋 로드 보장 */
-	void EnsureAssetsLoaded();
+	/**
+	 * 현재 활성화된 Lobby UI
+	 *
+     * - WeakPtr 사용 이유:
+     *   · 레벨 이동 / GC / 외부 Remove 대비
+     *   · 유효성 체크 후 안전 접근
+     */
 
-	/** Lobby IMC 적용 (중복 방지 포함) */
-	void AddLobbyMapping();
+	UPROPERTY()
+	TWeakObjectPtr<UMosesLobbyWidget> LobbyWidget;  // ✅ 구체 타입으로 저장
 
-	/** Lobby IMC 제거 */
-	void RemoveLobbyMapping();
+	UPROPERTY()
+	TSubclassOf<UUserWidget> LobbyWidgetClass = nullptr; // ✅ cpp에서 쓰는 그 변수, 여기 있어야 함
+
 };

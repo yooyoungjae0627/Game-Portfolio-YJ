@@ -151,11 +151,17 @@ void AMosesLobbyGameMode::Logout(AController* Exiting)
 	Super::Logout(Exiting);
 
 	/*
-	 * [공부 포인트] Logout
 	 * - 플레이어가 연결 종료/나가기 시 서버에서 호출.
 	 * - 로비 룸을 운영할 때 “유령 인원”이 남지 않도록
 	 *   방에서 제거하는 처리가 거의 필수.
 	 */
+
+	 // ✅ Disconnect/강종 포함: 서버가 "방 상태"를 정리하는 최종 지점
+	if (!HasAuthority())
+	{
+		return;
+	}
+
 	AMosesLobbyGameState* LGS = GetGameState<AMosesLobbyGameState>();
 	APlayerController* PC = Cast<APlayerController>(Exiting);
 	AMosesPlayerState* PS = PC ? PC->GetPlayerState<AMosesPlayerState>() : nullptr;
