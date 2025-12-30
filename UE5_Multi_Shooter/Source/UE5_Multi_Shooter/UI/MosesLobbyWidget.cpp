@@ -1,6 +1,4 @@
-﻿// Fill out your copyright notice in the Description page of Project Settings.
-
-#include "MosesLobbyWidget.h"
+﻿#include "MosesLobbyWidget.h"
 
 #include "Components/Button.h"
 #include "Components/CheckBox.h"
@@ -14,14 +12,16 @@ void UMosesLobbyWidget::NativeConstruct()
 {
 	Super::NativeConstruct();
 
-	// 버튼/체크박스 바인딩
+	// 바인딩 실패는 WBP 설정 문제(이름 불일치/IsVariable 미체크)일 가능성이 높다.
+	// 실패 지점을 바로 찾을 수 있게 각 위젯마다 로그를 분리해 둔다.
+
 	if (Button_CreateRoom)
 	{
 		Button_CreateRoom->OnClicked.AddDynamic(this, &UMosesLobbyWidget::OnClicked_CreateRoom);
 	}
 	else
 	{
-		UE_LOG(LogTemp, Error, TEXT("[LobbyUI] Button_CreateRoom is null (BindWidget failed)"));
+		UE_LOG(LogTemp, Error, TEXT("[LobbyUI] Bind FAIL: Button_CreateRoom"));
 	}
 
 	if (Button_JoinRoom)
@@ -30,7 +30,7 @@ void UMosesLobbyWidget::NativeConstruct()
 	}
 	else
 	{
-		UE_LOG(LogTemp, Error, TEXT("[LobbyUI] Button_JoinRoom is null (BindWidget failed)"));
+		UE_LOG(LogTemp, Error, TEXT("[LobbyUI] Bind FAIL: Button_JoinRoom"));
 	}
 
 	if (Button_LeaveRoom)
@@ -39,7 +39,7 @@ void UMosesLobbyWidget::NativeConstruct()
 	}
 	else
 	{
-		UE_LOG(LogTemp, Error, TEXT("[LobbyUI] Button_LeaveRoom is null (BindWidget failed)"));
+		UE_LOG(LogTemp, Error, TEXT("[LobbyUI] Bind FAIL: Button_LeaveRoom"));
 	}
 
 	if (Button_StartGame)
@@ -48,7 +48,7 @@ void UMosesLobbyWidget::NativeConstruct()
 	}
 	else
 	{
-		UE_LOG(LogTemp, Error, TEXT("[LobbyUI] Button_StartGame is null (BindWidget failed)"));
+		UE_LOG(LogTemp, Error, TEXT("[LobbyUI] Bind FAIL: Button_StartGame"));
 	}
 
 	if (CheckBox_Ready)
@@ -57,54 +57,45 @@ void UMosesLobbyWidget::NativeConstruct()
 	}
 	else
 	{
-		UE_LOG(LogTemp, Error, TEXT("[LobbyUI] CheckBox_Ready is null (BindWidget failed)"));
+		UE_LOG(LogTemp, Error, TEXT("[LobbyUI] Bind FAIL: CheckBox_Ready"));
 	}
 
 	if (!TextBox_RoomId)
 	{
-		UE_LOG(LogTemp, Error, TEXT("[LobbyUI] TextBox_RoomId is null (BindWidget failed)"));
-	}
-	else
-	{
-		UE_LOG(LogTemp, Warning, TEXT("[LobbyUI] TextBox_RoomId bind OK"));
+		UE_LOG(LogTemp, Error, TEXT("[LobbyUI] Bind FAIL: TextBox_RoomId"));
 	}
 
-	UE_LOG(LogTemp, Warning, TEXT("[LobbyUI] UMosesLobbyWidget::NativeConstruct complete"));
-
-	UpdateStartButton(); // 최초 상태 반영
+	// 초기 UI 상태 반영(로비 진입 직후, 혹은 Rep 데이터가 이미 있는 경우 대비)
+	UpdateStartButton();
 }
 
 AMosesPlayerController* UMosesLobbyWidget::GetMosesPC() const
 {
-	if (APlayerController* PC = GetOwningPlayer())
-	{
-		return Cast<AMosesPlayerController>(PC);
-	}
-	return nullptr;
+	// 위젯의 OwningPlayer는 LocalPlayer 기준으로 설정된다.
+	// 서버 RPC 호출은 MosesPlayerController에서만 하므로 여기서 캐스팅한다.
+	return Cast<AMosesPlayerController>(GetOwningPlayer());
 }
 
 void UMosesLobbyWidget::OnClicked_CreateRoom()
 {
-	UE_LOG(LogTemp, Warning, TEXT("[LobbyUI] CreateRoom Clicked"));
-
 	AMosesPlayerController* MPC = GetMosesPC();
 	if (!MPC)
 	{
-		UE_LOG(LogTemp, Error, TEXT("[LobbyUI] CreateRoom: Cast MosesPC failed"));
+		UE_LOG(LogTemp, Error, TEXT("[LobbyUI] CreateRoom FAIL: MosesPC cast"));
 		return;
 	}
 
+	// 실제 룸 생성/정원 검증은 서버에서 결정한다.
+	// DebugMaxPlayers는 테스트 편의를 위한 입력값.
 	MPC->Server_CreateRoom(DebugMaxPlayers);
 }
 
 void UMosesLobbyWidget::OnClicked_LeaveRoom()
 {
-	UE_LOG(LogTemp, Warning, TEXT("[LobbyUI] LeaveRoom Clicked"));
-
 	AMosesPlayerController* MPC = GetMosesPC();
 	if (!MPC)
 	{
-		UE_LOG(LogTemp, Error, TEXT("[LobbyUI] LeaveRoom: Cast MosesPC failed"));
+		UE_LOG(LogTemp, Error, TEXT("[LobbyUI] LeaveRoom FAIL: MosesPC cast"));
 		return;
 	}
 
@@ -113,44 +104,43 @@ void UMosesLobbyWidget::OnClicked_LeaveRoom()
 
 void UMosesLobbyWidget::OnReadyChanged(bool bIsChecked)
 {
-	UE_LOG(LogTemp, Warning, TEXT("[LobbyUI] Ready Changed = %s"), bIsChecked ? TEXT("TRUE") : TEXT("FALSE"));
-
 	AMosesPlayerController* MPC = GetMosesPC();
 	if (!MPC)
 	{
-		UE_LOG(LogTemp, Error, TEXT("[LobbyUI] Ready: Cast MosesPC failed"));
+		UE_LOG(LogTemp, Error, TEXT("[LobbyUI] Ready FAIL: MosesPC cast"));
 		return;
 	}
 
+	// Ready 상태는 서버 authoritative로 저장/복제된다.
 	MPC->Server_SetReady(bIsChecked);
-	UpdateStartButton(); // 내 Ready 바뀌었으니 갱신
+
+	// 내 입력 직후 UI 반응(체감)용. 최종 상태는 Rep 갱신에서 다시 확정된다.
+	UpdateStartButton();
 }
 
 void UMosesLobbyWidget::OnClicked_StartGame()
 {
-	UE_LOG(LogTemp, Warning, TEXT("[LobbyUI] StartGame Clicked"));
-
 	AMosesPlayerController* MPC = GetMosesPC();
 	if (!MPC)
 	{
-		UE_LOG(LogTemp, Error, TEXT("[LobbyUI] StartGame: Cast MosesPC failed"));
+		UE_LOG(LogTemp, Error, TEXT("[LobbyUI] StartGame FAIL: MosesPC cast"));
 		return;
 	}
 
+	// 서버에서 Host/AllReady/Full 조건을 다시 검증하고 Travel 트리거한다.
 	MPC->Server_RequestStartGame();
 }
 
 void UMosesLobbyWidget::OnClicked_JoinRoom()
 {
-	UE_LOG(LogTemp, Warning, TEXT("[LobbyUI] JoinRoom Clicked"));
-
 	AMosesPlayerController* MPC = GetMosesPC();
 	if (!MPC)
 	{
-		UE_LOG(LogTemp, Error, TEXT("[LobbyUI] JoinRoom: Cast MosesPC failed"));
+		UE_LOG(LogTemp, Error, TEXT("[LobbyUI] JoinRoom FAIL: MosesPC cast"));
 		return;
 	}
 
+	// 룸ID 입력값 파싱(유효하지 않으면 서버 RPC 호출 금지)
 	FString RoomIdStr;
 	if (TextBox_RoomId)
 	{
@@ -160,38 +150,37 @@ void UMosesLobbyWidget::OnClicked_JoinRoom()
 	FGuid RoomId;
 	if (!FGuid::Parse(RoomIdStr, RoomId) || !RoomId.IsValid())
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[LobbyUI] JoinRoom: Invalid GUID input: '%s'"), *RoomIdStr);
-		UE_LOG(LogTemp, Warning, TEXT("[LobbyUI] JoinRoom: Example GUID format: 01234567-89AB-CDEF-0123-456789ABCDEF"));
+		UE_LOG(LogTemp, Warning, TEXT("[LobbyUI] JoinRoom REJECT: Invalid GUID '%s'"), *RoomIdStr);
 		return;
 	}
 
-	MPC->Server_JoinRoom(RoomId);  
+	MPC->Server_JoinRoom(RoomId);
 }
 
 void UMosesLobbyWidget::SetRoomIdText(const FGuid& RoomId)
 {
+	// CreateRoom 성공 후 자동 입력(Host가 복사/붙여넣기 안 해도 됨)
 	if (!TextBox_RoomId)
 	{
-		UE_LOG(LogTemp, Error, TEXT("[LobbyUI] SetRoomIdText FAIL: TextBox_RoomId is null (BindWidget failed)"));
+		UE_LOG(LogTemp, Error, TEXT("[LobbyUI] SetRoomIdText FAIL: TextBox_RoomId bind"));
 		return;
 	}
 
 	const FString Str = RoomId.ToString(EGuidFormats::DigitsWithHyphens);
 	TextBox_RoomId->SetText(FText::FromString(Str));
-
-	UE_LOG(LogTemp, Warning, TEXT("[LobbyUI] RoomId AutoFilled: %s"), *Str);
 }
 
 bool UMosesLobbyWidget::CanStartGame() const
 {
+	// Start 가능 여부는 "클라 UI에서 계산"하지만,
+	// 서버는 동일 조건을 다시 검증해야 한다(클라 조작 방지).
 	const AMosesPlayerState* PS = GetOwningPlayerState<AMosesPlayerState>();
 	if (!PS || !PS->bIsRoomHost)
 	{
 		return false;
 	}
 
-	const AMosesLobbyGameState* LGS =
-		GetWorld() ? GetWorld()->GetGameState<AMosesLobbyGameState>() : nullptr;
+	const AMosesLobbyGameState* LGS = GetWorld() ? GetWorld()->GetGameState<AMosesLobbyGameState>() : nullptr;
 	if (!LGS)
 	{
 		return false;
@@ -203,12 +192,12 @@ bool UMosesLobbyWidget::CanStartGame() const
 		return false;
 	}
 
-	return Room->MemberPids.Num() == Room->MaxPlayers
-		&& Room->IsAllReady();
+	return (Room->MemberPids.Num() == Room->MaxPlayers) && Room->IsAllReady();
 }
 
 void UMosesLobbyWidget::UpdateStartButton()
 {
+	// UI가 아직 완전히 바인딩 되기 전 호출될 수 있으니 방어
 	if (!Button_StartGame)
 	{
 		return;
@@ -217,7 +206,6 @@ void UMosesLobbyWidget::UpdateStartButton()
 	const bool bEnable = CanStartGame();
 	Button_StartGame->SetIsEnabled(bEnable);
 
-	UE_LOG(LogTemp, Warning,
-		TEXT("[LobbyUI] UpdateStartButton: %s"),
-		bEnable ? TEXT("ENABLED") : TEXT("DISABLED"));
+	// 필요하면 로그 레벨 낮추는 것을 권장(Rep 갱신 때마다 찍히면 스팸)
+	// UE_LOG(LogTemp, Log, TEXT("[LobbyUI] StartButton=%s"), bEnable ? TEXT("ENABLED") : TEXT("DISABLED"));
 }

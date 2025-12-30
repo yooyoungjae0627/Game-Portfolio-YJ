@@ -10,6 +10,39 @@
 #include "Engine/World.h"
 #include "Engine/Engine.h"
 
+UMosesGameInstance* UMosesGameInstance::Get(const UObject* WorldContextObject)
+{
+	if (!WorldContextObject)
+	{
+		return nullptr;
+	}
+
+	// 가장 정석: WorldContext로부터 GI 가져오기
+	if (const UWorld* World = WorldContextObject->GetWorld())
+	{
+		return Cast<UMosesGameInstance>(World->GetGameInstance());
+	}
+
+	// 혹시 GetWorld가 안 되는 컨텍스트면(드물게) Kismet로 한 번 더 시도
+	if (UWorld* World2 = GEngine ? GEngine->GetWorldFromContextObject(WorldContextObject, EGetWorldErrorMode::ReturnNull) : nullptr)
+	{
+		return Cast<UMosesGameInstance>(World2->GetGameInstance());
+	}
+
+	return nullptr;
+}
+
+UMosesGameInstance* UMosesGameInstance::GetChecked(const UObject* WorldContextObject)
+{
+	UMosesGameInstance* GI = Get(WorldContextObject);
+	if (!GI)
+	{
+		UE_LOG(LogMosesAuth, Error, TEXT("[GI] UMosesGameInstance::GetChecked failed. WorldContextObject=%s"),
+			*GetNameSafe(WorldContextObject));
+	}
+	return GI;
+}
+
 void UMosesGameInstance::Init()
 {
 	Super::Init();

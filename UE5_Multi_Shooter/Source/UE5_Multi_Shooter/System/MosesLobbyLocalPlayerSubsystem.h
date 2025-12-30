@@ -3,111 +3,82 @@
 #include "Subsystems/LocalPlayerSubsystem.h"
 #include "MosesLobbyLocalPlayerSubsystem.generated.h"
 
-class UMosesLobbyWidget;   // 구체 위젯 타입(룸ID 자동 입력 등) 호출하려고 필요
+class UMosesLobbyWidget;
 class UInputMappingContext;
 class UUserWidget;
 
 /**
  * UMosesLobbyLocalPlayerSubsystem
  *
- * 🎯 역할
- * - "로비 전용 UI + 입력(IMC) + 마우스 상태 + 입력 모드"를
- *   로컬 플레이어 단위로 관리하는 책임 클래스
+ * 책임(클라 전용):
+ * - 로비 UI 생성/제거(뷰포트)
+ * - 로비 입력 IMC Add/Remove
+ * - 마우스 커서 / InputMode(GameAndUI ↔ GameOnly) 전환
+ * - LobbyGameState Rep 갱신 시 UI Refresh 트리거
  *
- * 📌 왜 LocalPlayerSubsystem인가?
- * - 클라이언트 전용 로직 (UI / 입력)
- * - Seamless Travel 이후에도 LocalPlayer는 유지됨
- * - GameMode / GameState와 명확히 책임 분리 가능
+ * 유지 조건:
+ * - LocalPlayer 단위로 유지되므로 SeamlessTravel 왕복에서도 상태가 살아있다.
  *
- * 📌 설계 원칙
- * - GameFeatureAction: 활성/비활성 트리거만 담당
- * - Subsystem: 실제 생성 / 적용 / 해제 로직 담당
- *
- * → 로비 UI 문제 발생 시 이 클래스만 보면 됨
+ * 호출 주체:
+ * - GameFeatureAction(활성/비활성 트리거) → Subsystem(실제 처리)
+ * - GameState OnRep → LocalPlayerSubsystem.NotifyRoomStateChanged()
  */
 UCLASS()
-class UE5_MULTI_SHOOTER_API UMosesLobbyLocalPlayerSubsystem
-	: public ULocalPlayerSubsystem
+class UE5_MULTI_SHOOTER_API UMosesLobbyLocalPlayerSubsystem : public ULocalPlayerSubsystem
 {
 	GENERATED_BODY()
 
 public:
-	/** Room 상태 변경 시 UI 갱신용 */
+	/** GameState RepRoomList 등 "로비 상태 변경" 시 UI 갱신 트리거 */
 	void NotifyRoomStateChanged();
 
 	/**
-	 * GF_Lobby 활성 시 호출
-	 *
-	 * - Lobby UI 생성
-	 * - Lobby Input Mapping Context 적용
-	 * - 마우스 커서 + InputMode(GameAndUI) 설정
+	 * GF_Lobby 활성 시 호출(클라 전용)
+	 * - UI 생성 + AddToViewport
+	 * - IMC 적용
+	 * - InputMode(GameAndUI) + ShowMouseCursor 켬
 	 */
 	void ActivateLobbyUI();
 
 	/**
-	 * GF_Lobby 비활성 시 호출
-	 *
-	 * - Lobby UI 제거
-	 * - Lobby Input Mapping Context 제거
-	 * - 입력 모드 GameOnly로 원복
+	 * GF_Lobby 비활성 시 호출(클라 전용)
+	 * - UI 제거
+	 * - IMC 제거
+	 * - InputMode(GameOnly) + ShowMouseCursor 끔
 	 */
 	void DeactivateLobbyUI();
 
-	// ✅ (PC ClientRPC -> Subsystem -> Widget) RoomId 자동 채우기 진입점
+	/** Room 생성 완료 후(PC ClientRPC 등) 위젯에 RoomId 자동 입력 */
 	void NotifyRoomCreated(const FGuid& NewRoomId);
 
 private:
-	/** IMC / Widget 에셋 로드 보장 */
+	/** 로비 UI/입력에서 쓰는 에셋(IMC/WidgetClass) 로드 보장(1회 시도 캐시 포함) */
 	void EnsureAssetsLoaded();
 
-	/** Lobby IMC 적용 (중복 방지 포함) */
+	/** 로비 IMC 적용(중복 Add 방지) */
 	void AddLobbyMapping();
 
-	/** Lobby IMC 제거 */
+	/** 로비 IMC 제거(중복 Remove 방지) */
 	void RemoveLobbyMapping();
 
 private:
-	/**
-	 * 로비 전용 Input Mapping Context
-	 *
-	 * - StaticLoadObject로 직접 로드
-	 * - 실패 시 명확한 로그 필수
-	 */
+	/** 로비 전용 IMC 오브젝트(StaticLoadObject로 로드) */
 	UPROPERTY()
 	TObjectPtr<UInputMappingContext> IMC_Lobby = nullptr;
 
-	/**
-	 * IMC가 이미 Add 되었는지 여부
-	 *
-	 * - GameFeature 중복 활성
-	 * - ActivateLobbyUI 중복 호출
-	 * → 중복 Add 방지용
-	 */
+	/** IMC가 AddMappingContext 되었는지(중복 Add 방지 플래그) */
 	bool bLobbyMappingAdded = false;
 
-	/**
-	 * 에셋 로드 시도 여부 캐싱
-	 *
-	 * - StaticLoad 실패 시
-	 *   매번 Error 로그가 찍히는 것 방지
-	 * - 최초 실패만 Error, 이후는 Skip
-	 */
+	/** 에셋 로드 실패 로그 스팸 방지용(최초 1회만 Error) */
 	bool bTriedLoadIMC = false;
 	bool bTriedLoadWidgetClass = false;
 
 private:
-	/**
-	 * 현재 활성화된 Lobby UI
-	 *
-     * - WeakPtr 사용 이유:
-     *   · 레벨 이동 / GC / 외부 Remove 대비
-     *   · 유효성 체크 후 안전 접근
-     */
-
+	/** 현재 활성 Lobby UI (레벨 이동/GC 대비: WeakPtr) */
 	UPROPERTY()
-	TWeakObjectPtr<UMosesLobbyWidget> LobbyWidget;  // ✅ 구체 타입으로 저장
+	TWeakObjectPtr<UMosesLobbyWidget> LobbyWidget;
 
+	/** 생성할 Lobby 위젯 클래스(StaticLoadClass로 로드) */
 	UPROPERTY()
-	TSubclassOf<UUserWidget> LobbyWidgetClass = nullptr; // ✅ cpp에서 쓰는 그 변수, 여기 있어야 함
-
+	TSubclassOf<UUserWidget> LobbyWidgetClass = nullptr;
 };

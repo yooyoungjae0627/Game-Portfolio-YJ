@@ -1,13 +1,10 @@
-﻿// MosesPlayerController.cpp
-
-#include "MosesPlayerController.h"
+﻿#include "MosesPlayerController.h"
 
 #include "UE5_Multi_Shooter/GameMode/GameMode/MosesLobbyGameMode.h"
 #include "UE5_Multi_Shooter/GameMode/GameMode/MosesMatchGameMode.h"
 #include "UE5_Multi_Shooter/GameMode/GameState/MosesLobbyGameState.h"
 
 #include "UE5_Multi_Shooter/System/MosesLobbyLocalPlayerSubsystem.h"
-
 #include "UE5_Multi_Shooter/Camera/MosesPlayerCameraManager.h"
 #include "UE5_Multi_Shooter/Player/MosesPlayerState.h"
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
@@ -15,37 +12,28 @@
 #include "Engine/World.h"
 #include "Engine/LocalPlayer.h"
 #include "GameFramework/GameModeBase.h"
-
 #include "Kismet/GameplayStatics.h"
 #include "Camera/CameraActor.h"
 #include "TimerManager.h"
 
-// 로비 RPC 파라미터 방어용(프로젝트 정책 값)
+// 로비 RPC 파라미터 정책(서버에서 Clamp)
 static constexpr int32 Lobby_MinRoomMaxPlayers = 2;
 static constexpr int32 Lobby_MaxRoomMaxPlayers = 4;
 
 AMosesPlayerController::AMosesPlayerController(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
 {
+	// 프로젝트 카메라 매니저 사용
 	PlayerCameraManagerClass = AMosesPlayerCameraManager::StaticClass();
 
-	// 주의:
-	// 생성자에서 bAutoManageActiveCameraTarget=false를 "영구"로 박아두면
-	// 매치 상태에서도 Pawn 카메라가 자동으로 안 잡힐 수 있다.
-	// -> 로비 컨텍스트에서만 BeginPlay에서 끄는 방식으로 처리한다.
+	// ⚠ bAutoManageActiveCameraTarget은 로비 컨텍스트에서만 끈다.
+	// 생성자에서 영구로 꺼두면 매치에서 Pawn 카메라 자동 복구가 안 될 수 있음.
 }
 
-/*
-	IsLobbyContext
-	- "로비 컨텍스트"인지 판단하는 헬퍼
-	- 단일 맵(L_Match)에서 로비/매치를 같이 쓰더라도,
-	  로비 단계에서만 UI/카메라를 강제하기 위해 필요하다.
-	- 현재 구현: LobbyGameState가 존재하면 로비 컨텍스트로 간주
-	  (너가 L_Match로 통일해도 GameState를 MosesLobbyGameState로 쓰거나,
-	   Phase 시스템을 따로 만들기 전까진 이 방식이 제일 단순/안전)
-*/
 bool AMosesPlayerController::IsLobbyContext() const
 {
+	// 로비 UI/카메라 강제 적용을 "로비 단계"에만 제한하기 위한 게이트.
+	// 정책이 바뀌면(Phase 기반 등) 여기만 수정해도 전체 로비 적용 조건이 바뀐다.
 	UWorld* World = GetWorld();
 	if (!World)
 	{
@@ -55,13 +43,13 @@ bool AMosesPlayerController::IsLobbyContext() const
 	return (World->GetGameState<AMosesLobbyGameState>() != nullptr);
 }
 
-/**
- * (Server RPC)
- * - "클라 입력"을 서버에서 처리하기 위한 진입점
- * - 실제 방 데이터 변경은 LobbyGameState에서 수행(복제)
- */
+// ---------------------------
+// Lobby RPCs (Server)
+// ---------------------------
+
 void AMosesPlayerController::Server_CreateRoom_Implementation(int32 MaxPlayers)
 {
+	// RPC는 서버에서만 유효 (Client 호출이 들어와도 여기서 최종 방어)
 	if (!HasAuthority())
 	{
 		return;
@@ -76,9 +64,10 @@ void AMosesPlayerController::Server_CreateRoom_Implementation(int32 MaxPlayers)
 		return;
 	}
 
-	// 입력값 방어(실수/악의적 호출 대비)
+	// 입력값 방어: 실수/악의적 호출 대비
 	const int32 SafeMaxPlayers = FMath::Clamp(MaxPlayers, Lobby_MinRoomMaxPlayers, Lobby_MaxRoomMaxPlayers);
 
+	// 룸 생성은 LobbyGameState가 Source of Truth
 	const FGuid NewRoomId = LGS->Server_CreateRoom(PS, SafeMaxPlayers);
 	if (!NewRoomId.IsValid())
 	{
@@ -89,6 +78,9 @@ void AMosesPlayerController::Server_CreateRoom_Implementation(int32 MaxPlayers)
 
 	UE_LOG(LogMosesSpawn, Warning, TEXT("[LobbyRPC][SERVER] CreateRoom OK Room=%s Max=%d PC=%s"),
 		*NewRoomId.ToString(), SafeMaxPlayers, *GetNameSafe(this));
+
+	// RoomId를 클라 UI에 자동 입력하고 싶으면:
+	// - 여기서 ClientRPC로 Subsystem.NotifyRoomCreated(NewRoomId) 호출하는 구조로 확장 가능
 }
 
 void AMosesPlayerController::Server_JoinRoom_Implementation(const FGuid& RoomId)
@@ -118,11 +110,6 @@ void AMosesPlayerController::Server_JoinRoom_Implementation(const FGuid& RoomId)
 
 	UE_LOG(LogMosesSpawn, Warning, TEXT("[LobbyRPC][SERVER] JoinRoom %s Room=%s PC=%s"),
 		bOk ? TEXT("OK") : TEXT("FAIL"), *RoomId.ToString(), *GetNameSafe(this));
-
-	if (bOk)
-	{
-		UE_LOG(LogMosesSpawn, Warning, TEXT("[LobbyRPC][SERVER] JoinRoom OK"));
-	}
 }
 
 void AMosesPlayerController::Server_LeaveRoom_Implementation()
@@ -146,9 +133,9 @@ void AMosesPlayerController::Server_LeaveRoom_Implementation()
 	UE_LOG(LogMosesSpawn, Warning, TEXT("[LobbyRPC][SERVER] LeaveRoom OK PC=%s"), *GetNameSafe(this));
 }
 
-/** (Server RPC) Start 버튼 → GameMode 검증 → Travel */
 void AMosesPlayerController::Server_RequestStartGame_Implementation()
 {
+	// StartGame은 서버 GM에서 최종 검증 후 Travel
 	if (!HasAuthority())
 	{
 		return;
@@ -165,34 +152,37 @@ void AMosesPlayerController::Server_RequestStartGame_Implementation()
 	LobbyGM->HandleStartGameRequest(this);
 }
 
+// ---------------------------
+// Lifecycle (Local UI / Camera)
+// ---------------------------
+
 void AMosesPlayerController::BeginPlay()
 {
 	Super::BeginPlay();
 
-	// 디버그/로그용: PlayerState 찍기
+	// DOD 로그: PS 유지/재생성/값 확인용
 	if (AMosesPlayerState* PS = GetPlayerState<AMosesPlayerState>())
 	{
 		PS->DOD_PS_Log(this, TEXT("PC:BeginPlay"));
 	}
 
-	// 1) 로컬 컨트롤러만 UI/카메라 세팅 (서버 전용 PC / 다른 플레이어 PC는 건드리면 안됨)
+	// 로컬 컨트롤러만 UI/카메라 변경 가능
 	if (!IsLocalController())
 	{
 		return;
 	}
 
-	// 2) "로비에서만" 로비 UI + 프리뷰 카메라 적용
-	//    (단일 맵에서도 로비/매치 공존 가능하므로, 로비 컨텍스트 체크는 반드시 필요)
+	// 로비 컨텍스트에서만 로비 UI/카메라 적용
 	if (!IsLobbyContext())
 	{
 		return;
 	}
 
-	// 2-1) 로비에서는 ViewTarget이 Pawn으로 자동 복구되는 걸 막기 위해 AutoManage를 끈다.
-	//      (Possess/Experience/CameraManager가 ViewTarget을 덮어쓰는 케이스 방지)
+	// 로비에서는 ViewTarget이 Pawn으로 자동 복구되는 것을 막기 위해 AutoManage를 끈다.
+	// (Possess/Experience/CameraManager가 ViewTarget을 덮는 케이스 방지)
 	bAutoManageActiveCameraTarget = false;
 
-	// 3) 로비 UI 띄우기 (LocalPlayerSubsystem)
+	// 로비 UI 띄우기(LocalPlayerSubsystem)
 	ULocalPlayer* LP = GetLocalPlayer();
 	if (!LP)
 	{
@@ -209,18 +199,16 @@ void AMosesPlayerController::BeginPlay()
 		UE_LOG(LogMosesSpawn, Error, TEXT("[LobbyUI] PC BeginPlay: No MosesLobbyLocalPlayerSubsystem"));
 	}
 
-	// 4) 로비 프리뷰 카메라 적용
-	//   Experience/CameraManager/Possess 흐름에서 ViewTarget이 한 번 덮어쓰이는 경우가 있어서:
-	//   - 즉시 1번
-	//   - 약간 딜레이 후 1번(재적용)
+	// Experience/Possess/CameraManager 흐름에서 ViewTarget이 덮이는 케이스가 있어
+	// 즉시 1회 + 지연 1회 재적용(정책값 LobbyPreviewCameraDelay)
 	ApplyLobbyPreviewCamera();
 
 	GetWorldTimerManager().SetTimer(
-		LobbyPreviewCameraTimerHandle,                // 멤버 핸들(재사용 가능)
+		LobbyPreviewCameraTimerHandle,
 		this,
 		&AMosesPlayerController::ApplyLobbyPreviewCamera,
-		LobbyPreviewCameraDelay,                      // 예: 0.2f
-		false                                         // 반복 X, 한 번만
+		LobbyPreviewCameraDelay,
+		false
 	);
 }
 
@@ -233,9 +221,7 @@ void AMosesPlayerController::OnPossess(APawn* InPawn)
 		PS->DOD_PS_Log(this, TEXT("PC:OnPossess"));
 	}
 
-	// 중요:
-	// Possess 직후 엔진이 ViewTarget을 Pawn으로 다시 잡는 경우가 많다.
-	// 그래서 "로비 컨텍스트"면 여기서도 프리뷰 카메라를 한 번 더 강제한다.
+	// Possess 직후 ViewTarget이 Pawn으로 덮일 수 있어 로비면 재적용한다.
 	if (IsLocalController() && IsLobbyContext())
 	{
 		bAutoManageActiveCameraTarget = false;
@@ -247,9 +233,10 @@ void AMosesPlayerController::OnPossess(APawn* InPawn)
 // Existing Server RPCs
 // --------------------
 
-/** (Server RPC) Ready 토글 → PlayerState가 Source of Truth → RoomList(ReadyMap) 동기화 */
 void AMosesPlayerController::Server_SetReady_Implementation(bool bInReady)
 {
+	// Ready 상태의 Source of Truth는 PlayerState
+	// 이후 RoomList의 ReadyMap을 LGS에 동기화(복제 데이터 갱신)
 	if (AMosesPlayerState* PS = GetPlayerState<AMosesPlayerState>())
 	{
 		PS->ServerSetReady(bInReady);
@@ -262,9 +249,9 @@ void AMosesPlayerController::Server_SetReady_Implementation(bool bInReady)
 	}
 }
 
-/** (Server RPC) 캐릭터 선택 → PlayerState에 저장(복제) */
 void AMosesPlayerController::Server_SetSelectedCharacterId_Implementation(int32 InId)
 {
+	// 캐릭터 선택은 PlayerState에 저장(복제)
 	if (AMosesPlayerState* PS = GetPlayerState<AMosesPlayerState>())
 	{
 		PS->ServerSetSelectedCharacterId(InId);
@@ -285,14 +272,13 @@ void AMosesPlayerController::TravelToMatch_Exec()
 		return;
 	}
 
+	// 서버면 즉시 실행, 클라면 서버 RPC로 우회
 	if (HasAuthority())
 	{
-		UE_LOG(LogMosesSpawn, Warning, TEXT("[DOD][Travel] ACCEPT (Server)"));
 		DoServerTravelToMatch();
 		return;
 	}
 
-	UE_LOG(LogMosesSpawn, Warning, TEXT("[DOD][Travel] SEND TO SERVER (Client)"));
 	Server_TravelToMatch();
 }
 
@@ -307,12 +293,10 @@ void AMosesPlayerController::TravelToLobby_Exec()
 
 	if (HasAuthority())
 	{
-		UE_LOG(LogMosesSpawn, Warning, TEXT("[DOD][Travel] ACCEPT (Server)"));
 		DoServerTravelToLobby();
 		return;
 	}
 
-	UE_LOG(LogMosesSpawn, Warning, TEXT("[DOD][Travel] SEND TO SERVER (Client)"));
 	Server_TravelToLobby();
 }
 
@@ -320,11 +304,9 @@ void AMosesPlayerController::Server_TravelToMatch_Implementation()
 {
 	if (!HasAuthority())
 	{
-		UE_LOG(LogMosesSpawn, Warning, TEXT("[DOD][Travel] REJECT (NoAuthority)"));
 		return;
 	}
 
-	UE_LOG(LogMosesSpawn, Warning, TEXT("[DOD][Travel] ACCEPT (Server)"));
 	DoServerTravelToMatch();
 }
 
@@ -332,11 +314,9 @@ void AMosesPlayerController::Server_TravelToLobby_Implementation()
 {
 	if (!HasAuthority())
 	{
-		UE_LOG(LogMosesSpawn, Warning, TEXT("[DOD][Travel] REJECT (NoAuthority)"));
 		return;
 	}
 
-	UE_LOG(LogMosesSpawn, Warning, TEXT("[DOD][Travel] ACCEPT (Server)"));
 	DoServerTravelToLobby();
 }
 
@@ -356,6 +336,7 @@ void AMosesPlayerController::DoServerTravelToMatch()
 		return;
 	}
 
+	// 로비 GM일 때만 매치 이동 허용
 	if (AMosesLobbyGameMode* LobbyGM = Cast<AMosesLobbyGameMode>(GM))
 	{
 		LobbyGM->TravelToMatch();
@@ -381,6 +362,7 @@ void AMosesPlayerController::DoServerTravelToLobby()
 		return;
 	}
 
+	// 매치 GM일 때만 로비 이동 허용
 	if (AMosesMatchGameMode* MatchGM = Cast<AMosesMatchGameMode>(GM))
 	{
 		MatchGM->TravelToLobby();
@@ -392,21 +374,22 @@ void AMosesPlayerController::DoServerTravelToLobby()
 
 void AMosesPlayerController::ApplyLobbyPreviewCamera()
 {
-	if (!IsLocalController())
+	// 로컬 + 로비 컨텍스트에서만 카메라 강제
+	if (!IsLocalController() || !IsLobbyContext())
+	{
 		return;
-
-	if (!IsLobbyContext())
-		return;
+	}
 
 	UWorld* World = GetWorld();
 	if (!World)
+	{
 		return;
+	}
 
+	// Tag가 붙은 CameraActor를 찾아 ViewTarget으로 설정한다.
+	// (맵에 카메라가 없거나 Tag가 다르면 로비 UI는 떠도 화면이 이상해질 수 있음)
 	TArray<AActor*> Found;
 	UGameplayStatics::GetAllActorsOfClass(World, ACameraActor::StaticClass(), Found);
-
-	UE_LOG(LogMosesSpawn, Warning, TEXT("[LobbyCam] Found CameraActors=%d  TagNeed=%s"),
-		Found.Num(), *LobbyPreviewCameraTag.ToString());
 
 	ACameraActor* TargetCam = nullptr;
 	for (AActor* A : Found)
@@ -420,12 +403,9 @@ void AMosesPlayerController::ApplyLobbyPreviewCamera()
 
 	if (!TargetCam)
 	{
-		UE_LOG(LogMosesSpawn, Error, TEXT("[LobbyCam] NOT FOUND. TagNeed=%s"), *LobbyPreviewCameraTag.ToString());
+		UE_LOG(LogMosesSpawn, Error, TEXT("[LobbyCam] NOT FOUND TagNeed=%s"), *LobbyPreviewCameraTag.ToString());
 		return;
 	}
 
 	SetViewTargetWithBlend(TargetCam, 0.0f);
-
-	UE_LOG(LogMosesSpawn, Warning, TEXT("[LobbyCam] SET ViewTarget=%s Now=%s"),
-		*GetNameSafe(TargetCam), *GetNameSafe(GetViewTarget()));
 }
