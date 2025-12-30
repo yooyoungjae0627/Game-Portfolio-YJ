@@ -4,7 +4,7 @@
 #include "MosesHeroComponent.h"
 
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
-#include "MosesPawnData.h"                           
+#include "UE5_Multi_Shooter/Character/Data/MosesPawnData.h"                           
 #include "MosesPawnExtensionComponent.h"           
 
 #include "EnhancedInputSubsystems.h"           
@@ -15,8 +15,6 @@
 
 #include "UE5_Multi_Shooter/Player/MosesPlayerState.h"
 #include "UE5_Multi_Shooter/Player/MosesPlayerController.h"
-
-#include "UE5_Multi_Shooter/Character/MosesPawnData.h"
 
 /*#include "UE5_Multi_Shooter/Inputs/YJMappableConfigPair.h"
 #include "UE5_Multi_Shooter/Inputs/YJInputComponent.h"    */  

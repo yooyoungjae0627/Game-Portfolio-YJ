@@ -2,9 +2,9 @@
 
 #include "MosesPlayerController.h"
 
-#include "UE5_Multi_Shooter/GameMode/MosesLobbyGameMode.h"
-#include "UE5_Multi_Shooter/GameMode/MosesMatchGameMode.h"
-#include "UE5_Multi_Shooter/GameMode/MosesLobbyGameState.h"
+#include "UE5_Multi_Shooter/GameMode/GameMode/MosesLobbyGameMode.h"
+#include "UE5_Multi_Shooter/GameMode/GameMode/MosesMatchGameMode.h"
+#include "UE5_Multi_Shooter/GameMode/GameState/MosesLobbyGameState.h"
 
 #include "UE5_Multi_Shooter/System/MosesLobbyLocalPlayerSubsystem.h"
 

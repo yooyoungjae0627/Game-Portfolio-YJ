@@ -2,16 +2,16 @@
 
 #include "MosesGameModeBase.h"
 
-#include "MosesGameState.h"
-#include "MosesExperienceDefinition.h"
-#include "MosesExperienceManagerComponent.h"
+#include "UE5_Multi_Shooter/GameMode/GameState/MosesGameState.h"
+#include "UE5_Multi_Shooter/GameMode/Experience/MosesExperienceDefinition.h"
+#include "UE5_Multi_Shooter/GameMode/Experience/MosesExperienceManagerComponent.h"
 
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
 #include "UE5_Multi_Shooter/Player/MosesPlayerController.h"
 #include "UE5_Multi_Shooter/Player/MosesPlayerState.h"
 #include "UE5_Multi_Shooter/Character/MosesCharacter.h"
-#include "UE5_Multi_Shooter/Character/MosesPawnExtensionComponent.h"
-#include "UE5_Multi_Shooter/Character/MosesPawnData.h"
+#include "UE5_Multi_Shooter/Character/Components/MosesPawnExtensionComponent.h"
+#include "UE5_Multi_Shooter/Character/Data/MosesPawnData.h"
 
 #include "Engine/NetConnection.h"
 #include "Kismet/GameplayStatics.h"

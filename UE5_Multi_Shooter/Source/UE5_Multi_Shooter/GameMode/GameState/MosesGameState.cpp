@@ -2,7 +2,7 @@
 
 #include "MosesGameState.h"
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
-#include "MosesExperienceManagerComponent.h"
+#include "UE5_Multi_Shooter/GameMode/Experience/MosesExperienceManagerComponent.h"
 
 void AMosesGameState::BeginPlay()
 {

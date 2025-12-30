@@ -1,7 +1,6 @@
 ﻿#include "MosesLobbyGameMode.h"
-#include "MosesGameState.h"
-
-#include "UE5_Multi_Shooter/GameMode/MosesLobbyGameState.h"
+#include "UE5_Multi_Shooter/GameMode/GameState/MosesGameState.h"
+#include "UE5_Multi_Shooter/GameMode/GameState/MosesLobbyGameState.h"
 #include "UE5_Multi_Shooter/Player/MosesPlayerController.h"
 #include "UE5_Multi_Shooter/Player/MosesPlayerState.h"
 #include "UE5_Multi_Shooter/MosesLogChannels.h"

@@ -2,7 +2,7 @@
 
 #pragma once
 
-#include "UE5_Multi_Shooter/GameMode/MosesGameState.h"
+#include "UE5_Multi_Shooter/GameMode/GameState/MosesGameState.h"
 #include "Net/Serialization/FastArraySerializer.h"
 #include "MosesLobbyGameState.generated.h"
 

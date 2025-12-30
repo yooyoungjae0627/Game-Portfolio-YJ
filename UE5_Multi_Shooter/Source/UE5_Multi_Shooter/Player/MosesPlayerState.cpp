@@ -3,9 +3,9 @@
 #include "Net/UnrealNetwork.h"
 #include "Engine/World.h"
 
-#include "UE5_Multi_Shooter/Character/MosesPawnData.h"
-#include "UE5_Multi_Shooter/GameMode/MosesExperienceManagerComponent.h"
-#include "UE5_Multi_Shooter/GameMode/MosesGameModeBase.h"
+#include "UE5_Multi_Shooter/Character/Data/MosesPawnData.h"
+#include "UE5_Multi_Shooter/GameMode/Experience/MosesExperienceManagerComponent.h"
+#include "UE5_Multi_Shooter/GameMode/GameMode/MosesGameModeBase.h"
 
 AMosesPlayerState::AMosesPlayerState()
 {

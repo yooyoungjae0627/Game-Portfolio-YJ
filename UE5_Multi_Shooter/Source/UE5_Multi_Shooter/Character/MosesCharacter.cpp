@@ -3,7 +3,7 @@
 
 #include "MosesCharacter.h"
 
-#include "MosesPawnExtensionComponent.h"
+#include "UE5_Multi_Shooter/Character/Components/MosesPawnExtensionComponent.h"
 #include "UE5_Multi_Shooter/Camera/MosesCameraComponent.h"
 
 // Sets default values
