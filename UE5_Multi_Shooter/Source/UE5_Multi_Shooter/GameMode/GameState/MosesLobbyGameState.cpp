@@ -497,3 +497,24 @@ void FMosesLobbyRoomItem::PreReplicatedRemove(const FMosesLobbyRoomList& InArray
 		MosesNetModeToStr(NM),
 		*RoomId.ToString(EGuidFormats::DigitsWithHyphens));
 }
+
+void AMosesLobbyGameState::Server_InitLobbyIfNeeded()
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	if (bLobbyInitialized_DoD)
+	{
+		return; // 1회 보장
+	}
+	bLobbyInitialized_DoD = true;
+
+	// DoD 3번 라인
+	UE_LOG(LogMosesRoom, Log, TEXT("[ROOM] Lobby Initialized"));
+
+	// 여기서 “기본 룸 생성” 같은 정책을 넣고 싶으면 Day2 이후 확장:
+	// - 예: Server_CreateRoom(HostPS, MaxPlayers)는 HostPS가 필요하니
+	//   Dedicated Server 단독 부트에서는 그냥 '로비 시스템 준비 완료'만 찍는 게 깔끔함.
+}

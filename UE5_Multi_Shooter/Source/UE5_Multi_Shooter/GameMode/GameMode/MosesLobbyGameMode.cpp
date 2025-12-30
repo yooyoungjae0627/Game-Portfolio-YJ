@@ -385,3 +385,26 @@ int32 AMosesLobbyGameMode::GetReadyCount() const
 	}
 	return Count;
 }
+
+void AMosesLobbyGameMode::HandleDoD_AfterExperienceReady(const UMosesExperienceDefinition* CurrentExperience)
+{
+	// READY 이후에만 실행되므로, Lobby 시스템/Phase를 여기서 확정하면 순서가 절대 흔들리지 않는다.
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	AMosesLobbyGameState* LGS = GetGameState<AMosesLobbyGameState>();
+	if (LGS)
+	{
+		// DoD 3번 라인: Lobby Initialized (1회 보장 함수)
+		LGS->Server_InitLobbyIfNeeded();
+	}
+
+	AMosesGameState* GS = GetGameState<AMosesGameState>();
+	if (GS)
+	{
+		// DoD 4번 라인: Phase Lobby 확정
+		GS->ServerSetPhase(EMosesServerPhase::Lobby);
+	}
+}

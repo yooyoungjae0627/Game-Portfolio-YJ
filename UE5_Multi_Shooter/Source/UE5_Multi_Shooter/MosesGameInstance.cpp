@@ -7,11 +7,17 @@
 #include "UE5_Multi_Shooter/MosesGameplayTags.h"
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
 
+#include "Engine/World.h"
+#include "Engine/Engine.h"
+
 void UMosesGameInstance::Init()
 {
 	Super::Init();
 
 	UE_LOG(LogMosesExp, Log, TEXT("[GI] Init"));
+
+	// ✅ World가 아직 없을 수 있으니, World 생성 이후 훅에서 찍는다.
+	FWorldDelegates::OnPostWorldInitialization.AddUObject(this, &UMosesGameInstance::TryLogServerBoot);
 
 	// GameInstance 시작 시 실행되는 초기화 구간
 	// 여기서 앞서 정의한 GameplayTags(InitState들)를
@@ -55,6 +61,28 @@ void UMosesGameInstance::Shutdown()
 	Super::Shutdown();
 	// Game 종료 시 호출
 	// 특별한 정리는 필요 없으므로 현재는 기본 동작만 수행
+}
+
+void UMosesGameInstance::TryLogServerBoot(UWorld* World, const UWorld::InitializationValues IVS)
+{
+	if (bDidServerBootLog || !World)
+		return;
+
+	// ✅ GameWorld만 (에디터/프리뷰 월드 제외)
+	if (!World->IsGameWorld())
+		return;
+
+	// ✅ 서버쪽만
+	if (World->GetNetMode() == NM_Client)
+		return;
+
+	bDidServerBootLog = true;
+
+	UE_LOG(LogMosesAuth, Log, TEXT("[AUTH] Server Boot (NetMode=%d, World=%s)"),
+		(int32)World->GetNetMode(), *World->GetName());
+
+	// ✅ 한 번 찍었으면 델리게이트 제거(불필요 호출 방지)
+	FWorldDelegates::OnPostWorldInitialization.RemoveAll(this);
 }
 
 

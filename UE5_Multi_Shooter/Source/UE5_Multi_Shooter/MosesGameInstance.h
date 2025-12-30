@@ -19,4 +19,8 @@ class UE5_MULTI_SHOOTER_API UMosesGameInstance : public UGameInstance
 	virtual void Init() override;
 	virtual void Shutdown() override;
 
+
+private:
+	bool bDidServerBootLog = false;
+	void TryLogServerBoot(UWorld* World, const UWorld::InitializationValues IVS);
 };

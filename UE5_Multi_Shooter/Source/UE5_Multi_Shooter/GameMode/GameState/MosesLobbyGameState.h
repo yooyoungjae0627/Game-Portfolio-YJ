@@ -35,7 +35,7 @@ struct FMosesLobbyRoomItem : public FFastArraySerializerItem
 	// UPROPERTY() 
 	// TMap<FGuid, bool> ReadyMap;
 
-	// ✅ 추가: ReadyMap 대체 (Replicated-safe)
+	// 추가: ReadyMap 대체 (Replicated-safe)
 	// - MemberPids와 "인덱스 1:1"로 매칭되는 Ready 배열
 	// - MemberReady[i] == 1  -> MemberPids[i] 가 Ready
 	// - MemberReady[i] == 0  -> Not Ready
@@ -60,13 +60,13 @@ struct FMosesLobbyRoomItem : public FFastArraySerializerItem
 			return false;
 		}
 
-		// ✅ 추가: Ready 배열이 MemberPids와 길이가 다르면 데이터가 깨진 상태로 보고 실패 처리
+		// 추가: Ready 배열이 MemberPids와 길이가 다르면 데이터가 깨진 상태로 보고 실패 처리
 		if (MemberReady.Num() != MemberPids.Num())
 		{
 			return false;
 		}
 
-		// ✅ 변경: ReadyMap(TMap) 대신 MemberReady 배열로 판정
+		// 변경: ReadyMap(TMap) 대신 MemberReady 배열로 판정
 		for (uint8 bReady : MemberReady)
 		{
 			if (bReady == 0)
@@ -78,7 +78,7 @@ struct FMosesLobbyRoomItem : public FFastArraySerializerItem
 		return true;
 	}
 
-	// ✅ 추가: 룸 내부에서 특정 Pid의 Ready를 수정하는 헬퍼
+	// 추가: 룸 내부에서 특정 Pid의 Ready를 수정하는 헬퍼
 	// - Pid가 멤버가 아니면 false
 	// - 성공 시 true
 	bool SetReadyByPid(const FGuid& Pid, bool bInReady)
@@ -99,7 +99,7 @@ struct FMosesLobbyRoomItem : public FFastArraySerializerItem
 		return true;
 	}
 
-	// ✅ 추가: 특정 Pid의 Ready 조회 헬퍼
+	// 추가: 특정 Pid의 Ready 조회 헬퍼
 	bool GetReadyByPid(const FGuid& Pid, bool& OutReady) const
 	{
 		const int32 Index = MemberPids.IndexOfByKey(Pid);
@@ -173,16 +173,15 @@ public:
 	/** (Server) 특정 PS의 Ready 상태를 룸에 반영 (PS->bReady 기반) */
 	void Server_SyncReadyFromPlayerState(AMosesPlayerState* PS);
 
+	/** DoD: Lobby 초기화 완료를 1회로 고정하는 함수 (READY 이후에 GM이 호출) */
+	void Server_InitLobbyIfNeeded();
+
 protected:
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 	virtual void PostInitializeComponents() override;
 	virtual void BeginPlay() override;
 
 private:
-	/** 모든 클라에게 복제되는 “방 목록” */
-	UPROPERTY(Replicated)
-	FMosesLobbyRoomList RepRoomList;
-
 	// 내부 헬퍼
 	FMosesLobbyRoomItem* FindRoomMutable(const FGuid& RoomId);
 	const FMosesLobbyRoomItem* FindRoom(const FGuid& RoomId) const;
@@ -192,5 +191,12 @@ private:
 
 	/** (서버) PS의 PersistentId를 안전하게 얻기 */
 	static FGuid GetPidChecked(const AMosesPlayerState* PS);
+
+	/** 모든 클라에게 복제되는 “방 목록” */
+	UPROPERTY(Replicated)
+	FMosesLobbyRoomList RepRoomList;
+
+	bool bLobbyInitialized_DoD = false;
+
 
 };

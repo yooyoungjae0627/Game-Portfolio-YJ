@@ -85,11 +85,6 @@ private:
 	 */
 	void OnExperienceLoaded(const UMosesExperienceDefinition* CurrentExperience);
 
-private:
-	/** READY 전 접속한 플레이어들을 임시로 보관(스폰 대기열) */
-	UPROPERTY()
-	TArray<TWeakObjectPtr<APlayerController>> PendingStartPlayers;
-
 	/** Flush 중 재진입 방지(READY 직후 여러 이벤트로 중복 호출되는 경우 방어) */
 	bool bFlushingPendingPlayers = false;
 
@@ -98,4 +93,18 @@ private:
 
 	/** Experience READY → SpawnGate 해제(NextTick Flush 예약) */
 	void OnExperienceReady_SpawnGateRelease();
+
+	// MosesGameModeBase.h (ADD)
+
+protected:
+	/** DoD: Experience READY 이후(=안전 시점)에 파생 GM이 ROOM/PHASE를 확정하도록 훅 제공 */
+	virtual void HandleDoD_AfterExperienceReady(const UMosesExperienceDefinition* CurrentExperience);
+
+	/** DoD: Experience Selected 로그를 1회만 찍기 위한 가드 */
+	bool bDoD_ExperienceSelectedLogged = false;
+
+	/** READY 전 접속한 플레이어들을 임시로 보관(스폰 대기열) */
+	UPROPERTY()
+	TArray<TWeakObjectPtr<APlayerController>> PendingStartPlayers;
+
 };

@@ -348,17 +348,21 @@ bool AMosesGameModeBase::IsExperienceLoaded() const
 
 void AMosesGameModeBase::OnExperienceLoaded(const UMosesExperienceDefinition* CurrentExperience)
 {
-	if (GEngine)
-	{
-		GEngine->AddOnScreenDebugMessage(
-			-1,
-			8.f,
-			FColor::Green,
-			FString::Printf(TEXT("[EXP][READY] %s"), *GetNameSafe(CurrentExperience))
-		);
-	}
+	//if (GEngine)
+	//{
+	//	GEngine->AddOnScreenDebugMessage(
+	//		-1,
+	//		8.f,
+	//		FColor::Green,
+	//		FString::Printf(TEXT("[EXP][READY] %s"), *GetNameSafe(CurrentExperience))
+	//	);
+	//}
 
 	UE_LOG(LogMosesExp, Warning, TEXT("[EXP][READY] Loaded Exp=%s"), *GetNameSafe(CurrentExperience));
+
+	// ✅ 핵심: READY 이후에만 Lobby/Phase를 확정하게 한다.
+	// - 이 훅은 LobbyGameMode가 override해서 [ROOM]/[PHASE] DoD 로그를 찍는다.
+	HandleDoD_AfterExperienceReady(CurrentExperience);
 
 	// READY에서 SpawnGate 해제(NextTick Flush)
 	OnExperienceReady_SpawnGateRelease();
@@ -367,12 +371,21 @@ void AMosesGameModeBase::OnExperienceLoaded(const UMosesExperienceDefinition* Cu
 void AMosesGameModeBase::OnMatchAssignmentGiven(FPrimaryAssetId ExperienceId)
 {
 	// 화면 디버그: 서버가 어떤 Experience를 선택했는지 보여주기
-	if (GEngine)
+	//if (GEngine)
+	//{
+	//	GEngine->AddOnScreenDebugMessage(
+	//		-1, 8.f, FColor::Orange,
+	//		FString::Printf(TEXT("[EXP][Assign] %s"), *ExperienceId.ToString())
+	//	);
+	//}
+
+	// DoD: Experience Selected는 "서버가 최종 확정"한 순간에 1회만 로그 고정
+	// - ServerSetCurrentExperience 중복 방지 로직이 컴포넌트에도 있지만,
+	//   DoD 라인은 여기서 1회만 찍어주는 게 가장 명확함.
+	if (!bDoD_ExperienceSelectedLogged)
 	{
-		GEngine->AddOnScreenDebugMessage(
-			-1, 8.f, FColor::Orange,
-			FString::Printf(TEXT("[EXP][Assign] %s"), *ExperienceId.ToString())
-		);
+		bDoD_ExperienceSelectedLogged = true;
+		UE_LOG(LogMosesExp, Log, TEXT("[EXP] Experience Selected (%s)"), *ExperienceId.ToString());
 	}
 
 	// 로그: "지금부터 Experience를 서버에 세팅할 거다"
@@ -631,4 +644,10 @@ void AMosesGameModeBase::FlushPendingPlayers()
 
 	// 재진입 가드 해제
 	bFlushingPendingPlayers = false;
+}
+
+void AMosesGameModeBase::HandleDoD_AfterExperienceReady(const UMosesExperienceDefinition* CurrentExperience)
+{
+	// Base GM은 공통 처리 없음.
+	// Lobby/Match 등 모드별로 override해서 사용.
 }
