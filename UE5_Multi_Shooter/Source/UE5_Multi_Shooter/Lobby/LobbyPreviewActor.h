@@ -78,28 +78,34 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Lobby|Preview")
 	void ApplyVisual(ECharacterType Type);
 
+	/** 현재 프리뷰 중인 타입(디버그/로그용) */
+	ECharacterType GetCurrentType() const { return CurrentType; }
+
 protected:
 	/** BeginPlay 시 기본 프리뷰 타입 적용 */
 	virtual void BeginPlay() override;
 
-public:
+private:
+	bool IsVisualSetValid(const int32 Index) const;
+	void ApplyVisual_Internal(const FPreviewVisualSet& Visual, const int32 Index);
+
+private:
 	/** 실제 프리뷰에 사용되는 스켈레탈 메시 컴포넌트 */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Lobby|Preview")
-	TObjectPtr<USkeletalMeshComponent> PreviewMesh;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Lobby|Preview", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<USkeletalMeshComponent> PreviewMesh = nullptr;
 
 	/**
 	 * 타입별 외형 세트
 	 * - VisualSets[(int32)Type] 방식으로 접근
 	 */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Lobby|Preview")
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Lobby|Preview", meta = (AllowPrivateAccess = "true"))
 	TArray<FPreviewVisualSet> VisualSets;
 
 	/** BeginPlay 시 자동으로 적용할 기본 타입 */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Lobby|Preview")
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Lobby|Preview", meta = (AllowPrivateAccess = "true"))
 	ECharacterType DefaultType = ECharacterType::TypeA;
 
 	/** 현재 프리뷰 중인 타입 (디버그/로그용) */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Lobby|Preview")
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Lobby|Preview", meta = (AllowPrivateAccess = "true"))
 	ECharacterType CurrentType = ECharacterType::TypeA;
 };
-

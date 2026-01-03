@@ -3,16 +3,17 @@
 #include "GameFramework/PlayerState.h"
 #include "MosesPlayerState.generated.h"
 
-class UMosesPawnData;
-class UMosesExperienceDefinition;
-
 /**
- * PlayerState
- * - 플레이어별 "유지되는 데이터" 저장소 (Seamless Travel에서도 유지 대상)
- * - Experience 로딩 완료 시점에 PawnData를 확정/저장한다.
+ * AMosesPlayerState
  *
- * - PersistentId / SelectedCharacterId / bReady 등을 넣고
- * - 로비->매치->로비 왕복에서도 값이 유지됨을 로그로 증명한다.
+ * 단일진실(플레이어 개인 상태)
+ * - Travel(SeamlessTravel)에서도 CopyProperties/OverrideWith로 유지되는 "개인 데이터" 저장소
+ *
+ * 핵심:
+ * - PersistentId : 서버 발급 고유ID(룸/로그 시스템의 Primary Key)
+ * - RoomId       : 현재 소속 룸(서버 authoritative)
+ * - bIsRoomHost  : 현재 룸의 호스트 여부(서버 authoritative)
+ * - bReady       : 로비 Ready 여부(서버 authoritative)
  */
 UCLASS()
 class UE5_MULTI_SHOOTER_API AMosesPlayerState : public APlayerState
@@ -22,91 +23,110 @@ class UE5_MULTI_SHOOTER_API AMosesPlayerState : public APlayerState
 public:
 	AMosesPlayerState();
 
-	/** PlayerState가 보관 중인 PawnData 조회 */
-	template <class T>
-	const T* GetPawnData() const { return Cast<T>(PawnData); }
-
-	// =========================================================================
-	// Debug / DoD Logs
-	// =========================================================================
-	
-	/** 디버깅 한 줄 로그용 */
-	FString MakeDebugString() const;
-
-	/** DoD 고정 포맷 1줄 로그 (grep 판정용) */
-	void DOD_PS_Log(const UObject* WorldContext, const TCHAR* Where) const;
-
-protected:
-	// =========================================================================
-	// Engine Lifecycle / Seamless Travel
-	// =========================================================================
+	// ---------------------------
+	// Engine
+	// ---------------------------
 	virtual void PostInitializeComponents() override;
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 
-	// Seamless Travel 시 PlayerState 복제/교체 과정에서 호출될 수 있음
+	/** SeamlessTravel: Old PS -> New PS 로 복사 (서버) */
 	virtual void CopyProperties(APlayerState* NewPlayerState) override;
+
+	/** SeamlessTravel: New PS 가 Old PS 값으로 덮어쓰기 (클라/서버) */
 	virtual void OverrideWith(APlayerState* OldPlayerState) override;
 
-private:
-	// =========================================================================
-	// Experience / PawnData
-	// =========================================================================
-	/** Experience 로딩 완료 콜백 → PawnData 확정/저장 */
-	void OnExperienceLoaded(const UMosesExperienceDefinition* CurrentExperience);
-
-	/** PawnData 최초 1회 세팅(중복 세팅 방지) */
-	void SetPawnData(const UMosesPawnData* InPawnData);
-
-	// =========================================================================
-	// Server-only State Mutators (Authority)
-	// =========================================================================
-	/** 서버에서만 PersistentId 부여(안전) */
-	void EnsurePersistentId_ServerOnly();
-
-public:
-	/** 서버 전용: 로비 선택 캐릭터 ID 갱신 */
+	// ---------------------------
+	// Server authoritative setters
+	// (주의: 이 함수들은 "서버에서만" 호출하는 용도)
+	// ---------------------------
+	void ServerSetLoggedIn(bool bInLoggedIn);
+	void ServerSetReady(bool bInReady);
 	void ServerSetSelectedCharacterId(int32 InId);
 
-	/** 서버 전용: 로비 Ready 갱신 */
-	void ServerSetReady(bool bInReady);
-
-	/** 서버 전용: 방 참가/퇴장 시 PS 상태 갱신 */
+	/** 룸 소속/호스트 상태 변경(서버 단일진실) */
 	void ServerSetRoom(const FGuid& InRoomId, bool bInIsHost);
 
-	// =========================================================================
-	// Replicated Persistent Lobby State
-	// =========================================================================
-public:
-	/** 플레이어 고정 ID(서버에서 생성). Travel 전/후 동일성 증명 핵심 */
-	UPROPERTY(Replicated, VisibleAnywhere, BlueprintReadOnly, Category = "Persist", meta = (AllowPrivateAccess = "true"))
-	FGuid PersistentId;
+	// ---------------------------
+	// Accessors (클라/UI는 무조건 이걸로)
+	// ---------------------------
+	bool IsLoggedIn() const { return bLoggedIn; }
+	bool IsReady() const { return bReady; }
 
-	/** 로그 가독성용 이름 */
-	UPROPERTY(Replicated, VisibleAnywhere, BlueprintReadOnly, Category = "Persist", meta = (AllowPrivateAccess = "true"))
+	const FGuid& GetPersistentId() const { return PersistentId; }
+
+	const FGuid& GetRoomId() const { return RoomId; }
+	bool IsRoomHost() const { return bIsRoomHost; }
+
+	int32 GetSelectedCharacterId() const { return SelectedCharacterId; }
+
+	// ---------------------------
+	// PawnData access (Lyra-style 호출 호환)
+	// ---------------------------
+	template<typename T>
+	const T* GetPawnData() const
+	{
+		// 개발자 주석:
+		// - 네 프로젝트 다른 코드(MosesGameModeBase)가 GetPawnData<UMosesPawnData>()를 이미 호출한다.
+		// - 아직 PawnData 시스템이 완성되지 않았으면 nullptr 반환으로 연결만 맞춘다.
+		return Cast<T>(PawnData);
+	}
+
+	// ---------------------------
+	// Debug / DoD Logs
+	// ---------------------------
+	void DOD_PS_Log(const UObject* Caller, const TCHAR* Phase) const;
+
+	// ---------------------------
+	// Debug display name (UI/로그 용)
+	// ---------------------------
+	UPROPERTY(Replicated)
 	FString DebugName;
 
-	/** 로비에서 선택한 캐릭터(또는 클래스/프리셋 ID) */
-	UPROPERTY(Replicated, VisibleAnywhere, BlueprintReadOnly, Category = "Persist", meta = (AllowPrivateAccess = "true"))
-	int32 SelectedCharacterId = 0;
-
-	/** (Lobby) 내가 속한 방 ID. FGuid::IsValid()면 “방에 들어가 있음” */
-	UPROPERTY(Replicated, VisibleAnywhere, BlueprintReadOnly, Category = "Lobby", meta = (AllowPrivateAccess = "true"))
-	FGuid RoomId;
-
-	/** 로비 Ready */
-	UPROPERTY(Replicated, VisibleAnywhere, BlueprintReadOnly, Category = "Lobby", meta = (AllowPrivateAccess = "true"))
-	bool bReady = false;
-
-	/** (Lobby) 이 방의 Host(방장)인지 */
-	UPROPERTY(Replicated, VisibleAnywhere, BlueprintReadOnly, Category = "Lobby", meta = (AllowPrivateAccess = "true"))
-	bool bIsRoomHost = false;
-
-	// =========================================================================
-	// Non-replicated / Cached Runtime State
-	// =========================================================================
+private:
+	// ---------------------------
+	// RepNotify (UI 동기화/로그 포인트)
+	// ---------------------------
+	UFUNCTION() 
+	void OnRep_PersistentId();
+	
+	UFUNCTION() 
+	void OnRep_LoggedIn();
+	
+	UFUNCTION() 
+	void OnRep_Ready();
+	
+	UFUNCTION() 
+	void OnRep_SelectedCharacterId();
+	
+	UFUNCTION() 
+	void OnRep_Room();
 
 private:
-	/** 플레이어별 PawnData(Experience 기본값 또는 커스텀 값) */
+	// ---------------------------
+	// Replicated Fields (서버 단일진실)
+	// ---------------------------
+
+	UPROPERTY(ReplicatedUsing = OnRep_PersistentId)
+	FGuid PersistentId;
+
+	UPROPERTY(ReplicatedUsing = OnRep_LoggedIn)
+	bool bLoggedIn = false;
+
+	UPROPERTY(ReplicatedUsing = OnRep_Ready)
+	bool bReady = false;
+
+	UPROPERTY(ReplicatedUsing = OnRep_SelectedCharacterId)
+	int32 SelectedCharacterId = -1;
+
+	/** 현재 소속 룸 ID (없으면 Invalid) */
+	UPROPERTY(ReplicatedUsing = OnRep_Room)
+	FGuid RoomId;
+
+	/** 현재 룸의 호스트인지 */
+	UPROPERTY(ReplicatedUsing = OnRep_Room)
+	bool bIsRoomHost = false;
+
+private:
 	UPROPERTY()
-	TObjectPtr<const UMosesPawnData> PawnData;
+	TObjectPtr<const UObject> PawnData = nullptr;
 };

@@ -1,189 +1,101 @@
 ﻿#include "MosesPlayerState.h"
 
-#include "Net/UnrealNetwork.h"
-#include "Engine/World.h"
+#include "UE5_Multi_Shooter/MosesLogChannels.h"
+#include "UE5_Multi_Shooter/System/MosesLobbyLocalPlayerSubsystem.h"
 
-#include "UE5_Multi_Shooter/Character/Data/MosesPawnData.h"
-#include "UE5_Multi_Shooter/GameMode/Experience/MosesExperienceManagerComponent.h"
-#include "UE5_Multi_Shooter/GameMode/GameMode/MosesGameModeBase.h"
+#include "Net/UnrealNetwork.h"
+
+#include "Engine/LocalPlayer.h"
+#include "Engine/GameInstance.h"
+#include "GameFramework/PlayerController.h"
 
 AMosesPlayerState::AMosesPlayerState()
 {
+	// PlayerState는 기본적으로 복제 대상
+	bReplicates = true;
 }
 
 void AMosesPlayerState::PostInitializeComponents()
 {
 	Super::PostInitializeComponents();
 
-	EnsurePersistentId_ServerOnly();
-
-	// Experience 로딩 완료 이벤트에 콜백 등록(이미 로드면 즉시 호출됨)
-	const AGameStateBase* GameState = GetWorld()->GetGameState();
-	check(GameState);
-
-	UMosesExperienceManagerComponent* ExperienceManagerComponent =
-		GameState->FindComponentByClass<UMosesExperienceManagerComponent>();
-	check(ExperienceManagerComponent);
-
-	ExperienceManagerComponent->CallOrRegister_OnExperienceLoaded(
-		FOnMosesExperienceLoaded::FDelegate::CreateUObject(this, &ThisClass::OnExperienceLoaded)
-	);
+	// ⚠️ 권장:
+	// - PersistentId 발급은 GameMode(PostLogin) 한 곳에서만 책임지게 고정하는 것을 추천.
+	// - 여기서는 "발급"을 하지 않고, 값이 이미 있다면 그대로 둔다.
+	// - (정말 필요하면 서버에서만 임시 생성은 가능하지만, 책임이 분산되면 나중에 PK 꼬임)
 }
 
 void AMosesPlayerState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
 {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 
-	DOREPLIFETIME(AMosesPlayerState, PersistentId);
 	DOREPLIFETIME(AMosesPlayerState, DebugName);
-	DOREPLIFETIME(AMosesPlayerState, SelectedCharacterId);
+
+	DOREPLIFETIME(AMosesPlayerState, PersistentId);
+	DOREPLIFETIME(AMosesPlayerState, bLoggedIn);
 	DOREPLIFETIME(AMosesPlayerState, bReady);
+	DOREPLIFETIME(AMosesPlayerState, SelectedCharacterId);
+
 	DOREPLIFETIME(AMosesPlayerState, RoomId);
 	DOREPLIFETIME(AMosesPlayerState, bIsRoomHost);
 }
 
-void AMosesPlayerState::CopyProperties(APlayerState* PlayerState)
+void AMosesPlayerState::CopyProperties(APlayerState* NewPlayerState)
 {
-	Super::CopyProperties(PlayerState);
+	Super::CopyProperties(NewPlayerState);
 
-	if (AMosesPlayerState* Dest = Cast<AMosesPlayerState>(PlayerState))
-	{
-		Dest->PersistentId = PersistentId;
-		Dest->DebugName = DebugName;
-		Dest->SelectedCharacterId = SelectedCharacterId;
-		Dest->bReady = bReady;
-		// PawnData는 경험치 로딩 흐름에서 다시 잡힐 수 있으니 정책에 맞게 선택
-	}
+	AMosesPlayerState* NewPS = Cast<AMosesPlayerState>(NewPlayerState);
+	if (!NewPS) return;
+
+	// SeamlessTravel 유지 대상 복사
+	NewPS->PersistentId = PersistentId;
+	NewPS->DebugName = DebugName;
+
+	NewPS->bLoggedIn = bLoggedIn;
+	NewPS->bReady = bReady;
+	NewPS->SelectedCharacterId = SelectedCharacterId;
+
+	NewPS->RoomId = RoomId;
+	NewPS->bIsRoomHost = bIsRoomHost;
 }
 
-void AMosesPlayerState::OverrideWith(APlayerState* PlayerState)
+void AMosesPlayerState::OverrideWith(APlayerState* OldPlayerState)
 {
-	Super::OverrideWith(PlayerState);
+	Super::OverrideWith(OldPlayerState);
 
-	if (AMosesPlayerState* Src = Cast<AMosesPlayerState>(PlayerState))
-	{
-		PersistentId = Src->PersistentId;
-		DebugName = Src->DebugName;
-		SelectedCharacterId = Src->SelectedCharacterId;
-		bReady = Src->bReady;
-	}
+	const AMosesPlayerState* OldPS = Cast<AMosesPlayerState>(OldPlayerState);
+	if (!OldPS) return;
+
+	// 클라에서도 값이 덮어씌워져 UI가 유지되는 것을 관찰 가능
+	PersistentId = OldPS->PersistentId;
+	DebugName = OldPS->DebugName;
+
+	bLoggedIn = OldPS->bLoggedIn;
+	bReady = OldPS->bReady;
+	SelectedCharacterId = OldPS->SelectedCharacterId;
+
+	RoomId = OldPS->RoomId;
+	bIsRoomHost = OldPS->bIsRoomHost;
 }
 
-void AMosesPlayerState::EnsurePersistentId_ServerOnly()
+void AMosesPlayerState::ServerSetLoggedIn(bool bInLoggedIn)
 {
-	// 서버에서만 PersistentId를 생성/보장
-	if (HasAuthority() && !PersistentId.IsValid())
-	{
-		PersistentId = FGuid::NewGuid();
-	}
-}
+	check(HasAuthority());
 
-// ----------------------------------------------------
-// Experience 로딩 완료 시점에 PlayerState가 반응하는 함수
-// ----------------------------------------------------
-// ⚠️ 중요 개념 요약
-// - 이 함수는 PlayerState에 있으므로 "서버/클라 모두에서 호출될 수 있음"
-// - 하지만, 내부 로직은 GetAuthGameMode()를 사용하므로
-//   "실제로 의미 있는 동작은 서버에서만 수행"된다.
-//
-// 역할 요약:
-// - 서버: 이 플레이어가 어떤 PawnData(직업/캐릭터 세트)를 사용할지 결정
-// - 클라: 이 함수는 호출될 수 있으나, 실제 로직은 실행되지 않음
-//
-void AMosesPlayerState::OnExperienceLoaded(const UMosesExperienceDefinition* CurrentExperience)
-{
-	// ------------------------------------------------
-	// 서버 전용 분기
-	// ------------------------------------------------
-	// GameMode는 서버에만 존재하는 객체이다.
-	// 따라서 GetAuthGameMode()가 nullptr이 아니면
-	// "지금 이 코드는 서버에서 실행 중"임을 의미한다.
-	if (AMosesGameModeBase* GameMode = GetWorld()->GetAuthGameMode<AMosesGameModeBase>())
-	{
-		// PlayerState의 Owner는 서버 기준으로
-		// 해당 플레이어의 Controller(PlayerController)이다.
-		AController* OwnerController = Cast<AController>(GetOwner());
-
-		// GameMode 정책에 따라
-		// "이 Controller가 어떤 PawnData를 써야 하는지"를 결정한다.
-		// - Experience 종류
-		// - 팀
-		// - 로비에서 선택한 캐릭터
-		// 등의 정보를 종합해 서버가 단일 진실(Source of Truth)을 만든다.
-		const UMosesPawnData* NewPawnData =
-			GameMode->GetPawnDataForController(OwnerController);
-
-		// 서버에서 PawnData를 못 찾으면
-		// 이후 스폰/Ability/Input 초기화가 전부 망가질 수 있으므로
-		// 즉시 크래시로 문제를 드러내는 것이 낫다.
-		check(NewPawnData);
-
-		// PlayerState에 PawnData를 세팅한다.
-		// 이 값은:
-		// - 서버에서는 스폰 정책의 기준이 되고
-		// - Replication을 통해 클라이언트로 전달된다.
-		SetPawnData(NewPawnData);
-
-		UE_LOG(LogTemp, Warning,
-			TEXT("[PS][PawnData][SERVER] SetPawnData PS=%s PC=%s PawnData=%s"),
-			*GetNameSafe(this),
-			*GetNameSafe(OwnerController),
-			*GetNameSafe(NewPawnData)
-		);
-	}
-	else
-	{
-		// ------------------------------------------------
-		// 클라이언트 분기 (실제 로직 없음)
-		// ------------------------------------------------
-		// 클라이언트에서는:
-		// - GameMode가 존재하지 않기 때문에
-		// - 항상 이 else 경로로 들어온다.
-		//
-		// 즉, 클라이언트는 PawnData를 "결정"하지 않는다.
-		// 클라이언트는 서버가 PlayerState에 세팅한 PawnData를
-		// Replication(OnRep_PawnData)을 통해 전달받아 사용해야 한다.
-	}
-}
-
-
-// ----------------------------------------------------
-// PawnData 세팅 함수 (정책: 최초 1회만 세팅)
-// ----------------------------------------------------
-void AMosesPlayerState::SetPawnData(const UMosesPawnData* InPawnData)
-{
-	// PawnData는 게임 플레이 전반(능력/입력/카메라/애니 등)의 "설계도" 역할을 하므로 null이면 안 됨
-	check(InPawnData);
-
-	// 정책: 최초 1회만 설정
-	// - Experience는 보통 매치 동안 고정이므로 "한 번만"이 합리적
-	// - 하지만 맵 이동/Experience 전환을 지원할 거면 이 정책은 바뀌어야 함(리셋/재설정 필요)
-	if (PawnData)
+	if (bLoggedIn == bInLoggedIn)
 	{
 		return;
 	}
 
-	PawnData = InPawnData;
-
-	// 공부 포인트:
-	// 만약 클라이언트도 PawnData가 필요하다면,
-	// PawnData를 Replicated로 선언하고
-	// 여기서 세팅된 값이 클라로 복제되게 해야 함.
-}
-
-void AMosesPlayerState::ServerSetSelectedCharacterId(int32 InId)
-{
-	if (HasAuthority() == false)
-	{
-		return;
-	}
-
-	SelectedCharacterId = InId;
+	// 서버 단일진실
+	bLoggedIn = bInLoggedIn;
 }
 
 void AMosesPlayerState::ServerSetReady(bool bInReady)
 {
-	if (HasAuthority() == false)
+	check(HasAuthority());
+
+	if (bReady == bInReady)
 	{
 		return;
 	}
@@ -191,11 +103,27 @@ void AMosesPlayerState::ServerSetReady(bool bInReady)
 	bReady = bInReady;
 }
 
+void AMosesPlayerState::ServerSetSelectedCharacterId(int32 InId)
+{
+	check(HasAuthority());
+
+	if (SelectedCharacterId == InId)
+	{
+		return;
+	}
+
+	SelectedCharacterId = InId;
+
+	UE_LOG(LogMosesPlayer, Log, TEXT("[CharSel][SV][PS] Set SelectedCharacterId=%d Pid=%s"),
+		SelectedCharacterId,
+		*PersistentId.ToString(EGuidFormats::DigitsWithHyphens));
+}
+
 void AMosesPlayerState::ServerSetRoom(const FGuid& InRoomId, bool bInIsHost)
 {
-	// PlayerState는 서버가 “단일 진실(Source of Truth)”로 들고 있고,
-	// RoomId / Host 같은 로비 상태는 여기서 복제해주면 UI가 자동 갱신된다.
-	if (HasAuthority() == false)
+	check(HasAuthority());
+
+	if (RoomId == InRoomId && bIsRoomHost == bInIsHost)
 	{
 		return;
 	}
@@ -204,38 +132,76 @@ void AMosesPlayerState::ServerSetRoom(const FGuid& InRoomId, bool bInIsHost)
 	bIsRoomHost = bInIsHost;
 }
 
-FString AMosesPlayerState::MakeDebugString() const
+void AMosesPlayerState::DOD_PS_Log(const UObject* Caller, const TCHAR* Phase) const
 {
-	return FString::Printf(
-		TEXT("PS=%p PlayerId=%d PersistentId=%s DebugName=%s SelChar=%d Ready=%d PlayerName=%s"),
-		this,
-		GetPlayerId(),
+	const TCHAR* CallerName = Caller ? *Caller->GetName() : TEXT("None");
+
+	UE_LOG(LogMosesPlayer, Log,
+		TEXT("[PS][%s] %s Caller=%s Pid=%s RoomId=%s Host=%d Ready=%d LoggedIn=%d SelChar=%d"),
+		Phase,
+		*GetName(),
+		CallerName,
 		*PersistentId.ToString(EGuidFormats::DigitsWithHyphens),
-		*DebugName,
-		SelectedCharacterId,
+		*RoomId.ToString(EGuidFormats::DigitsWithHyphens),
+		bIsRoomHost ? 1 : 0,
 		bReady ? 1 : 0,
-		*GetPlayerName()
-	);
+		bLoggedIn ? 1 : 0,
+		SelectedCharacterId);
 }
 
-void AMosesPlayerState::DOD_PS_Log(const UObject* WorldContext, const TCHAR* Where) const
+static void NotifyOwningLocalPlayer_PSChanged(AMosesPlayerState* PS)
 {
-	const UWorld* W = WorldContext ? WorldContext->GetWorld() : nullptr;
-	const ENetMode NM = W ? W->GetNetMode() : NM_Standalone;
+	if (!PS)
+	{
+		return;
+	}
 
-	const TCHAR* NMStr =
-		(NM == NM_DedicatedServer) ? TEXT("DS") :
-		(NM == NM_ListenServer) ? TEXT("LS") :
-		(NM == NM_Client) ? TEXT("CL") : TEXT("ST");
+	// ✅ “모든 LocalPlayer 순회” 대신 “이 PlayerState의 소유자”에게만 노티
+	APlayerController* PC = Cast<APlayerController>(PS->GetOwner());
+	if (!PC)
+	{
+		// Owner가 없거나 타입이 다르면 기존 방식으로 폴백할 수도 있지만,
+		// Phase0에서는 과한 순회를 줄이는 쪽이 깔끔함.
+		return;
+	}
 
-	// 고정 1줄 포맷: grep 판정용
-	UE_LOG(LogTemp, Warning, TEXT("[DOD][PS][%s][%s] PS=%p PID=%s Char=%d Ready=%d Name=%s"),
-		NMStr,
-		Where,
-		this,
-		*PersistentId.ToString(EGuidFormats::DigitsWithHyphensLower),
+	ULocalPlayer* LP = PC->GetLocalPlayer();
+	if (!LP)
+	{
+		return;
+	}
+
+	if (UMosesLobbyLocalPlayerSubsystem* Subsys = LP->GetSubsystem<UMosesLobbyLocalPlayerSubsystem>())
+	{
+		Subsys->NotifyPlayerStateChanged();
+	}
+}
+
+void AMosesPlayerState::OnRep_PersistentId()
+{
+	NotifyOwningLocalPlayer_PSChanged(this);
+}
+
+void AMosesPlayerState::OnRep_LoggedIn()
+{
+	NotifyOwningLocalPlayer_PSChanged(this);
+}
+
+void AMosesPlayerState::OnRep_Ready()
+{
+	NotifyOwningLocalPlayer_PSChanged(this);
+}
+
+void AMosesPlayerState::OnRep_SelectedCharacterId()
+{
+	UE_LOG(LogMosesPlayer, Log, TEXT("[CharSel][CL][PS] OnRep SelectedCharacterId=%d Pid=%s"),
 		SelectedCharacterId,
-		bReady ? 1 : 0,
-		*GetPlayerName()
-	);
+		*PersistentId.ToString(EGuidFormats::DigitsWithHyphens));
+
+	NotifyOwningLocalPlayer_PSChanged(this);
+}
+
+void AMosesPlayerState::OnRep_Room()
+{
+	NotifyOwningLocalPlayer_PSChanged(this);
 }

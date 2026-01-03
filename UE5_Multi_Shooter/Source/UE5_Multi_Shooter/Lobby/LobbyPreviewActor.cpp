@@ -1,31 +1,37 @@
-// LobbyPreviewActor.cpp
-// ¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡
-// LobbyPreviewActor ±¸Çö
-// - ¸Ş½Ã + AnimBP ±³Ã¼¸¸ ¼öÇà
-// - Idle »óÅÂ´Â AnimBP ³»ºÎ¿¡¼­ ÀÚµ¿ À¯Áö
-// ¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡
+ï»¿// LobbyPreviewActor.cpp
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// LobbyPreviewActor êµ¬í˜„
+// - ë©”ì‹œ + AnimBP êµì²´ë§Œ ìˆ˜í–‰
+// - Idle ìƒíƒœëŠ” AnimBP ë‚´ë¶€ì—ì„œ ìë™ ìœ ì§€
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 #include "LobbyPreviewActor.h"
 #include "Components/SkeletalMeshComponent.h"
-#include "Engine/Engine.h"
+#include "Animation/AnimInstance.h"
 
 ALobbyPreviewActor::ALobbyPreviewActor()
 {
-	// ÇÁ¸®ºä ¾×ÅÍ´Â Tick ºÒÇÊ¿ä
+	// í”„ë¦¬ë·° ì•¡í„°ëŠ” Tick ë¶ˆí•„ìš”
 	PrimaryActorTick.bCanEverTick = false;
 
-	// ½ºÄÌ·¹Å» ¸Ş½Ã ÄÄÆ÷³ÍÆ® »ı¼º
+	// âœ… ë¡œì»¬ ì „ìš© ì•¡í„° ê°•ì œ
+	// - ì ˆëŒ€ ë„¤íŠ¸ì›Œí¬ì— ì–¹ì§€ ì•ŠëŠ”ë‹¤.
+	// - ì„œë²„/í´ë¼ ëª¨ë‘ ë ˆë²¨ì— ì¡´ì¬í•  ìˆ˜ëŠ” ìˆì–´ë„ "ë™ê¸°í™” ëŒ€ìƒ"ì´ ì•„ë‹ˆë‹¤.
+	bReplicates = false;
+	SetReplicateMovement(false);
+
+	// ìŠ¤ì¼ˆë ˆíƒˆ ë©”ì‹œ ì»´í¬ë„ŒíŠ¸ ìƒì„±
 	PreviewMesh = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("PreviewMesh"));
 	SetRootComponent(PreviewMesh);
 
-	// ÇÁ¸®ºä´Â Ãæµ¹/³×Æ®¿öÅ© ºÒÇÊ¿ä
+	// í”„ë¦¬ë·°ëŠ” ì¶©ëŒ/ë„¤íŠ¸ì›Œí¬ ë¶ˆí•„ìš”
 	PreviewMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	PreviewMesh->SetGenerateOverlapEvents(false);
 
-	// Ç×»ó AnimBP ±â¹İÀ¸·Î µ¿ÀÛ
+	// í•­ìƒ AnimBP ê¸°ë°˜ìœ¼ë¡œ ë™ì‘
 	PreviewMesh->SetAnimationMode(EAnimationMode::AnimationBlueprint);
 
-	// (¼±ÅÃ) ±×¸²ÀÚ ÇÊ¿ä ¾øÀ¸¸é ²¨¼­ ºñ¿ë Àı°¨ °¡´É
+	// (ì„ íƒ) ê·¸ë¦¼ì í•„ìš” ì—†ìœ¼ë©´ êº¼ì„œ ë¹„ìš© ì ˆê° ê°€ëŠ¥
 	// PreviewMesh->CastShadow = false;
 }
 
@@ -33,7 +39,7 @@ void ALobbyPreviewActor::BeginPlay()
 {
 	Super::BeginPlay();
 
-	// ·¹º§¿¡ ¹èÄ¡µÈ Á÷ÈÄ, ±âº» Å¸ÀÔ ÇÁ¸®ºä Àû¿ë
+	// ë ˆë²¨ì— ë°°ì¹˜ëœ ì§í›„, ê¸°ë³¸ íƒ€ì… í”„ë¦¬ë·° ì ìš©
 	ApplyVisual(DefaultType);
 }
 
@@ -41,8 +47,8 @@ void ALobbyPreviewActor::ApplyVisual(ECharacterType Type)
 {
 	const int32 Index = static_cast<int32>(Type);
 
-	// ¹æ¾î ÄÚµå: ¹è¿­ ¹üÀ§ Ã¼Å©
-	if (!VisualSets.IsValidIndex(Index))
+	// ë°©ì–´ ì½”ë“œ: ë°°ì—´ ë²”ìœ„ ì²´í¬
+	if (!IsVisualSetValid(Index))
 	{
 		UE_LOG(LogTemp, Warning,
 			TEXT("[LobbyPreview][CL] ApplyVisual FAILED: Invalid Type=%d"), Index);
@@ -51,7 +57,7 @@ void ALobbyPreviewActor::ApplyVisual(ECharacterType Type)
 
 	const FPreviewVisualSet& Visual = VisualSets[Index];
 
-	// ¹æ¾î ÄÚµå: ÇÊ¼ö ¿¡¼Â Ã¼Å©
+	// ë°©ì–´ ì½”ë“œ: í•„ìˆ˜ ì—ì…‹ ì²´í¬
 	if (!Visual.Mesh || !Visual.AnimClass)
 	{
 		UE_LOG(LogTemp, Warning,
@@ -62,16 +68,35 @@ void ALobbyPreviewActor::ApplyVisual(ECharacterType Type)
 		return;
 	}
 
-	// ÇöÀç Å¸ÀÔ ±â·Ï
+	// í˜„ì¬ íƒ€ì… ê¸°ë¡
 	CurrentType = Type;
 
-	// ¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡
-	// ÇÙ½É ·ÎÁ÷
-	// 1) SkeletalMesh ±³Ã¼
-	// 2) AnimBP ±³Ã¼ ¡æ AnimBP ±âº» »óÅÂ(Idle) ÀÚµ¿ ÁøÀÔ
-	// ¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡
-	PreviewMesh->SetSkeletalMesh(Visual.Mesh);
+	ApplyVisual_Internal(Visual, Index);
+}
+
+bool ALobbyPreviewActor::IsVisualSetValid(const int32 Index) const
+{
+	return VisualSets.IsValidIndex(Index);
+}
+
+void ALobbyPreviewActor::ApplyVisual_Internal(const FPreviewVisualSet& Visual, const int32 Index)
+{
+	// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+	// í•µì‹¬ ë¡œì§ (ì•ˆì •ì„± ë³´ê°• ë²„ì „)
+	// 1) SkeletalMesh êµì²´ (Reinit Pose)
+	// 2) AnimBP êµì²´ â†’ AnimBP ê¸°ë³¸ ìƒíƒœ(Idle) ìë™ ì§„ì…
+	// 3) í•„ìš” ì‹œ Anim ì´ˆê¸°í™” ê°•ì œ
+	// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+	// ìŠ¤ì¼ˆë ˆí†¤ì´ ë‹¤ë¥¸ Meshë¡œ êµì²´ë  ìˆ˜ ìˆìœ¼ë¯€ë¡œ ReinitPose=true ê¶Œì¥
+	PreviewMesh->SetSkeletalMesh(Visual.Mesh, true);
+
+	// AnimBP êµì²´
+	PreviewMesh->SetAnimationMode(EAnimationMode::AnimationBlueprint);
 	PreviewMesh->SetAnimInstanceClass(Visual.AnimClass);
+
+	// êµì²´ ì§í›„ "ì²« í”„ë ˆì„ T-Pose/ë¯¸ê°±ì‹ "ì„ ì¤„ì´ê³  ì‹¶ìœ¼ë©´ Anim ì´ˆê¸°í™” ê°•ì œ
+	PreviewMesh->InitAnim(true);
 
 	UE_LOG(LogTemp, Log,
 		TEXT("[LobbyPreview][CL] ApplyVisual OK Type=%d Mesh=%s Anim=%s"),

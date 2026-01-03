@@ -1,16 +1,22 @@
-#pragma once
+ï»¿#pragma once
 
 #include "GameFeatureAction.h"
+#include "UObject/SoftObjectPath.h"
 #include "GameFeatureAction_MosesLobbyUI.generated.h"
 
 /**
- * °øºÎ ¸Ş¸ğ)
- * - GameFeatureActionÀº "GF°¡ ÄÑÁú ¶§/²¨Áú ¶§" ¿£ÁøÀÌ È£ÃâÇØÁÖ´Â ÈÅ Æ÷ÀÎÆ®´Ù.
- * - ¿©±â¼­ UI¸¦ Á÷Á¢ ¸¸µé ¼öµµ ÀÖÁö¸¸,
- *   LocalPlayerSubsystem¿¡ À§ÀÓÇÏ¸é ¿ªÇÒÀÌ ±ò²ûÇØÁø´Ù.
- *   (GF: Æ®¸®°Å / Subsystem: ½ÇÁ¦ UI&ÀÔ·Â Ã³¸®)
+ * GameFeatureAction_MosesLobbyUI
+ *
+ * ì—­í• :
+ * - GameFeature í™œì„±í™” ì‹œ
+ *   "Lobby UI Widget ê²½ë¡œ"ë¥¼ ì „ì—­ ë ˆì§€ìŠ¤íŠ¸ë¦¬ì— ë“±ë¡
+ *
+ * ì›ì¹™:
+ * - âŒ Subsystem / Player / Widget ì§ì ‘ ì ‘ê·¼ ê¸ˆì§€
+ * - âŒ CreateWidget ì ˆëŒ€ ê¸ˆì§€
+ * - âœ… ê²½ë¡œë§Œ ì œê³µ
  */
-UCLASS()
+UCLASS(MinimalAPI)
 class UGameFeatureAction_MosesLobbyUI : public UGameFeatureAction
 {
 	GENERATED_BODY()
@@ -20,5 +26,8 @@ public:
 	virtual void OnGameFeatureDeactivating(FGameFeatureDeactivatingContext& Context) override;
 
 private:
-	void ForEachLocalPlayer_Do(UWorld* World, TFunctionRef<void(class ULocalPlayer*)> Fn);
+	UPROPERTY(EditDefaultsOnly, Category = "LobbyUI")
+	FSoftClassPath LobbyWidgetClassPath =
+		FSoftClassPath(TEXT("/GF_Lobby_Code/Lobby/UI/WBP_LobbyPage.WBP_LobbyPage_C"));
+
 };

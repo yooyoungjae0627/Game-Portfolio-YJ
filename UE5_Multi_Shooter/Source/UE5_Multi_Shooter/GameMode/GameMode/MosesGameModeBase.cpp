@@ -16,38 +16,14 @@
 #include "Engine/NetConnection.h"
 #include "Kismet/GameplayStatics.h"
 
-static FString GetConnAddr(APlayerController* PC)
-{
-	if (!PC) return TEXT("PC=None");
-	if (UNetConnection* Conn = PC->GetNetConnection())
-	{
-		return Conn->LowLevelGetRemoteAddress(true); // ip:port
-	}
-	return TEXT("Conn=None");
-}
-
 AMosesGameModeBase::AMosesGameModeBase()
 {
 	// 서버 기본 클래스 셋업(프로젝트 규칙의 베이스)
-	GameStateClass = AMosesGameState::StaticClass();
-	PlayerControllerClass = AMosesPlayerController::StaticClass();
-	PlayerStateClass = AMosesPlayerState::StaticClass();
-	DefaultPawnClass = AMosesCharacter::StaticClass();
 }
 
 void AMosesGameModeBase::InitGame(const FString& MapName, const FString& Options, FString& ErrorMessage)
 {
 	Super::InitGame(MapName, Options, ErrorMessage);
-
-	if (GEngine)
-	{
-		GEngine->AddOnScreenDebugMessage(
-			-1,
-			8.f,
-			FColor::Red,
-			FString::Printf(TEXT("[GM][InitGame] Map=%s Options=%s"), *MapName, *Options)
-		);
-	}
 
 	UE_LOG(LogMosesExp, Warning, TEXT("[GM][InitGame] Map=%s Options=%s NetMode=%d World=%s"),
 		*MapName, *Options, (int32)GetNetMode(), *GetNameSafe(GetWorld()));
@@ -60,16 +36,9 @@ void AMosesGameModeBase::InitGameState()
 {
 	Super::InitGameState();
 
-	if (GEngine)
-	{
-		GEngine->AddOnScreenDebugMessage(
-			-1, 8.f, FColor::Cyan,
-			FString::Printf(TEXT("[GM][InitGameState] GS=%s"), *GetNameSafe(GameState))
-		);
-	}
-
 	UMosesExperienceManagerComponent* ExperienceManagerComponent =
 		GameState->FindComponentByClass<UMosesExperienceManagerComponent>();
+	
 	check(ExperienceManagerComponent);
 
 	UE_LOG(LogMosesExp, Warning, TEXT("[GM][InitGameState] Register OnExperienceLoaded (GS=%s)"),
@@ -78,6 +47,81 @@ void AMosesGameModeBase::InitGameState()
 	ExperienceManagerComponent->CallOrRegister_OnExperienceLoaded(
 		FOnMosesExperienceLoaded::FDelegate::CreateUObject(this, &ThisClass::OnExperienceLoaded)
 	);
+}
+
+void AMosesGameModeBase::PostLogin(APlayerController* NewPlayer)
+{
+	// GameModeBase::PostLogin
+	// - 서버 전용 함수
+	// - 클라이언트가 서버에 성공적으로 접속(Login)한 직후 호출됨
+	// - 이 시점부터 해당 PlayerController는 서버에서 "유효한 플레이어"로 취급됨
+	Super::PostLogin(NewPlayer);
+
+	// ------------------------------
+	// 기본 디버그 정보 수집
+	// ------------------------------
+
+	// 접속 주소(IP:Port) 추출 (디버깅용)
+	const FString Addr = GetConnAddr(NewPlayer);
+
+	// PlayerState가 이미 생성되었는지 확인
+	// PostLogin 시점에서는 정상적이라면 PlayerState는 이미 생성 완료 상태
+	const FString PSName =
+		(NewPlayer && NewPlayer->PlayerState)
+		? NewPlayer->PlayerState->GetPlayerName()
+		: TEXT("PS=None");
+
+	// 서버 관점 로그
+	// - 어떤 PC가 들어왔는지
+	// - PlayerState가 있는지
+	// - Experience(게임 규칙/모드)가 이미 로딩 완료 상태인지 확인
+	UE_LOG(LogMosesSpawn, Warning,
+		TEXT("[NET][PostLogin] PC=%s PSName=%s Addr=%s ExpLoaded=%d"),
+		*GetNameSafe(NewPlayer),
+		*PSName,
+		*Addr,
+		IsExperienceLoaded()
+	);
+
+	// ------------------------------
+	// 네트워크 연결 정보 확인
+	// ------------------------------
+
+	// PlayerController → NetConnection
+	// - Dedicated Server 환경에서는 실제 원격 클라이언트의 소켓 연결
+	UNetConnection* Conn = NewPlayer ? NewPlayer->GetNetConnection() : nullptr;
+
+	// 원격 클라이언트 IP 주소 (LowLevel 네트워크 주소)
+	const FString RemoteAddr =
+		Conn ? Conn->LowLevelGetRemoteAddress(true) : TEXT("None");
+
+	// ------------------------------
+	// PlayerState 검증
+	// ------------------------------
+
+	if (NewPlayer && NewPlayer->PlayerState)
+	{
+		// 정상 케이스
+		// - PlayerState는 PostLogin 이전에 생성됨
+		// - PlayerId는 서버에서 유니크하게 할당됨
+		UE_LOG(LogMosesSpawn, Warning,
+			TEXT("[SERVER][PlayerState OK] PlayerId=%d | PS=%s | RemoteAddr=%s"),
+			NewPlayer->PlayerState->GetPlayerId(),
+			*GetNameSafe(NewPlayer->PlayerState),
+			*RemoteAddr
+		);
+	}
+	else
+	{
+		// 비정상 케이스 (이론상 거의 발생하면 안 됨)
+		// - PlayerState 생성 실패
+		// - 커스텀 GameMode / PlayerState 설정 문제 가능성
+		UE_LOG(LogMosesSpawn, Error,
+			TEXT("[SERVER][PlayerState MISSING] PC=%s | RemoteAddr=%s"),
+			*GetNameSafe(NewPlayer),
+			*RemoteAddr
+		);
+	}
 }
 
 UClass* AMosesGameModeBase::GetDefaultPawnClassForController_Implementation(AController* InController)
@@ -405,82 +449,6 @@ void AMosesGameModeBase::OnMatchAssignmentGiven(FPrimaryAssetId ExperienceId)
 	UE_LOG(LogMosesExp, Warning, TEXT("[EXP][Assign] <- ServerSetCurrentExperience called"));
 }
 
-void AMosesGameModeBase::PostLogin(APlayerController* NewPlayer)
-{
-	// GameModeBase::PostLogin
-	// - 서버 전용 함수
-	// - 클라이언트가 서버에 성공적으로 접속(Login)한 직후 호출됨
-	// - 이 시점부터 해당 PlayerController는 서버에서 "유효한 플레이어"로 취급됨
-	Super::PostLogin(NewPlayer);
-
-	// ------------------------------
-	// 기본 디버그 정보 수집
-	// ------------------------------
-
-	// 접속 주소(IP:Port) 추출 (디버깅용)
-	const FString Addr = GetConnAddr(NewPlayer);
-
-	// PlayerState가 이미 생성되었는지 확인
-	// PostLogin 시점에서는 정상적이라면 PlayerState는 이미 생성 완료 상태
-	const FString PSName =
-		(NewPlayer && NewPlayer->PlayerState)
-		? NewPlayer->PlayerState->GetPlayerName()
-		: TEXT("PS=None");
-
-	// 서버 관점 로그
-	// - 어떤 PC가 들어왔는지
-	// - PlayerState가 있는지
-	// - Experience(게임 규칙/모드)가 이미 로딩 완료 상태인지 확인
-	UE_LOG(LogMosesSpawn, Warning,
-		TEXT("[NET][PostLogin] PC=%s PSName=%s Addr=%s ExpLoaded=%d"),
-		*GetNameSafe(NewPlayer),
-		*PSName,
-		*Addr,
-		IsExperienceLoaded()
-	);
-
-	// ------------------------------
-	// 네트워크 연결 정보 확인
-	// ------------------------------
-
-	// PlayerController → NetConnection
-	// - Dedicated Server 환경에서는 실제 원격 클라이언트의 소켓 연결
-	UNetConnection* Conn = NewPlayer ? NewPlayer->GetNetConnection() : nullptr;
-
-	// 원격 클라이언트 IP 주소 (LowLevel 네트워크 주소)
-	const FString RemoteAddr =
-		Conn ? Conn->LowLevelGetRemoteAddress(true) : TEXT("None");
-
-	// ------------------------------
-	// PlayerState 검증
-	// ------------------------------
-
-	if (NewPlayer && NewPlayer->PlayerState)
-	{
-		// 정상 케이스
-		// - PlayerState는 PostLogin 이전에 생성됨
-		// - PlayerId는 서버에서 유니크하게 할당됨
-		UE_LOG(LogMosesSpawn, Warning,
-			TEXT("[SERVER][PlayerState OK] PlayerId=%d | PS=%s | RemoteAddr=%s"),
-			NewPlayer->PlayerState->GetPlayerId(),
-			*GetNameSafe(NewPlayer->PlayerState),
-			*RemoteAddr
-		);
-	}
-	else
-	{
-		// 비정상 케이스 (이론상 거의 발생하면 안 됨)
-		// - PlayerState 생성 실패
-		// - 커스텀 GameMode / PlayerState 설정 문제 가능성
-		UE_LOG(LogMosesSpawn, Error,
-			TEXT("[SERVER][PlayerState MISSING] PC=%s | RemoteAddr=%s"),
-			*GetNameSafe(NewPlayer),
-			*RemoteAddr
-		);
-	}
-}
-
-
 void AMosesGameModeBase::RestartPlayer(AController* NewPlayer)
 {
 	UE_LOG(LogTemp, Warning, TEXT("[SPAWN] RestartPlayer Controller=%s ExpLoaded=%d"),
@@ -568,6 +536,7 @@ const UMosesPawnData* AMosesGameModeBase::GetPawnDataForController(const AContro
 	return nullptr;
 }
 
+
 // ------------------------------
 // SpawnGate Release / Flush
 // ------------------------------
@@ -650,4 +619,14 @@ void AMosesGameModeBase::HandleDoD_AfterExperienceReady(const UMosesExperienceDe
 {
 	// Base GM은 공통 처리 없음.
 	// Lobby/Match 등 모드별로 override해서 사용.
+}
+
+FString AMosesGameModeBase::GetConnAddr(APlayerController* PC)
+{
+	if (!PC) return TEXT("PC=None");
+	if (UNetConnection* Conn = PC->GetNetConnection())
+	{
+		return Conn->LowLevelGetRemoteAddress(true); // ip:port
+	}
+	return TEXT("Conn=None");
 }

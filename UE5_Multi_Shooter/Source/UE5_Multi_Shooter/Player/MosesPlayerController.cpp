@@ -20,248 +20,26 @@
 static constexpr int32 Lobby_MinRoomMaxPlayers = 2;
 static constexpr int32 Lobby_MaxRoomMaxPlayers = 4;
 
+// --------------------------------------------------
+// AMosesPlayerController (Ctor)
+// --------------------------------------------------
+
 AMosesPlayerController::AMosesPlayerController(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
 {
 	// 프로젝트 카메라 매니저 사용
 	PlayerCameraManagerClass = AMosesPlayerCameraManager::StaticClass();
 
-	// ⚠ bAutoManageActiveCameraTarget은 로비 컨텍스트에서만 끈다.
-	// 생성자에서 영구로 꺼두면 매치에서 Pawn 카메라 자동 복구가 안 될 수 있음.
+	/**
+	 * 주의:
+	 * - bAutoManageActiveCameraTarget 을 여기서 영구로 끄면 "매치에서 Pawn 카메라 자동 복구"가 망가질 수 있다.
+	 * - 로비에서만 끄고, 로비가 아니면 반드시 원복한다. (BeginPlay/RestoreNonLobbyDefaults)
+	 */
 }
 
-bool AMosesPlayerController::IsLobbyContext() const
-{
-	// 로비 UI/카메라 강제 적용을 "로비 단계"에만 제한하기 위한 게이트.
-	// 정책이 바뀌면(Phase 기반 등) 여기만 수정해도 전체 로비 적용 조건이 바뀐다.
-	UWorld* World = GetWorld();
-	if (!World)
-	{
-		return false;
-	}
-
-	return (World->GetGameState<AMosesLobbyGameState>() != nullptr);
-}
-
-// ---------------------------
-// Lobby RPCs (Server)
-// ---------------------------
-
-void AMosesPlayerController::Server_CreateRoom_Implementation(int32 MaxPlayers)
-{
-	// RPC는 서버에서만 유효 (Client 호출이 들어와도 여기서 최종 방어)
-	if (!HasAuthority())
-	{
-		return;
-	}
-
-	AMosesLobbyGameState* LGS = GetWorld() ? GetWorld()->GetGameState<AMosesLobbyGameState>() : nullptr;
-	AMosesPlayerState* PS = GetPlayerState<AMosesPlayerState>();
-
-	if (!LGS || !PS)
-	{
-		UE_LOG(LogMosesSpawn, Warning, TEXT("[LobbyRPC][SERVER] CreateRoom REJECT (NoGS/NoPS)"));
-		return;
-	}
-
-	// 입력값 방어: 실수/악의적 호출 대비
-	const int32 SafeMaxPlayers = FMath::Clamp(MaxPlayers, Lobby_MinRoomMaxPlayers, Lobby_MaxRoomMaxPlayers);
-
-	// 룸 생성은 LobbyGameState가 Source of Truth
-	const FGuid NewRoomId = LGS->Server_CreateRoom(PS, SafeMaxPlayers);
-	if (!NewRoomId.IsValid())
-	{
-		UE_LOG(LogMosesSpawn, Warning, TEXT("[LobbyRPC][SERVER] CreateRoom FAIL Max=%d PC=%s"),
-			SafeMaxPlayers, *GetNameSafe(this));
-		return;
-	}
-
-	UE_LOG(LogMosesSpawn, Warning, TEXT("[LobbyRPC][SERVER] CreateRoom OK Room=%s Max=%d PC=%s"),
-		*NewRoomId.ToString(), SafeMaxPlayers, *GetNameSafe(this));
-
-	// RoomId를 클라 UI에 자동 입력하고 싶으면:
-	// - 여기서 ClientRPC로 Subsystem.NotifyRoomCreated(NewRoomId) 호출하는 구조로 확장 가능
-}
-
-void AMosesPlayerController::Server_JoinRoom_Implementation(const FGuid& RoomId)
-{
-	if (!HasAuthority())
-	{
-		return;
-	}
-
-	if (!RoomId.IsValid())
-	{
-		UE_LOG(LogMosesSpawn, Warning, TEXT("[LobbyRPC][SERVER] JoinRoom REJECT (InvalidRoomId) PC=%s"),
-			*GetNameSafe(this));
-		return;
-	}
-
-	AMosesLobbyGameState* LGS = GetWorld() ? GetWorld()->GetGameState<AMosesLobbyGameState>() : nullptr;
-	AMosesPlayerState* PS = GetPlayerState<AMosesPlayerState>();
-
-	if (!LGS || !PS)
-	{
-		UE_LOG(LogMosesSpawn, Warning, TEXT("[LobbyRPC][SERVER] JoinRoom REJECT (NoGS/NoPS)"));
-		return;
-	}
-
-	const bool bOk = LGS->Server_JoinRoom(PS, RoomId);
-
-	UE_LOG(LogMosesSpawn, Warning, TEXT("[LobbyRPC][SERVER] JoinRoom %s Room=%s PC=%s"),
-		bOk ? TEXT("OK") : TEXT("FAIL"), *RoomId.ToString(), *GetNameSafe(this));
-}
-
-void AMosesPlayerController::Server_LeaveRoom_Implementation()
-{
-	if (!HasAuthority())
-	{
-		return;
-	}
-
-	AMosesLobbyGameState* LGS = GetWorld() ? GetWorld()->GetGameState<AMosesLobbyGameState>() : nullptr;
-	AMosesPlayerState* PS = GetPlayerState<AMosesPlayerState>();
-
-	if (!LGS || !PS)
-	{
-		UE_LOG(LogMosesSpawn, Warning, TEXT("[LobbyRPC][SERVER] LeaveRoom REJECT (NoGS/NoPS)"));
-		return;
-	}
-
-	LGS->Server_LeaveRoom(PS);
-
-	UE_LOG(LogMosesSpawn, Warning, TEXT("[LobbyRPC][SERVER] LeaveRoom OK PC=%s"), *GetNameSafe(this));
-}
-
-void AMosesPlayerController::Server_RequestStartGame_Implementation()
-{
-	// StartGame은 서버 GM에서 최종 검증 후 Travel
-	if (!HasAuthority())
-	{
-		return;
-	}
-
-	AMosesLobbyGameMode* LobbyGM = GetWorld() ? GetWorld()->GetAuthGameMode<AMosesLobbyGameMode>() : nullptr;
-	if (!LobbyGM)
-	{
-		UE_LOG(LogMosesSpawn, Warning, TEXT("[LobbyRPC][SERVER] StartGame REJECT (NotLobbyGM)"));
-		return;
-	}
-
-	UE_LOG(LogMosesSpawn, Warning, TEXT("[LobbyRPC][SERVER] StartGame REQ PC=%s"), *GetNameSafe(this));
-	LobbyGM->HandleStartGameRequest(this);
-}
-
-// ---------------------------
-// Lifecycle (Local UI / Camera)
-// ---------------------------
-
-void AMosesPlayerController::BeginPlay()
-{
-	Super::BeginPlay();
-
-	// DOD 로그: PS 유지/재생성/값 확인용
-	if (AMosesPlayerState* PS = GetPlayerState<AMosesPlayerState>())
-	{
-		PS->DOD_PS_Log(this, TEXT("PC:BeginPlay"));
-	}
-
-	// 로컬 컨트롤러만 UI/카메라 변경 가능
-	if (!IsLocalController())
-	{
-		return;
-	}
-
-	// 로비 컨텍스트에서만 로비 UI/카메라 적용
-	if (!IsLobbyContext())
-	{
-		return;
-	}
-
-	// 로비에서는 ViewTarget이 Pawn으로 자동 복구되는 것을 막기 위해 AutoManage를 끈다.
-	// (Possess/Experience/CameraManager가 ViewTarget을 덮는 케이스 방지)
-	bAutoManageActiveCameraTarget = false;
-
-	// 로비 UI 띄우기(LocalPlayerSubsystem)
-	ULocalPlayer* LP = GetLocalPlayer();
-	if (!LP)
-	{
-		UE_LOG(LogMosesSpawn, Warning, TEXT("[LobbyUI] PC BeginPlay: No LocalPlayer"));
-		return;
-	}
-
-	if (UMosesLobbyLocalPlayerSubsystem* LobbySubsys = LP->GetSubsystem<UMosesLobbyLocalPlayerSubsystem>())
-	{
-		LobbySubsys->ActivateLobbyUI();
-	}
-	else
-	{
-		UE_LOG(LogMosesSpawn, Error, TEXT("[LobbyUI] PC BeginPlay: No MosesLobbyLocalPlayerSubsystem"));
-	}
-
-	// Experience/Possess/CameraManager 흐름에서 ViewTarget이 덮이는 케이스가 있어
-	// 즉시 1회 + 지연 1회 재적용(정책값 LobbyPreviewCameraDelay)
-	ApplyLobbyPreviewCamera();
-
-	GetWorldTimerManager().SetTimer(
-		LobbyPreviewCameraTimerHandle,
-		this,
-		&AMosesPlayerController::ApplyLobbyPreviewCamera,
-		LobbyPreviewCameraDelay,
-		false
-	);
-}
-
-void AMosesPlayerController::OnPossess(APawn* InPawn)
-{
-	Super::OnPossess(InPawn);
-
-	if (AMosesPlayerState* PS = GetPlayerState<AMosesPlayerState>())
-	{
-		PS->DOD_PS_Log(this, TEXT("PC:OnPossess"));
-	}
-
-	// Possess 직후 ViewTarget이 Pawn으로 덮일 수 있어 로비면 재적용한다.
-	if (IsLocalController() && IsLobbyContext())
-	{
-		bAutoManageActiveCameraTarget = false;
-		ApplyLobbyPreviewCamera();
-	}
-}
-
-// --------------------
-// Existing Server RPCs
-// --------------------
-
-void AMosesPlayerController::Server_SetReady_Implementation(bool bInReady)
-{
-	// Ready 상태의 Source of Truth는 PlayerState
-	// 이후 RoomList의 ReadyMap을 LGS에 동기화(복제 데이터 갱신)
-	if (AMosesPlayerState* PS = GetPlayerState<AMosesPlayerState>())
-	{
-		PS->ServerSetReady(bInReady);
-		PS->DOD_PS_Log(this, TEXT("Lobby:AfterServer_SetReady"));
-
-		if (AMosesLobbyGameState* LGS = GetWorld()->GetGameState<AMosesLobbyGameState>())
-		{
-			LGS->Server_SyncReadyFromPlayerState(PS);
-		}
-	}
-}
-
-void AMosesPlayerController::Server_SetSelectedCharacterId_Implementation(int32 InId)
-{
-	// 캐릭터 선택은 PlayerState에 저장(복제)
-	if (AMosesPlayerState* PS = GetPlayerState<AMosesPlayerState>())
-	{
-		PS->ServerSetSelectedCharacterId(InId);
-		PS->DOD_PS_Log(this, TEXT("Lobby:AfterServer_SetChar"));
-	}
-}
-
-// --------------------
-// Travel (Exec -> Server RPC -> GM)
-// --------------------
+// --------------------------------------------------
+// Dev Exec Helpers
+// --------------------------------------------------
 
 void AMosesPlayerController::TravelToMatch_Exec()
 {
@@ -299,6 +77,336 @@ void AMosesPlayerController::TravelToLobby_Exec()
 
 	Server_TravelToLobby();
 }
+
+// --------------------------------------------------
+// Client → Server RPC (Lobby)
+// --------------------------------------------------
+
+void AMosesPlayerController::Server_CreateRoom_Implementation(int32 MaxPlayers)
+{
+	UE_LOG(LogMosesSpawn, Warning, TEXT("CREATE ROOM RPC CALLED"));
+
+	AMosesLobbyGameState* LGS = GetLobbyGameStateChecked_Log(TEXT("Server_CreateRoom"));
+	AMosesPlayerState* PS = GetMosesPlayerStateChecked_Log(TEXT("Server_CreateRoom"));
+	if (!LGS || !PS)
+	{
+		return;
+	}
+
+	// 입력값 방어: 실수/악의적 호출 대비
+	const int32 SafeMaxPlayers = FMath::Clamp(MaxPlayers, Lobby_MinRoomMaxPlayers, Lobby_MaxRoomMaxPlayers);
+
+	const FGuid NewRoomId = LGS->Server_CreateRoom(PS, SafeMaxPlayers);
+	if (!NewRoomId.IsValid())
+	{
+		UE_LOG(LogMosesSpawn, Warning, TEXT("[LobbyRPC][SERVER] CreateRoom FAIL Max=%d PC=%s"),
+			SafeMaxPlayers, *GetNameSafe(this));
+		return;
+	}
+
+	UE_LOG(LogMosesSpawn, Warning, TEXT("[LobbyRPC][SERVER] CreateRoom OK Room=%s Max=%d PC=%s"),
+		*NewRoomId.ToString(), SafeMaxPlayers, *GetNameSafe(this));
+}
+
+void AMosesPlayerController::Server_JoinRoom_Implementation(const FGuid& RoomId)
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	if (!RoomId.IsValid())
+	{
+		UE_LOG(LogMosesSpawn, Warning, TEXT("[LobbyRPC][SERVER] JoinRoom REJECT (InvalidRoomId) PC=%s"),
+			*GetNameSafe(this));
+		return;
+	}
+
+	AMosesLobbyGameState* LGS = GetLobbyGameStateChecked_Log(TEXT("Server_JoinRoom"));
+	AMosesPlayerState* PS = GetMosesPlayerStateChecked_Log(TEXT("Server_JoinRoom"));
+	if (!LGS || !PS)
+	{
+		return;
+	}
+
+	const bool bOk = LGS->Server_JoinRoom(PS, RoomId);
+
+	UE_LOG(LogMosesSpawn, Warning, TEXT("[LobbyRPC][SERVER] JoinRoom %s Room=%s PC=%s"),
+		bOk ? TEXT("OK") : TEXT("FAIL"), *RoomId.ToString(), *GetNameSafe(this));
+}
+
+void AMosesPlayerController::Server_LeaveRoom_Implementation()
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	AMosesLobbyGameState* LGS = GetLobbyGameStateChecked_Log(TEXT("Server_LeaveRoom"));
+	AMosesPlayerState* PS = GetMosesPlayerStateChecked_Log(TEXT("Server_LeaveRoom"));
+	if (!LGS || !PS)
+	{
+		return;
+	}
+
+	LGS->Server_LeaveRoom(PS);
+
+	UE_LOG(LogMosesSpawn, Warning, TEXT("[LobbyRPC][SERVER] LeaveRoom OK PC=%s"), *GetNameSafe(this));
+}
+
+void AMosesPlayerController::Server_RequestStartGame_Implementation()
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	AMosesLobbyGameMode* LobbyGM = GetWorld() ? GetWorld()->GetAuthGameMode<AMosesLobbyGameMode>() : nullptr;
+	if (!LobbyGM)
+	{
+		UE_LOG(LogMosesSpawn, Warning, TEXT("[LobbyRPC][SERVER] StartGame REJECT (NotLobbyGM)"));
+		return;
+	}
+
+	UE_LOG(LogMosesSpawn, Warning, TEXT("[LobbyRPC][SERVER] StartGame REQ PC=%s"), *GetNameSafe(this));
+	LobbyGM->HandleStartGameRequest(this);
+}
+
+void AMosesPlayerController::Server_SetReady_Implementation(bool bInReady)
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	AMosesPlayerState* PS = GetPlayerState<AMosesPlayerState>();
+	if (!PS)
+	{
+		UE_LOG(LogMosesSpawn, Warning, TEXT("[LobbyRPC][SERVER] SetReady REJECT (NoPS)"));
+		return;
+	}
+
+	// Ready 상태의 Source of Truth는 PlayerState
+	PS->ServerSetReady(bInReady);
+	PS->DOD_PS_Log(this, TEXT("Lobby:AfterServer_SetReady"));
+
+	// RoomList(MemberReady)로 동기화(복제 데이터 갱신)
+	if (AMosesLobbyGameState* LGS = GetWorld() ? GetWorld()->GetGameState<AMosesLobbyGameState>() : nullptr)
+	{
+		LGS->Server_SyncReadyFromPlayerState(PS);
+	}
+}
+
+void AMosesPlayerController::Server_SetSelectedCharacterId_Implementation(int32 InId)
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	AMosesPlayerState* PS = GetPlayerState<AMosesPlayerState>();
+	if (!PS)
+	{
+		UE_LOG(LogMosesSpawn, Warning, TEXT("[LobbyRPC][SERVER] SetChar REJECT (NoPS)"));
+		return;
+	}
+
+	PS->ServerSetSelectedCharacterId(InId);
+	PS->DOD_PS_Log(this, TEXT("Lobby:AfterServer_SetChar"));
+}
+
+// --------------------------------------------------
+// Client ↔ Server (Login)
+// --------------------------------------------------
+
+void AMosesPlayerController::Server_RequestLogin_Implementation(const FString& InId, const FString& InPw)
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	// PHASE0 정책: DB/보안 없음. "빈 값이면 실패" 정도만 검증.
+	const FString Id = InId.TrimStartAndEnd();
+	const FString Pw = InPw.TrimStartAndEnd();
+	const bool bOk = (!Id.IsEmpty() && !Pw.IsEmpty());
+
+	if (AMosesPlayerState* PS = GetPlayerState<AMosesPlayerState>())
+	{
+		// 서버 승인 기록(단일진실)
+		PS->ServerSetLoggedIn(bOk);
+
+		// DebugName도 이때 넣어주면 로그 가독성 상승
+		if (bOk)
+		{
+			PS->DebugName = Id;
+		}
+	}
+
+	Client_LoginResult(bOk, bOk ? TEXT("Login OK") : TEXT("Login FAIL (empty id/pw)"));
+}
+
+void AMosesPlayerController::Client_LoginResult_Implementation(bool bOk, const FString& Message)
+{
+	/**
+	 * 원칙:
+	 * - PlayerController는 "네트워크 이벤트 수신"까지.
+	 * - 실제 UI 전환/위젯 갱신은 LocalPlayerSubsystem이 책임진다.
+	 */
+	ULocalPlayer* LP = GetLocalPlayer();
+	if (!LP)
+	{
+		return;
+	}
+
+	// TODO(너의 Flow Subsystem으로 연결):
+	// - 로그인 성공이면 캐릭터 선택 UI로 전환
+	// - 실패면 팝업/토스트 출력
+	//
+	// 예시:
+	// if (UMosesFlowLocalPlayerSubsystem* Flow = LP->GetSubsystem<UMosesFlowLocalPlayerSubsystem>())
+	// {
+	//     Flow->NotifyLoginResult(bOk, Message);
+	// }
+}
+
+// --------------------------------------------------
+// Room Chat
+// --------------------------------------------------
+
+void AMosesPlayerController::Server_SendRoomChat_Implementation(const FString& Text)
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	const FString Clean = Text.TrimStartAndEnd();
+	if (Clean.IsEmpty())
+	{
+		return;
+	}
+
+	AMosesLobbyGameState* LGS = GetWorld() ? GetWorld()->GetGameState<AMosesLobbyGameState>() : nullptr;
+	AMosesPlayerState* PS = GetPlayerState<AMosesPlayerState>();
+	if (!LGS || !PS)
+	{
+		return;
+	}
+
+	/**
+	 * 권장 구조:
+	 * - "중계/권한/룸 멤버 필터링"은 LobbyGameState가 단일 진실이어야 한다.
+	 * - PlayerController는 '보낸다'는 요청만 전달.
+	 */
+	 // LGS->Server_BroadcastRoomChat(PS, Clean);
+}
+
+void AMosesPlayerController::Client_ReceiveRoomChat_Implementation(const FString& FromName, const FString& Text)
+{
+	ULocalPlayer* LP = GetLocalPlayer();
+	if (!LP)
+	{
+		return;
+	}
+
+	// TODO(Flow/Lobby Subsystem 쪽으로 위임)
+	// if (UMosesFlowLocalPlayerSubsystem* Flow = LP->GetSubsystem<UMosesFlowLocalPlayerSubsystem>())
+	// {
+	//     Flow->NotifyRoomChatReceived(FromName, Text);
+	// }
+}
+
+void AMosesPlayerController::Server_RequestSelectCharacter_Implementation(const FName CharacterId)
+{
+	// ✅ 서버 심판은 GameMode
+
+	// 서버 RPC이므로 여기서는 서버에서만 실행되는 게 정상.
+	UE_LOG(LogMosesSpawn, Log, TEXT("[CharSel][SV][PC] RPC Received CharacterId=%s PC=%s"),
+		*CharacterId.ToString(), *GetNameSafe(this));
+
+	AMosesLobbyGameMode* LobbyGM = Cast<AMosesLobbyGameMode>(UGameplayStatics::GetGameMode(this));
+	if (!LobbyGM)
+	{
+		UE_LOG(LogMosesSpawn, Warning, TEXT("[CharSel][SV][PC] REJECT (Not LobbyGM)"));
+		return;
+	}
+
+	LobbyGM->HandleSelectCharacterRequest(this, CharacterId);
+}
+
+// --------------------------------------------------
+// Lifecycle (Local UI / Camera)
+// --------------------------------------------------
+
+void AMosesPlayerController::BeginPlay()
+{
+	Super::BeginPlay();
+
+	// DOD 로그: PS 유지/재생성/값 확인용
+	if (AMosesPlayerState* PS = GetPlayerState<AMosesPlayerState>())
+	{
+		PS->DOD_PS_Log(this, TEXT("PC:BeginPlay"));
+	}
+
+	// 로컬 컨트롤러만 UI/카메라 변경 가능
+	if (!IsLocalController())
+	{
+		return;
+	}
+
+	/**
+	 * SeamlessTravel 핵심 함정:
+	 * - PlayerController가 유지되는 설정(bUseSeamlessTravel=true)에서는
+	 *   로비에서 세팅한 "로컬 플래그/타이머"가 다음 맵에도 남아있다.
+	 *
+	 * 그래서 BeginPlay에서:
+	 * - 로비면: 로비 정책 적용
+	 * - 로비가 아니면: 로비 때 꺼둔 것들을 반드시 원복
+	 */
+	if (!IsLobbyContext())
+	{
+		RestoreNonLobbyDefaults_LocalOnly();
+		return;
+	}
+
+	// 로비 정책 적용(로컬 전용)
+	bAutoManageActiveCameraTarget = false;
+	ActivateLobbyUI_LocalOnly();
+
+	// Experience/Possess/CameraManager 흐름에서 ViewTarget이 덮이는 케이스가 있어
+	// 즉시 1회 + 지연 1회 재적용(정책값 LobbyPreviewCameraDelay)
+	ApplyLobbyPreviewCamera();
+
+	GetWorldTimerManager().SetTimer(
+		LobbyPreviewCameraTimerHandle,
+		this,
+		&AMosesPlayerController::ApplyLobbyPreviewCamera,
+		LobbyPreviewCameraDelay,
+		false
+	);
+}
+
+void AMosesPlayerController::OnPossess(APawn* InPawn)
+{
+	Super::OnPossess(InPawn);
+
+	if (AMosesPlayerState* PS = GetPlayerState<AMosesPlayerState>())
+	{
+		PS->DOD_PS_Log(this, TEXT("PC:OnPossess"));
+	}
+
+	// Possess 직후 ViewTarget이 Pawn으로 덮일 수 있어 로비면 재적용한다.
+	if (IsLocalController() && IsLobbyContext())
+	{
+		bAutoManageActiveCameraTarget = false;
+		ApplyLobbyPreviewCamera();
+	}
+}
+
+// --------------------------------------------------
+// Travel Guard (Server RPC → Server Only DoXXX)
+// --------------------------------------------------
 
 void AMosesPlayerController::Server_TravelToMatch_Implementation()
 {
@@ -372,6 +480,25 @@ void AMosesPlayerController::DoServerTravelToLobby()
 	UE_LOG(LogMosesSpawn, Warning, TEXT("[DOD][Travel] REJECT (NotMatchGM) GM=%s"), *GetNameSafe(GM));
 }
 
+// --------------------------------------------------
+// Lobby Context / Camera
+// --------------------------------------------------
+
+bool AMosesPlayerController::IsLobbyContext() const
+{
+	/**
+	 * 로비 UI/카메라 강제 적용을 "로비 단계"에만 제한하기 위한 게이트.
+	 * 정책이 바뀌면(Phase 기반 등) 여기만 수정해도 전체 로비 적용 조건이 바뀐다.
+	 */
+	const UWorld* World = GetWorld();
+	if (!World)
+	{
+		return false;
+	}
+
+	return (World->GetGameState<AMosesLobbyGameState>() != nullptr);
+}
+
 void AMosesPlayerController::ApplyLobbyPreviewCamera()
 {
 	// 로컬 + 로비 컨텍스트에서만 카메라 강제
@@ -387,7 +514,6 @@ void AMosesPlayerController::ApplyLobbyPreviewCamera()
 	}
 
 	// Tag가 붙은 CameraActor를 찾아 ViewTarget으로 설정한다.
-	// (맵에 카메라가 없거나 Tag가 다르면 로비 UI는 떠도 화면이 이상해질 수 있음)
 	TArray<AActor*> Found;
 	UGameplayStatics::GetAllActorsOfClass(World, ACameraActor::StaticClass(), Found);
 
@@ -408,4 +534,69 @@ void AMosesPlayerController::ApplyLobbyPreviewCamera()
 	}
 
 	SetViewTargetWithBlend(TargetCam, 0.0f);
+}
+
+void AMosesPlayerController::ActivateLobbyUI_LocalOnly()
+{
+	ULocalPlayer* LP = GetLocalPlayer();
+	if (!LP)
+	{
+		UE_LOG(LogMosesSpawn, Warning, TEXT("[LobbyUI] PC BeginPlay: No LocalPlayer"));
+		return;
+	}
+
+	if (UMosesLobbyLocalPlayerSubsystem* LobbySubsys = LP->GetSubsystem<UMosesLobbyLocalPlayerSubsystem>())
+	{
+		LobbySubsys->ActivateLobbyUI();
+	}
+	else
+	{
+		UE_LOG(LogMosesSpawn, Error, TEXT("[LobbyUI] PC BeginPlay: No MosesLobbyLocalPlayerSubsystem"));
+	}
+}
+
+void AMosesPlayerController::RestoreNonLobbyDefaults_LocalOnly()
+{
+	/**
+	 * SeamlessTravel에서 PlayerController가 유지되면:
+	 * - 로비에서 꺼둔 bAutoManageActiveCameraTarget=false 가
+	 *   매치까지 따라와서 "Pawn 카메라 자동 복구"가 죽을 수 있다.
+	 *
+	 * 그래서 로비가 아닌 맵에서는 무조건 원복해 준다.
+	 */
+	bAutoManageActiveCameraTarget = true;
+
+	// 로비에서 걸어둔 "재적용 타이머"도 다음 맵에서 의미 없으니 제거
+	if (GetWorld())
+	{
+		GetWorldTimerManager().ClearTimer(LobbyPreviewCameraTimerHandle);
+	}
+}
+
+// --------------------------------------------------
+// Shared getters (null/log guard)
+// --------------------------------------------------
+
+AMosesLobbyGameState* AMosesPlayerController::GetLobbyGameStateChecked_Log(const TCHAR* Caller) const
+{
+	UWorld* World = GetWorld();
+	AMosesLobbyGameState* LGS = World ? World->GetGameState<AMosesLobbyGameState>() : nullptr;
+
+	if (!LGS)
+	{
+		UE_LOG(LogMosesSpawn, Warning, TEXT("[%s] REJECT (NoLobbyGameState) PC=%s"), Caller, *GetNameSafe(this));
+	}
+
+	return LGS;
+}
+
+AMosesPlayerState* AMosesPlayerController::GetMosesPlayerStateChecked_Log(const TCHAR* Caller) const
+{
+	AMosesPlayerState* PS = GetPlayerState<AMosesPlayerState>();
+	if (!PS)
+	{
+		UE_LOG(LogMosesSpawn, Warning, TEXT("[%s] REJECT (NoPlayerState) PC=%s"), Caller, *GetNameSafe(this));
+	}
+
+	return PS;
 }

@@ -2,65 +2,76 @@
 
 #include "Engine/Engine.h"
 #include "Engine/GameInstance.h"
-#include "Engine/LocalPlayer.h"
-#include "UE5_Multi_Shooter/System/MosesLobbyLocalPlayerSubsystem.h"
 
-void UGameFeatureAction_MosesLobbyUI::ForEachLocalPlayer_Do(UWorld* World, TFunctionRef<void(ULocalPlayer*)> Fn)
-{
-	if (!World) return;
+#include "UE5_Multi_Shooter/System/MosesUIRegistrySubsystem.h"
 
-	/**
-	 * 공부 메모)
-	 * - GameInstance는 로컬 플레이어 목록을 들고 있다.
-	 * - 스플릿 스크린/로컬 멀티까지 고려하면 "LocalPlayers 배열 순회"가 정석이다.
-	 */
-	if (UGameInstance* GI = World->GetGameInstance())
-	{
-		for (ULocalPlayer* LP : GI->GetLocalPlayers())
-		{
-			if (LP) Fn(LP);
-		}
-	}
-}
+// 개발자 주석:
+// - GF Action은 UI를 "생성"하지 않는다.
+// - 오직 "경로 등록"만 한다.
+// - 실제 CreateWidget/AddToViewport는 LocalPlayerSubsystem 책임.
 
 void UGameFeatureAction_MosesLobbyUI::OnGameFeatureActivating(FGameFeatureActivatingContext& Context)
 {
-	UE_LOG(LogTemp, Warning, TEXT("[GF_LobbyUI] Activating")); // ✅ 여기 (함수 시작하자마자)
+	UE_LOG(LogTemp, Log, TEXT("[GF_LobbyUI] Activating Path=%s"), *LobbyWidgetClassPath.ToString());
 
-	/**
-	 * - 엔진에는 WorldContext가 여러 개 있을 수 있다. (PIE, Editor Preview 등)
-	 * - 그래서 GEngine->GetWorldContexts()를 순회하며 유효한 월드에 적용한다.
-	 */
+	if (!GEngine)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[GF_LobbyUI] Activating FAIL (No GEngine)"));
+		return;
+	}
+
+	int32 RegisteredCount = 0;
+
 	for (const FWorldContext& WC : GEngine->GetWorldContexts())
 	{
-		UWorld* World = WC.World();
-		if (!World) continue;
+		UGameInstance* GI = WC.OwningGameInstance;
+		if (!GI)
+		{
+			continue;
+		}
 
-		ForEachLocalPlayer_Do(World, [&](ULocalPlayer* LP)
-			{
-				if (UMosesLobbyLocalPlayerSubsystem* Sub = LP->GetSubsystem<UMosesLobbyLocalPlayerSubsystem>())
-				{
-					Sub->ActivateLobbyUI();
-				}
-			});
+		if (UMosesUIRegistrySubsystem* Registry = GI->GetSubsystem<UMosesUIRegistrySubsystem>())
+		{
+			Registry->SetLobbyWidgetClassPath(LobbyWidgetClassPath);
+			++RegisteredCount;
+
+			UE_LOG(LogTemp, Log, TEXT("[GF_LobbyUI] Registered GI=%s Path=%s"),
+				*GetNameSafe(GI),
+				*LobbyWidgetClassPath.ToString());
+		}
 	}
+
+	UE_LOG(LogTemp, Log, TEXT("[GF_LobbyUI] Activating Done RegisteredCount=%d"), RegisteredCount);
 }
 
 void UGameFeatureAction_MosesLobbyUI::OnGameFeatureDeactivating(FGameFeatureDeactivatingContext& Context)
 {
-	UE_LOG(LogTemp, Warning, TEXT("[GF_LobbyUI] Deactivating"));
+	UE_LOG(LogTemp, Log, TEXT("[GF_LobbyUI] Deactivating"));
+
+	if (!GEngine)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[GF_LobbyUI] Deactivating FAIL (No GEngine)"));
+		return;
+	}
+
+	int32 ClearedCount = 0;
 
 	for (const FWorldContext& WC : GEngine->GetWorldContexts())
 	{
-		UWorld* World = WC.World();
-		if (!World) continue;
+		UGameInstance* GI = WC.OwningGameInstance;
+		if (!GI)
+		{
+			continue;
+		}
 
-		ForEachLocalPlayer_Do(World, [&](ULocalPlayer* LP)
-			{
-				if (UMosesLobbyLocalPlayerSubsystem* Sub = LP->GetSubsystem<UMosesLobbyLocalPlayerSubsystem>())
-				{
-					Sub->DeactivateLobbyUI();
-				}
-			});
+		if (UMosesUIRegistrySubsystem* Registry = GI->GetSubsystem<UMosesUIRegistrySubsystem>())
+		{
+			Registry->ClearLobbyWidgetClassPath();
+			++ClearedCount;
+
+			UE_LOG(LogTemp, Log, TEXT("[GF_LobbyUI] Cleared GI=%s"), *GetNameSafe(GI));
+		}
 	}
+
+	UE_LOG(LogTemp, Log, TEXT("[GF_LobbyUI] Deactivating Done ClearedCount=%d"), ClearedCount);
 }

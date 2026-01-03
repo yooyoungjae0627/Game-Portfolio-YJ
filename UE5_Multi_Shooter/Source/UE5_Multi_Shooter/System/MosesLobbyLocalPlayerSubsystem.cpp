@@ -1,252 +1,170 @@
-﻿#include "MosesLobbyLocalPlayerSubsystem.h"
-#include "UE5_Multi_Shooter/UI/MosesLobbyWidget.h"
+﻿#include "UE5_Multi_Shooter/System/MosesLobbyLocalPlayerSubsystem.h"
 
 #include "Blueprint/UserWidget.h"
-#include "EnhancedInputSubsystems.h"
-#include "InputMappingContext.h"
-#include "Engine/LocalPlayer.h"
-#include "GameFramework/PlayerController.h"
+#include "Engine/GameInstance.h"
 
-/**
- * 에셋 경로 정책:
- * - WidgetClass는 반드시 *_C (GeneratedClass) 경로를 사용한다.
- * - IMC는 Object 경로 그대로 사용한다.
- *
- * ⚠ 경로 바꾸면:
- * - 패키징/리네임 시 깨지기 쉬움
- * - 가능하면 추후 SoftObjectPath/DataAsset로 교체 고려
- */
-static constexpr const TCHAR* LobbyWidgetPath =
-TEXT("/GF_Lobby/Lobby/UI/WBP_Lobby.WBP_Lobby_C");
+#include "UE5_Multi_Shooter/MosesLogChannels.h"
+#include "UE5_Multi_Shooter/UI/Lobby/MosesLobbyWidget.h"
+#include "UE5_Multi_Shooter/System/MosesUIRegistrySubsystem.h"
 
-static constexpr const TCHAR* LobbyIMCPath =
-TEXT("/GF_Lobby/Lobby/Input/IMC_Lobby.IMC_Lobby");
-
-void UMosesLobbyLocalPlayerSubsystem::EnsureAssetsLoaded()
+void UMosesLobbyLocalPlayerSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
-	// IMC 로드: 실패하면 입력 적용이 불가능하므로 Error 로그 1회는 반드시 남긴다.
-	if (!IMC_Lobby && !bTriedLoadIMC)
-	{
-		bTriedLoadIMC = true;
+	Super::Initialize(Collection);
 
-		IMC_Lobby = Cast<UInputMappingContext>(
-			StaticLoadObject(UInputMappingContext::StaticClass(), nullptr, LobbyIMCPath));
-
-		if (!IMC_Lobby)
-		{
-			UE_LOG(LogTemp, Error, TEXT("[LobbyUI] Load FAIL IMC=%s"), LobbyIMCPath);
-		}
-		else
-		{
-			UE_LOG(LogTemp, Log, TEXT("[LobbyUI] Load OK IMC=%s"), LobbyIMCPath);
-		}
-	}
-
-	// WidgetClass 로드: 실패하면 UI 생성이 불가능하다.
-	if (!LobbyWidgetClass && !bTriedLoadWidgetClass)
-	{
-		bTriedLoadWidgetClass = true;
-
-		UClass* Loaded = StaticLoadClass(UUserWidget::StaticClass(), nullptr, LobbyWidgetPath);
-		if (!Loaded)
-		{
-			UE_LOG(LogTemp, Error, TEXT("[LobbyUI] Load FAIL WidgetClass=%s"), LobbyWidgetPath);
-		}
-		else
-		{
-			LobbyWidgetClass = Loaded;
-			UE_LOG(LogTemp, Log, TEXT("[LobbyUI] Load OK WidgetClass=%s"), LobbyWidgetPath);
-		}
-	}
+	UE_LOG(LogMosesSpawn, Log, TEXT("[UIFlow] LobbySubsys Initialize LP=%s"), *GetNameSafe(GetLocalPlayer()));
 }
 
-void UMosesLobbyLocalPlayerSubsystem::NotifyRoomStateChanged()
+void UMosesLobbyLocalPlayerSubsystem::Deinitialize()
 {
-	// RepRoomList 갱신 등으로 UI만 다시 그리면 되는 경우.
-	if (LobbyWidget.IsValid())
-	{
-		LobbyWidget->UpdateStartButton();
-	}
+	DeactivateLobbyUI();
+
+	UE_LOG(LogMosesSpawn, Log, TEXT("[UIFlow] LobbySubsys Deinitialize LP=%s"), *GetNameSafe(GetLocalPlayer()));
+
+	Super::Deinitialize();
 }
+
+// ---------------------------
+// UI control
+// ---------------------------
 
 void UMosesLobbyLocalPlayerSubsystem::ActivateLobbyUI()
 {
-	UE_LOG(LogTemp, Log, TEXT("[LobbyUI] ActivateLobbyUI"));
+	UE_LOG(LogMosesSpawn, Log, TEXT("[UIFlow] ActivateLobbyUI ENTER"));
+
+	// ================================
+	// [PATH PROOF] 경로가 진짜인지 즉시 판결
+	// ================================
+	{
+		const FSoftClassPath TestPath(
+			TEXT("/GF_Lobby_Code/Lobby/UI/WBP_LobbyPage.WBP_LobbyPage_C")
+		);
+
+		UClass* TestClass = TestPath.TryLoadClass<UUserWidget>();
+
+		if (TestClass)
+		{
+			UE_LOG(LogMosesSpawn, Warning,
+				TEXT("[PATH PROOF] OK : %s -> Class=%s"),
+				*TestPath.ToString(),
+				*GetNameSafe(TestClass));
+		}
+		else
+		{
+			UE_LOG(LogMosesSpawn, Error,
+				TEXT("[PATH PROOF] FAIL : %s"),
+				*TestPath.ToString());
+		}
+	}
+
+	// 개발자 주석: 중복 생성 방지
+	if (IsLobbyWidgetValid())
+	{
+		UE_LOG(LogMosesSpawn, Log, TEXT("[UIFlow] ActivateLobbyUI SKIP (AlreadyValid) Widget=%s"),
+			*GetNameSafe(LobbyWidget));
+		return;
+	}
 
 	ULocalPlayer* LP = GetLocalPlayer();
-	if (!LP)
+	UGameInstance* GI = LP ? LP->GetGameInstance() : nullptr;
+
+	if (!GI)
 	{
-		UE_LOG(LogTemp, Error, TEXT("[LobbyUI] Activate FAIL: LocalPlayer=null"));
+		UE_LOG(LogMosesSpawn, Warning, TEXT("[UIFlow] ActivateLobbyUI FAIL (No GameInstance)"));
 		return;
 	}
 
-	// UI/IMC 에셋 로드 보장
-	EnsureAssetsLoaded();
-
-	// 입력은 UI 생성 여부와 무관하게 먼저 적용(중복 호출 대비 플래그로 방어)
-	AddLobbyMapping();
-
-	// 이미 UI가 살아있으면 중복 생성 금지
-	if (LobbyWidget.IsValid())
+	UMosesUIRegistrySubsystem* Registry = GI->GetSubsystem<UMosesUIRegistrySubsystem>();
+	if (!Registry)
 	{
-		UE_LOG(LogTemp, Log, TEXT("[LobbyUI] Activate SKIP: Widget already valid"));
+		UE_LOG(LogMosesSpawn, Warning, TEXT("[UIFlow] ActivateLobbyUI FAIL (No UIRegistrySubsystem)"));
 		return;
 	}
 
-	if (!LobbyWidgetClass)
+	FSoftClassPath WidgetPath = Registry->GetLobbyWidgetClassPath();
+
+	if (WidgetPath.IsNull())
 	{
-		UE_LOG(LogTemp, Error, TEXT("[LobbyUI] Activate FAIL: LobbyWidgetClass=null"));
+		// 임시 강제 경로 (GF 디버깅용)
+		WidgetPath = FSoftClassPath(
+			TEXT("/GF_Lobby_Code/Lobby/UI/WBP_LobbyPage.WBP_LobbyPage_C")
+		);
+
+		UE_LOG(LogMosesSpawn, Warning,
+			TEXT("[UIFlow] LobbyWidgetPath NULL → FORCE SET = %s"),
+			*WidgetPath.ToString()
+		);
+	}
+
+	// 개발자 주석:
+	// - _C까지 들어간 "WidgetBlueprintGeneratedClass" 경로여야 TryLoadClass가 성공한다.
+	// - 실패하면 99%가 마운트포인트(/GF_Lobby_Data vs /GF_Lobby) 문제다.
+	UClass* LoadedClass = WidgetPath.TryLoadClass<UUserWidget>();
+	if (!LoadedClass)
+	{
+		UE_LOG(LogMosesSpawn, Error, TEXT("[UIFlow] ActivateLobbyUI FAIL (TryLoadClass) Path=%s"),
+			*WidgetPath.ToString());
 		return;
 	}
 
-	APlayerController* PC = LP->GetPlayerController(GetWorld());
-	if (!PC)
+	UE_LOG(LogMosesSpawn, Log, TEXT("[UIFlow] ActivateLobbyUI LoadedClass=%s"), *GetNameSafe(LoadedClass));
+
+	// 개발자 주석:
+	// - WBP_LobbyPage의 ParentClass가 UMosesLobbyWidget 이어야 안전하다.
+	// - ParentClass가 다르면 CreateWidget은 되더라도 Cast 실패/기능 불일치가 생긴다.
+	LobbyWidget = CreateWidget<UMosesLobbyWidget>(GetWorld(), LoadedClass);
+	if (!LobbyWidget)
 	{
-		UE_LOG(LogTemp, Error, TEXT("[LobbyUI] Activate FAIL: PlayerController=null"));
+		UE_LOG(LogMosesSpawn, Error, TEXT("[UIFlow] ActivateLobbyUI FAIL (CreateWidget) Class=%s"),
+			*GetNameSafe(LoadedClass));
 		return;
 	}
 
-	// 위젯 생성 + 타입 캐스팅(구체 위젯 API 사용 목적)
-	UUserWidget* RawWidget = CreateWidget<UUserWidget>(PC, LobbyWidgetClass);
-	UMosesLobbyWidget* TypedWidget = Cast<UMosesLobbyWidget>(RawWidget);
+	// ZOrder는 필요하면 올려라(일단 0)
+	LobbyWidget->AddToViewport(0);
 
-	if (!TypedWidget)
-	{
-		UE_LOG(LogTemp, Error, TEXT("[LobbyUI] Activate FAIL: Widget cast failed (UMosesLobbyWidget)"));
-		if (RawWidget) RawWidget->RemoveFromParent();
-		return;
-	}
-
-	TypedWidget->AddToViewport();
-	LobbyWidget = TypedWidget;
-
-	// 입력 모드/UI 포커스/마우스 정책: 로비에서는 UI 조작이 주이므로 GameAndUI 사용
-	FInputModeGameAndUI InputMode;
-	InputMode.SetWidgetToFocus(TypedWidget->TakeWidget());
-	InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
-	InputMode.SetHideCursorDuringCapture(false);
-
-	PC->SetInputMode(InputMode);
-	PC->SetShowMouseCursor(true);
-
-	UE_LOG(LogTemp, Log, TEXT("[LobbyUI] Activate OK"));
+	UE_LOG(LogMosesSpawn, Log, TEXT("[UIFlow] ActivateLobbyUI OK Widget=%s InViewport=%d"),
+		*GetNameSafe(LobbyWidget),
+		LobbyWidget->IsInViewport() ? 1 : 0);
 }
 
 void UMosesLobbyLocalPlayerSubsystem::DeactivateLobbyUI()
 {
-	UE_LOG(LogTemp, Log, TEXT("[LobbyUI] DeactivateLobbyUI"));
+	UE_LOG(LogMosesSpawn, Log, TEXT("[UIFlow] DeactivateLobbyUI ENTER"));
 
-	// 로비 입력 제거(중복 호출 대비 플래그로 방어)
-	RemoveLobbyMapping();
-
-	// UI 제거(레벨 이동 중 호출될 수 있으므로 WeakPtr 유효성 체크)
-	if (LobbyWidget.IsValid())
+	if (!LobbyWidget)
 	{
-		LobbyWidget->RemoveFromParent();
-		LobbyWidget = nullptr;
-		UE_LOG(LogTemp, Log, TEXT("[LobbyUI] Widget removed"));
-	}
-
-	// 입력 모드 원복: PC가 없으면(Travel 중) 안전하게 스킵
-	ULocalPlayer* LP = GetLocalPlayer();
-	if (!LP)
-	{
-		UE_LOG(LogTemp, Log, TEXT("[LobbyUI] Deactivate SKIP: LocalPlayer=null"));
+		UE_LOG(LogMosesSpawn, Log, TEXT("[UIFlow] DeactivateLobbyUI SKIP (Null)"));
 		return;
 	}
 
-	APlayerController* PC = LP->GetPlayerController(GetWorld());
-	if (!PC)
-	{
-		UE_LOG(LogTemp, Log, TEXT("[LobbyUI] Deactivate SKIP: PlayerController=null"));
-		return;
-	}
+	const bool bWasInViewport = LobbyWidget->IsInViewport();
+	LobbyWidget->RemoveFromParent();
+	LobbyWidget = nullptr;
 
-	FInputModeGameOnly InputMode;
-	PC->SetInputMode(InputMode);
-	PC->SetShowMouseCursor(false);
-
-	UE_LOG(LogTemp, Log, TEXT("[LobbyUI] InputMode restored (GameOnly)"));
+	UE_LOG(LogMosesSpawn, Log, TEXT("[UIFlow] DeactivateLobbyUI OK WasInViewport=%d"), bWasInViewport ? 1 : 0);
 }
 
-void UMosesLobbyLocalPlayerSubsystem::AddLobbyMapping()
+// ---------------------------
+// Notify
+// ---------------------------
+
+void UMosesLobbyLocalPlayerSubsystem::NotifyPlayerStateChanged()
 {
-	ULocalPlayer* LP = GetLocalPlayer();
-	if (!LP)
-	{
-		UE_LOG(LogTemp, Log, TEXT("[LobbyUI] AddMapping SKIP: LocalPlayer=null"));
-		return;
-	}
-
-	if (!IMC_Lobby)
-	{
-		UE_LOG(LogTemp, Warning, TEXT("[LobbyUI] AddMapping SKIP: IMC_Lobby=null (load fail?)"));
-		return;
-	}
-
-	// GameFeature 중복 활성/중복 호출 방어
-	if (bLobbyMappingAdded)
-	{
-		return;
-	}
-
-	UEnhancedInputLocalPlayerSubsystem* EISub = LP->GetSubsystem<UEnhancedInputLocalPlayerSubsystem>();
-	if (!EISub)
-	{
-		UE_LOG(LogTemp, Error, TEXT("[LobbyUI] AddMapping FAIL: EnhancedInputLocalPlayerSubsystem=null"));
-		return;
-	}
-
-	EISub->AddMappingContext(IMC_Lobby, /*Priority*/ 0);
-	bLobbyMappingAdded = true;
-
-	UE_LOG(LogTemp, Log, TEXT("[LobbyUI] IMC added"));
+	UE_LOG(LogMosesSpawn, Verbose, TEXT("[UIFlow] NotifyPlayerStateChanged"));
+	LobbyPlayerStateChangedEvent.Broadcast();
 }
 
-void UMosesLobbyLocalPlayerSubsystem::RemoveLobbyMapping()
+void UMosesLobbyLocalPlayerSubsystem::NotifyRoomStateChanged()
 {
-	ULocalPlayer* LP = GetLocalPlayer();
-	if (!LP)
-	{
-		UE_LOG(LogTemp, Log, TEXT("[LobbyUI] RemoveMapping SKIP: LocalPlayer=null"));
-		return;
-	}
-
-	if (!IMC_Lobby)
-	{
-		// 로드 실패 or 이미 해제된 케이스 → 조용히 스킵
-		return;
-	}
-
-	if (!bLobbyMappingAdded)
-	{
-		return;
-	}
-
-	UEnhancedInputLocalPlayerSubsystem* EISub = LP->GetSubsystem<UEnhancedInputLocalPlayerSubsystem>();
-	if (!EISub)
-	{
-		UE_LOG(LogTemp, Error, TEXT("[LobbyUI] RemoveMapping FAIL: EnhancedInputLocalPlayerSubsystem=null"));
-		return;
-	}
-
-	EISub->RemoveMappingContext(IMC_Lobby);
-	bLobbyMappingAdded = false;
-
-	UE_LOG(LogTemp, Log, TEXT("[LobbyUI] IMC removed"));
+	UE_LOG(LogMosesSpawn, Verbose, TEXT("[UIFlow] NotifyRoomStateChanged"));
+	LobbyRoomStateChangedEvent.Broadcast();
 }
 
-void UMosesLobbyLocalPlayerSubsystem::NotifyRoomCreated(const FGuid& NewRoomId)
+// ---------------------------
+// Internal helpers
+// ---------------------------
+
+bool UMosesLobbyLocalPlayerSubsystem::IsLobbyWidgetValid() const
 {
-	// UI가 아직 없으면(Room 생성 이벤트가 먼저 온 경우) 스킵
-	if (!LobbyWidget.IsValid())
-	{
-		UE_LOG(LogTemp, Log, TEXT("[LobbyUI] NotifyRoomCreated SKIP: Widget invalid"));
-		return;
-	}
-
-	LobbyWidget->SetRoomIdText(NewRoomId);
-
-	UE_LOG(LogTemp, Log, TEXT("[LobbyUI] NotifyRoomCreated OK RoomId=%s"),
-		*NewRoomId.ToString(EGuidFormats::DigitsWithHyphens));
+	return (LobbyWidget != nullptr) && LobbyWidget->IsInViewport();
 }

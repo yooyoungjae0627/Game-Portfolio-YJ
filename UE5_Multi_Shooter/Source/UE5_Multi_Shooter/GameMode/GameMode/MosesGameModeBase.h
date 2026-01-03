@@ -27,7 +27,7 @@ class UE5_MULTI_SHOOTER_API AMosesGameModeBase : public AGameModeBase
 {
 	GENERATED_BODY()
 
-public:
+protected:
 	AMosesGameModeBase();
 
 	/** 맵 로드 직후 호출(OptionsString 확보 가능) → Experience 선택은 NextTick으로 미룸 */
@@ -35,6 +35,11 @@ public:
 
 	/** GameState 생성 이후 → ExperienceManager의 로딩 완료 콜백 등록 */
 	virtual void InitGameState() final;
+
+	/** 접속 시점 추적용(로그/디버깅) */
+	virtual void PostLogin(APlayerController* NewPlayer) override;
+
+
 
 	/** 컨트롤러별 PawnClass 결정(PawnData의 PawnClass 우선) */
 	virtual UClass* GetDefaultPawnClassForController_Implementation(AController* InController) final;
@@ -49,8 +54,6 @@ public:
 	/** Defer Spawn으로 PawnData를 먼저 주입한 뒤 FinishSpawning */
 	virtual APawn* SpawnDefaultPawnAtTransform_Implementation(AController* NewPlayer, const FTransform& SpawnTransform) final;
 
-	/** 접속 시점 추적용(로그/디버깅) */
-	virtual void PostLogin(APlayerController* NewPlayer) override;
 
 	/**
 	 * RestartPlayer는 최종 스폰 지점.
@@ -65,8 +68,11 @@ public:
 	virtual AActor* ChoosePlayerStart_Implementation(AController* Player) override;
 	virtual void FinishRestartPlayer(AController* NewPlayer, const FRotator& StartRotation) override;
 
+public:
 	/** PawnData 결정(PS 우선, 없으면 Experience DefaultPawnData) */
 	const UMosesPawnData* GetPawnDataForController(const AController* InController) const;
+
+	FString GetConnAddr(APlayerController* PC);
 
 private:
 	/** NextTick에서 Experience 결정(OptionsString의 ?Experience=...) */
@@ -85,26 +91,28 @@ private:
 	 */
 	void OnExperienceLoaded(const UMosesExperienceDefinition* CurrentExperience);
 
-	/** Flush 중 재진입 방지(READY 직후 여러 이벤트로 중복 호출되는 경우 방어) */
-	bool bFlushingPendingPlayers = false;
-
 	/** READY 이후 NextTick에 Pending 플레이어들을 Super::HandleStartingNewPlayer로 넘긴다 */
 	void FlushPendingPlayers();
 
 	/** Experience READY → SpawnGate 해제(NextTick Flush 예약) */
 	void OnExperienceReady_SpawnGateRelease();
 
-	// MosesGameModeBase.h (ADD)
 
 protected:
 	/** DoD: Experience READY 이후(=안전 시점)에 파생 GM이 ROOM/PHASE를 확정하도록 훅 제공 */
 	virtual void HandleDoD_AfterExperienceReady(const UMosesExperienceDefinition* CurrentExperience);
 
-	/** DoD: Experience Selected 로그를 1회만 찍기 위한 가드 */
-	bool bDoD_ExperienceSelectedLogged = false;
 
+
+private:
 	/** READY 전 접속한 플레이어들을 임시로 보관(스폰 대기열) */
 	UPROPERTY()
 	TArray<TWeakObjectPtr<APlayerController>> PendingStartPlayers;
+
+	/** Flush 중 재진입 방지(READY 직후 여러 이벤트로 중복 호출되는 경우 방어) */
+	bool bFlushingPendingPlayers = false;
+
+	/** DoD: Experience Selected 로그를 1회만 찍기 위한 가드 */
+	bool bDoD_ExperienceSelectedLogged = false;
 
 };

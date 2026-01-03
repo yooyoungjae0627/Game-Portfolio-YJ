@@ -4,21 +4,26 @@
 #include "GameFramework/PlayerController.h"
 #include "MosesPlayerController.generated.h"
 
+class AMosesLobbyGameState;
+class AMosesPlayerState;
+class ACameraActor;
+
 /**
  * AMosesPlayerController
  *
- * 책임:
- * - 클라이언트 입력/UI 이벤트를 "서버 권한 로직"으로 전달하는 RPC 진입점
- * - 로비 컨텍스트에서만: 로비 UI 활성화 + 프리뷰 카메라 ViewTarget 강제
- * - Dev/디버그 목적: Exec 커맨드를 서버 RPC로 우회하여 Travel 테스트 가능
+ * 역할(요약)
+ * - UI/입력 이벤트를 서버 권한 로직으로 전달하는 "RPC 진입점"
+ * - (로비 컨텍스트에서만) 로비 UI 활성화 + 프리뷰 카메라(ViewTarget) 강제
+ * - 디버그: Exec 커맨드로 Travel 테스트 (클라는 서버 RPC로 우회)
  *
- * 경계:
- * - 실제 룸 데이터/상태 변경은 LobbyGameState가 Source of Truth
- * - StartGame 판정/Travel 트리거는 LobbyGameMode에서 최종 검증 후 수행
+ * 단일 진실(Single Source of Truth)
+ * - 룸 데이터/상태 변경: AMosesLobbyGameState
+ * - StartGame 최종 검증 + Travel 트리거: AMosesLobbyGameMode
  *
- * 주의:
- * - LocalController만 UI/카메라를 만진다(리슨서버/관전/다른 PC 오염 방지)
- * - SeamlessTravel/Experience 흐름에서 ViewTarget이 여러 번 덮일 수 있어 재적용 로직이 있다.
+ * 안전장치
+ * - LocalController만 UI/카메라를 조작 (다른 PC/리슨서버 오염 방지)
+ * - SeamlessTravel로 PC가 유지되면 bAutoManageActiveCameraTarget 같은 플래그가 "다음 맵에도 남는다"
+ *   → 로비가 아닐 때는 반드시 원복해줘야 한다.
  */
 UCLASS()
 class UE5_MULTI_SHOOTER_API AMosesPlayerController : public APlayerController
@@ -26,57 +31,80 @@ class UE5_MULTI_SHOOTER_API AMosesPlayerController : public APlayerController
 	GENERATED_BODY()
 
 public:
+	/** 기본 생성자: 프로젝트 카메라 매니저 지정 */
 	AMosesPlayerController(const FObjectInitializer& ObjectInitializer = FObjectInitializer::Get());
 
-protected:
-	/** 로비 진입 시 UI/카메라 세팅, 로컬만 수행 */
-	virtual void BeginPlay() override;
+	// ---------------------------
+	// Dev Exec Helpers (디버그용)
+	// ---------------------------
 
-	/** Possess 직후 ViewTarget이 Pawn으로 덮이는 케이스 방지(로비에서만 재적용) */
-	virtual void OnPossess(APawn* InPawn) override;
+	/** 디버그: 매치로 이동 (서버=즉시, 클라=서버 RPC 우회) */
+	UFUNCTION(Exec)
+	void TravelToMatch_Exec();
 
-public:
+	/** 디버그: 로비로 이동 (서버=즉시, 클라=서버 RPC 우회) */
+	UFUNCTION(Exec)
+	void TravelToLobby_Exec();
+
 	// ---------------------------
 	// Client → Server RPC (Lobby)
 	// ---------------------------
 
-	/** UI: CreateRoom 요청(서버에서 MaxPlayers Clamp 후 처리) */
 	UFUNCTION(Server, Reliable)
 	void Server_CreateRoom(int32 MaxPlayers);
 
-	/** UI: JoinRoom 요청(룸ID 유효성은 서버에서 재검증) */
 	UFUNCTION(Server, Reliable)
 	void Server_JoinRoom(const FGuid& RoomId);
 
-	/** UI: LeaveRoom 요청(Disconnect 처리와 동일하게 서버에서 정리) */
 	UFUNCTION(Server, Reliable)
 	void Server_LeaveRoom();
 
-	/** UI: StartGame 요청(서버 GM에서 Host/Ready/Full 최종 검증) */
 	UFUNCTION(Server, Reliable)
 	void Server_RequestStartGame();
 
-	/** UI: Ready 토글(PS->RoomReadyMap 동기화 포함) */
 	UFUNCTION(Server, Reliable)
 	void Server_SetReady(bool bInReady);
 
-	/** UI: 캐릭터 선택(PS에 저장/복제) */
 	UFUNCTION(Server, Reliable)
 	void Server_SetSelectedCharacterId(int32 InId);
 
 	// ---------------------------
-	// Dev Exec Helpers
+	// Client ↔ Server (Login)
 	// ---------------------------
-	/** 디버그: 매치 이동(서버에서만 실제 Travel, 클라는 서버 RPC로 우회) */
-	UFUNCTION(Exec)
-	void TravelToMatch_Exec();
 
-	/** 디버그: 로비 이동(서버에서만 실제 Travel, 클라는 서버 RPC로 우회) */
-	UFUNCTION(Exec)
-	void TravelToLobby_Exec();
+	UFUNCTION(Server, Reliable)
+	void Server_RequestLogin(const FString& InId, const FString& InPw);
+
+	UFUNCTION(Client, Reliable)
+	void Client_LoginResult(bool bOk, const FString& Message);
+
+	// ---------------------------
+	// Room Chat
+	// ---------------------------
+
+	UFUNCTION(Server, Reliable)
+	void Server_SendRoomChat(const FString& Text);
+
+	UFUNCTION(Client, Reliable)
+	void Client_ReceiveRoomChat(const FString& FromName, const FString& Text);
+
+
+	/** Character Select Confirm: 서버에 선택 확정 요청 */
+	UFUNCTION(Server, Reliable)
+	void Server_RequestSelectCharacter(const FName CharacterId);
+
+protected:
+	// ---------------------------
+	// Lifecycle (Local UI / Camera)
+	// ---------------------------
+
+	virtual void BeginPlay() override;
+	virtual void OnPossess(APawn* InPawn) override;
 
 private:
-	// ---- Travel은 서버에서만 실행되도록 방어 ----
+	// ---------------------------
+	// Travel은 서버에서만 실행되도록 방어
+	// ---------------------------
 
 	UFUNCTION(Server, Reliable)
 	void Server_TravelToMatch();
@@ -84,31 +112,37 @@ private:
 	UFUNCTION(Server, Reliable)
 	void Server_TravelToLobby();
 
-	/** 서버에서 AuthGameMode를 확인하고 올바른 GM에 위임 */
 	void DoServerTravelToMatch();
 	void DoServerTravelToLobby();
 
-	/**
-	 * "로비 컨텍스트" 판별
-	 * - 단일 맵 운용/Phase 기반 운용에서도 로비 UI/카메라를 오염시키지 않기 위한 게이트
-	 * - 현재 정책: LobbyGameState 존재 여부로 판단
-	 */
+	// ---------------------------
+	// Lobby Context / Camera
+	// ---------------------------
+
+	/** 로비 컨텍스트 판별 게이트 (로비 UI/카메라 오염 방지) */
 	bool IsLobbyContext() const;
 
-	/**
-	 * 로비 프리뷰 카메라 적용
-	 * - Experience/Possess/CameraManager가 ViewTarget을 덮는 케이스 대응으로
-	 *   BeginPlay에서 즉시 1회 + 타이머로 1회 재적용할 수 있다.
-	 */
+	/** 로비 프리뷰 카메라 적용(즉시 1회 + 지연 1회 재적용 가능) */
 	void ApplyLobbyPreviewCamera();
 
+	/** (로컬 전용) 로비 UI 활성화: LocalPlayerSubsystem에 위임 */
+	void ActivateLobbyUI_LocalOnly();
+
+	/** SeamlessTravel 대비: 로비가 아니면 "로비에서 꺼둔 플래그/타이머"를 원복 */
+	void RestoreNonLobbyDefaults_LocalOnly();
+
+	/** 공통 레퍼런스 획득(서버 RPC에서 반복되는 null 체크 제거 목적) */
+	AMosesLobbyGameState* GetLobbyGameStateChecked_Log(const TCHAR* Caller) const;
+	AMosesPlayerState* GetMosesPlayerStateChecked_Log(const TCHAR* Caller) const;
+
 private:
-	// Lobby Preview Camera 정책(레벨에 Tag로 지정된 CameraActor 사용)
+	// ---------------------------
+	// Lobby Preview Camera 정책 변수들 (변수는 아래)
+	// ---------------------------
 
 	UPROPERTY(EditDefaultsOnly, Category = "Lobby|Camera")
 	FName LobbyPreviewCameraTag = TEXT("LobbyPreviewCamera");
 
-	/** ViewTarget 덮임 방지용 재적용 딜레이 */
 	UPROPERTY(EditDefaultsOnly, Category = "Lobby|Camera")
 	float LobbyPreviewCameraDelay = 0.2f;
 

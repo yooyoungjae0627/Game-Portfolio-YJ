@@ -1,24 +1,15 @@
-// Fill out your copyright notice in the Description page of Project Settings.
+ï»¿// Fill out your copyright notice in the Description page of Project Settings.
 
 #pragma once
 
 #include "CoreMinimal.h"
 #include "Logging/LogMacros.h"
 
-// Experience/AssetManager °ü·Ã
+// âœ… í”„ë¡œì íŠ¸ ê³µìš© ë¡œê·¸ ì±„ë„ ì„ ì–¸ë§Œ í•œë‹¤. (ì •ì˜ëŠ” .cppì—ì„œ)
 DECLARE_LOG_CATEGORY_EXTERN(LogMosesExp, Log, All);
-
-// Spawn °ü·Ã (GameMode/SpawnGate µî¿¡¼­ »ç¿ë ÃßÃµ)
 DECLARE_LOG_CATEGORY_EXTERN(LogMosesSpawn, Log, All);
-
-// Travel °ü·Ã (SeamlessTravel µî¿¡¼­ »ç¿ë ÃßÃµ)
 DECLARE_LOG_CATEGORY_EXTERN(LogMosesTravel, Log, All);
-
-// AUTH °ü·Ã (¼­¹ö ºÎÆ®, ÀÎÁõ ´Ü°è µî)
 DECLARE_LOG_CATEGORY_EXTERN(LogMosesAuth, Log, All);
-
-// ROOM °ü·Ã (Lobby/Room ÃÊ±âÈ­, ·ë »ı¼º/Âü°¡/³ª°¡±â)
 DECLARE_LOG_CATEGORY_EXTERN(LogMosesRoom, Log, All);
-
-// PHASE °ü·Ã (Lobby/Match µî »óÅÂ ÀüÈ¯)
 DECLARE_LOG_CATEGORY_EXTERN(LogMosesPhase, Log, All);
+DECLARE_LOG_CATEGORY_EXTERN(LogMosesPlayer, Log, All);
