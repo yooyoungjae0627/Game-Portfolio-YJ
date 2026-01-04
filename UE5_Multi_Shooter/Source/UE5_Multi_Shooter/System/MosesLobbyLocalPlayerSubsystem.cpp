@@ -1,9 +1,11 @@
-﻿// MosesLobbyLocalPlayerSubsystem.cpp
+﻿
 #include "UE5_Multi_Shooter/System/MosesLobbyLocalPlayerSubsystem.h"
 #include "UE5_Multi_Shooter/System/MosesUIRegistrySubsystem.h"
 
 #include "UE5_Multi_Shooter/Player/MosesPlayerController.h"
 #include "UE5_Multi_Shooter/Player/MosesPlayerState.h"
+
+#include "UE5_Multi_Shooter/GameMode/GameState/MosesLobbyGameState.h" 
 
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
 #include "UE5_Multi_Shooter/UI/Lobby/MosesLobbyWidget.h"
@@ -347,4 +349,12 @@ AMosesPlayerState* UMosesLobbyLocalPlayerSubsystem::GetMosesPS_LocalOnly() const
 	}
 
 	return PC->GetPlayerState<AMosesPlayerState>();
+}
+
+void UMosesLobbyLocalPlayerSubsystem::NotifyJoinRoomResult(EMosesRoomJoinResult Result, const FGuid& RoomId)
+{
+	UE_LOG(LogMosesSpawn, Verbose, TEXT("[UIFlow] NotifyJoinRoomResult Result=%d Room=%s"),
+		(int32)Result, *RoomId.ToString());
+
+	LobbyJoinRoomResultEvent.Broadcast(Result, RoomId);
 }

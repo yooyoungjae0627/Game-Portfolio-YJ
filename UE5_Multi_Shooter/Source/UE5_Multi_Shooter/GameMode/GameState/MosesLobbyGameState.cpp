@@ -138,27 +138,43 @@ bool FMosesLobbyRoomItem::Contains(const FGuid& Pid) const
 bool FMosesLobbyRoomItem::IsAllReady() const
 {
 	// 개발자 주석:
-	// - Start 가능 조건은 "정원 충족 + 모두 Ready"
-	// - 정원 미충족이면 Ready가 모두 1이어도 Start 불가
-	if (MaxPlayers <= 0)
+	// - 정책(최종):
+	//   ✅ "호스트 제외" 모든 멤버가 Ready=1 이면 AllReady
+	//   ✅ 호스트는 Ready UI가 없으므로, Ready 값은 검사 대상에서 제외한다.
+	//
+	// - 선택 정책(권장):
+	//   ✅ 비호스트가 최소 1명은 있어야 Start 가능 (혼자 방에서 Start 방지)
+	if (!HostPid.IsValid())
 	{
 		return false;
 	}
 
-	if (MemberPids.Num() != MaxPlayers)
+	if (MemberPids.Num() <= 1)
 	{
+		// Host만 있는 방(또는 멤버가 없음) -> Start 불가
 		return false;
 	}
 
-	// Ready 배열 정합성(1:1)
 	if (MemberReady.Num() != MemberPids.Num())
 	{
 		return false;
 	}
 
-	for (uint8 R : MemberReady)
+	const int32 HostIndex = MemberPids.IndexOfByKey(HostPid);
+	if (HostIndex == INDEX_NONE)
 	{
-		if (R == 0)
+		// 방 정보가 꼬인 상태(HostPid가 멤버에 없음)
+		return false;
+	}
+
+	for (int32 i = 0; i < MemberPids.Num(); ++i)
+	{
+		if (i == HostIndex)
+		{
+			continue; // ✅ 호스트 Ready는 검사하지 않는다
+		}
+
+		if (!MemberReady.IsValidIndex(i) || MemberReady[i] == 0)
 		{
 			return false;
 		}
@@ -492,6 +508,79 @@ bool AMosesLobbyGameState::Server_JoinRoom(AMosesPlayerState* JoinPS, const FGui
 	return true;
 }
 
+bool AMosesLobbyGameState::Server_JoinRoomWithResult(AMosesPlayerState* JoinPS, const FGuid& RoomId, EMosesRoomJoinResult& OutResult)
+{
+	check(HasAuthority());
+
+	OutResult = EMosesRoomJoinResult::Ok;
+
+	if (!JoinPS)
+	{
+		OutResult = EMosesRoomJoinResult::NoRoom;
+		LogRoom_JoinRejected(OutResult, RoomId, JoinPS);
+		return false;
+	}
+
+	if (!JoinPS->IsLoggedIn())
+	{
+		OutResult = EMosesRoomJoinResult::NotLoggedIn;
+		LogRoom_JoinRejected(OutResult, RoomId, JoinPS);
+		return false;
+	}
+
+	if (!RoomId.IsValid())
+	{
+		OutResult = EMosesRoomJoinResult::InvalidRoomId;
+		LogRoom_JoinRejected(OutResult, RoomId, JoinPS);
+		return false;
+	}
+
+	if (JoinPS->GetRoomId().IsValid())
+	{
+		Server_LeaveRoom(JoinPS);
+	}
+
+	FMosesLobbyRoomItem* Room = FindRoomMutable(RoomId);
+	if (!Room)
+	{
+		OutResult = EMosesRoomJoinResult::NoRoom;
+		LogRoom_JoinRejected(OutResult, RoomId, JoinPS);
+		return false;
+	}
+
+	const FGuid Pid = GetPidChecked(JoinPS);
+
+	if (Room->MemberPids.Contains(Pid))
+	{
+		OutResult = EMosesRoomJoinResult::AlreadyMember;
+		LogRoom_JoinRejected(OutResult, RoomId, JoinPS);
+		return false;
+	}
+
+	if (Room->IsFull())
+	{
+		OutResult = EMosesRoomJoinResult::RoomFull;
+		LogRoom_JoinRejected(OutResult, RoomId, JoinPS);
+		return false;
+	}
+
+	Room->MemberPids.Add(Pid);
+	Room->MemberReady.Add(0);
+	Room->EnsureReadySize();
+
+	MarkRoomDirty(*Room);
+
+	JoinPS->ServerSetRoom(RoomId, /*bIsHost*/ (Pid == Room->HostPid));
+	JoinPS->ServerSetReady(false);
+
+	ForceNetUpdate();
+
+	LogRoom_JoinAccepted(*Room);
+
+	OutResult = EMosesRoomJoinResult::Ok;
+	return true;
+}
+
 void AMosesLobbyGameState::Server_LeaveRoom(AMosesPlayerState* PS)
 {
 	check(HasAuthority());
@@ -618,17 +707,11 @@ bool AMosesLobbyGameState::Server_CanStartMatch(const FGuid& RoomId, FString& Ou
 		return false;
 	}
 
-	if (Room->MaxPlayers <= 0)
-	{
-		OutReason = TEXT("InvalidMaxPlayers");
-		return false;
-	}
-
-	if (Room->MemberPids.Num() != Room->MaxPlayers)
-	{
-		OutReason = TEXT("NotFull");
-		return false;
-	}
+	// 개발자 주석:
+	// - 정책(최종):
+	//   ✅ "호스트 제외" 모든 멤버 Ready면 Start 가능
+	//   ✅ 방 정원(MaxPlayers)과 무관 (원하면 여기서 Full 정책을 다시 넣으면 됨)
+	//   ✅ Host만 있는 방은 Start 불가 (RoomItem::IsAllReady에서 이미 차단)
 
 	if (!Room->IsAllReady())
 	{

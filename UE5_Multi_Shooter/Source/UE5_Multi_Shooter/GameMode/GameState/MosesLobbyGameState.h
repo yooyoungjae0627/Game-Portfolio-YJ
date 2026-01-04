@@ -132,6 +132,10 @@ public:
 	// ---------------------------
 	FGuid Server_CreateRoom(AMosesPlayerState* RequestPS, const FString& RoomTitle, int32 MaxPlayers);
 	bool Server_JoinRoom(AMosesPlayerState* RequestPS, const FGuid& RoomId);
+	
+	// ✅ NEW: Join 결과 이유까지 반환
+	bool Server_JoinRoomWithResult(AMosesPlayerState* RequestPS, const FGuid& RoomId, EMosesRoomJoinResult& OutResult);
+
 	void Server_LeaveRoom(AMosesPlayerState* RequestPS);
 
 	void Server_SyncReadyFromPlayerState(AMosesPlayerState* PS);

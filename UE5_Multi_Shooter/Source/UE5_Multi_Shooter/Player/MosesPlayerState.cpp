@@ -246,3 +246,15 @@ void AMosesPlayerState::EnsurePersistentId_Server()
 		*PersistentId.ToString(EGuidFormats::DigitsWithHyphens),
 		*GetNameSafe(this));
 }
+
+void AMosesPlayerState::SetLoggedIn_Server(bool bInLoggedIn)
+{
+	// 개발자 주석:
+	// - 서버에서만 상태를 확정한다.
+	check(HasAuthority());
+
+	bLoggedIn = bInLoggedIn;
+
+	// 서버도 동일하게 후처리를 하고 싶으면 여기서 OnRep 호출(선택)
+	OnRep_LoggedIn();
+}

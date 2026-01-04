@@ -137,10 +137,35 @@ void AMosesPlayerController::Server_JoinRoom_Implementation(const FGuid& RoomId)
 		return;
 	}
 
-	const bool bOk = LGS->Server_JoinRoom(PS, RoomId);
+	EMosesRoomJoinResult Result = EMosesRoomJoinResult::Ok;
+	const bool bOk = LGS->Server_JoinRoomWithResult(PS, RoomId, Result);
 
-	UE_LOG(LogMosesSpawn, Warning, TEXT("[LobbyRPC][SERVER] JoinRoom %s Room=%s PC=%s"),
-		bOk ? TEXT("OK") : TEXT("FAIL"), *RoomId.ToString(), *GetNameSafe(this));
+	UE_LOG(LogMosesSpawn, Warning, TEXT("[LobbyRPC][SERVER] JoinRoom %s Room=%s Result=%d PC=%s"),
+		bOk ? TEXT("OK") : TEXT("FAIL"),
+		*RoomId.ToString(),
+		(int32)Result,
+		*GetNameSafe(this));
+
+	// ✅ Join 성공/실패를 해당 클라에게 즉시 통보
+	Client_JoinRoomResult(Result, RoomId);
+}
+
+void AMosesPlayerController::Client_JoinRoomResult_Implementation(EMosesRoomJoinResult Result, const FGuid& RoomId)
+{
+	// 개발자 주석:
+	// - UI 직접 조작 금지(네 원칙 유지)
+	// - LocalPlayerSubsystem으로 결과만 전달한다.
+
+	ULocalPlayer* LP = GetLocalPlayer();
+	if (!LP)
+	{
+		return;
+	}
+
+	if (UMosesLobbyLocalPlayerSubsystem* LobbySubsys = LP->GetSubsystem<UMosesLobbyLocalPlayerSubsystem>())
+	{
+		LobbySubsys->NotifyJoinRoomResult(Result, RoomId);
+	}
 }
 
 void AMosesPlayerController::Server_LeaveRoom_Implementation()
@@ -191,6 +216,22 @@ void AMosesPlayerController::Server_SetReady_Implementation(bool bInReady)
 	if (!PS)
 	{
 		UE_LOG(LogMosesSpawn, Warning, TEXT("[LobbyRPC][SERVER] SetReady REJECT (NoPS)"));
+		return;
+	}
+
+	// ✅ NEW: 호스트는 Ready가 없다 (서버에서도 강제)
+	if (PS->IsRoomHost())
+	{
+		UE_LOG(LogMosesSpawn, Warning, TEXT("[LobbyRPC][SERVER] SetReady REJECT (Host cannot Ready) PC=%s"),
+			*GetNameSafe(this));
+		return;
+	}
+
+	// ✅ NEW: 방 밖이면 Ready 불가 (서버에서도 강제)
+	if (!PS->GetRoomId().IsValid())
+	{
+		UE_LOG(LogMosesSpawn, Warning, TEXT("[LobbyRPC][SERVER] SetReady REJECT (NotInRoom) PC=%s"),
+			*GetNameSafe(this));
 		return;
 	}
 

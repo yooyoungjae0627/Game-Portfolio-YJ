@@ -4,13 +4,17 @@
 #include "Blueprint/UserWidget.h"
 #include "MosesLobbyWidget.generated.h"
 
+enum class EMosesRoomJoinResult : uint8;
+
 class UButton;
 class UCheckBox;
 class UListView;
 class UVerticalBox;
+class UHorizontalBox;
 
 class UMosesLobbyLocalPlayerSubsystem;
 class AMosesPlayerController;
+class AMosesPlayerState;
 class UMSCreateRoomPopupWidget;
 
 UCLASS()
@@ -25,16 +29,19 @@ protected:
 	virtual void NativeConstruct() override;
 	virtual void NativeDestruct() override;
 
-private:
 	// ---------------------------
 	// Setup / Bind
 	// ---------------------------
 	void CacheLocalSubsystem();
 	void BindLobbyButtons();
-	void BindCharacterButtons();
 	void BindListViewEvents();
 	void BindSubsystemEvents();
 	void UnbindSubsystemEvents();
+
+	// ---------------------------
+	// Unified Refresh
+	// ---------------------------
+	void RefreshAll_UI();
 
 	// ---------------------------
 	// Lobby UI refresh internals
@@ -93,6 +100,7 @@ private:
 	// Helpers
 	// ---------------------------
 	AMosesPlayerController* GetMosesPC() const;
+	AMosesPlayerState* GetMosesPS() const;
 
 	// ---------------------------
 	// Pending Enter Room (UI Only)
@@ -102,6 +110,31 @@ private:
 
 	UFUNCTION()
 	void OnPendingEnterRoomTimeout_UIOnly();
+
+	// ---------------------------
+	// JoinRoom Result (from Subsystem)
+	// ---------------------------
+	void HandleJoinRoomResult_UI(EMosesRoomJoinResult Result, const FGuid& RoomId);
+	FString JoinFailReasonToText(EMosesRoomJoinResult Result) const;
+
+	// ---------------------------
+	// UI Update
+	// ---------------------------
+
+	/** 현재 로컬 플레이어(내가 보는 화면)의 상태로 UI를 갱신한다 */
+	void RefreshHostClientPanels();
+
+	/** 로컬 PC 가져오기 */
+	AMosesPlayerController* GetMosesPC_Local() const;
+
+	/** 로컬 PS 가져오기 */
+	AMosesPlayerState* GetMosesPS_Local() const;
+
+	/** 방 입장 상태인지(Host/Client 공통) */
+	bool IsLocalInRoom() const;
+
+	/** Host인지 */
+	bool IsLocalHost() const;
 
 private:
 	// ---------------------------
@@ -128,6 +161,9 @@ private:
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UVerticalBox> RightPanel = nullptr;
 
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UHorizontalBox> ClientPanel = nullptr;
+
 	// 개발자 주석:
 	// - WBP에서 이름을 Btn_CharPrev / Btn_CharNext 로 맞춰라.
 	UPROPERTY(meta = (BindWidgetOptional))
@@ -152,13 +188,6 @@ private:
 
 	UPROPERTY(Transient)
 	TObjectPtr<UMSCreateRoomPopupWidget> CreateRoomPopup = nullptr;
-
-private:
-	// ---------------------------
-	// Debug / Defaults
-	// ---------------------------
-	UPROPERTY(EditDefaultsOnly, Category = "Lobby|Debug")
-	int32 DebugMaxPlayers = 4;
 
 private:
 	// ---------------------------

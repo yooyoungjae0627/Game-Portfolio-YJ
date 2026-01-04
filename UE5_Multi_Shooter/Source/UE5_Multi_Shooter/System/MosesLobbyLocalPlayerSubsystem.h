@@ -7,8 +7,11 @@
 class UMosesLobbyWidget;
 class ALobbyPreviewActor;
 
+enum class EMosesRoomJoinResult : uint8;
+
 DECLARE_MULTICAST_DELEGATE(FOnLobbyPlayerStateChanged);
 DECLARE_MULTICAST_DELEGATE(FOnLobbyRoomStateChanged);
+DECLARE_MULTICAST_DELEGATE_TwoParams(FOnLobbyJoinRoomResult, EMosesRoomJoinResult /*Result*/, const FGuid& /*RoomId*/);
 
 UCLASS()
 class UE5_MULTI_SHOOTER_API UMosesLobbyLocalPlayerSubsystem : public ULocalPlayerSubsystem
@@ -35,11 +38,17 @@ public:
 	void NotifyPlayerStateChanged();
 	void NotifyRoomStateChanged();
 
+	// ✅ NEW: Join 결과(성공/실패)를 UI로 전달
+	void NotifyJoinRoomResult(EMosesRoomJoinResult Result, const FGuid& RoomId);
+
 	// ---------------------------
 	// Events (Widget bind)
 	// ---------------------------
 	FOnLobbyPlayerStateChanged& OnLobbyPlayerStateChanged() { return LobbyPlayerStateChangedEvent; }
 	FOnLobbyRoomStateChanged& OnLobbyRoomStateChanged() { return LobbyRoomStateChangedEvent; }
+
+	// ✅ NEW
+	FOnLobbyJoinRoomResult& OnLobbyJoinRoomResult() { return LobbyJoinRoomResultEvent; }
 
 	// ---------------------------
 	// Lobby Preview (Public API - Widget에서 호출)
@@ -79,6 +88,7 @@ private:
 	FOnLobbyPlayerStateChanged LobbyPlayerStateChangedEvent;
 	FOnLobbyRoomStateChanged LobbyRoomStateChangedEvent;
 
+	FOnLobbyJoinRoomResult LobbyJoinRoomResultEvent;
 
 	// 개발자 주석:
 	// - "프리뷰"는 로컬 연출이므로 서버/복제 없이 Local에서만 유지한다.

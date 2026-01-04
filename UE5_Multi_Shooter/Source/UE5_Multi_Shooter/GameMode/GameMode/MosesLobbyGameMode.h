@@ -40,6 +40,11 @@ public:
 
 	void HandleSelectCharacterRequest(class AMosesPlayerController* RequestPC, const FName CharacterId);
 
+	// 개발자 주석:
+	// - PlayerController가 "시작 요청"을 했을 때 들어오는 표준 진입점
+	// - 내부에서 기존 네 StartGame 로직으로 위임하면 된다.
+	void HandleStartGame(class AMosesPlayerController* RequestPC);
+
 protected:
 	virtual void BeginPlay() override;
 	virtual void PostLogin(APlayerController* NewPlayer) override;

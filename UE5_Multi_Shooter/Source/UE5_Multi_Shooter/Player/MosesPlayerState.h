@@ -88,6 +88,10 @@ public:
 	/** 서버에서 PersistentId가 없으면 생성해서 세팅한다. (PostLogin에서 호출) */
 	void EnsurePersistentId_Server();
 
+
+	/** 서버 전용: 자동 로그인 처리 */
+	void SetLoggedIn_Server(bool bInLoggedIn);
+
 private:
 	// ---------------------------
 	// RepNotify (UI 동기화/로그 포인트)

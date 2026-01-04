@@ -8,6 +8,8 @@ class AMosesLobbyGameState;
 class AMosesPlayerState;
 class ACameraActor;
 
+enum class EMosesRoomJoinResult : uint8;
+
 /**
  * AMosesPlayerController
  *
@@ -93,6 +95,12 @@ public:
 	UFUNCTION(Server, Reliable)
 	void Server_RequestSelectCharacter(const FName CharacterId);
 
+	// ---------------------------
+	// JoinRoom Result
+	// ---------------------------
+	UFUNCTION(Client, Reliable)
+	void Client_JoinRoomResult(EMosesRoomJoinResult Result, const FGuid& RoomId);
+
 protected:
 	// ---------------------------
 	// Lifecycle (Local UI / Camera)
@@ -140,7 +148,6 @@ private:
 	// ---------------------------
 	void ApplyLobbyInputMode_LocalOnly();
 	void RestoreNonLobbyInputMode_LocalOnly();
-
 
 private:
 	// ---------------------------

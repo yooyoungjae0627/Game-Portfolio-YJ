@@ -35,9 +35,11 @@ void AMosesLobbyGameMode::PostLogin(APlayerController* NewPlayer)
 	Super::PostLogin(NewPlayer);
 
 	// 개발자 주석:
-	// - PostLogin은 서버에서 "이 플레이어의 PlayerState가 확정"되는 대표 타이밍이다.
-	// - 여기서 PersistentId를 세팅해두면,
-	//   이후 Room/Ready/CharacterSelect 로직에서 Pid Invalid로 터질 일이 거의 없다.
+	// - PostLogin은 서버에서 "PlayerController / PlayerState"가 확정되는 대표 타이밍이다.
+	// - 여기서 PersistentId + (자동 로그인) 상태를 확정해두면,
+	//   이후 Room/Ready/CharacterSelect 로직에서
+	//   Pid Invalid / NotLoggedIn 같은 이유로 터질 확률이 크게 줄어든다.
+
 	AMosesPlayerController* MPC = Cast<AMosesPlayerController>(NewPlayer);
 	if (!MPC)
 	{
@@ -51,12 +53,21 @@ void AMosesLobbyGameMode::PostLogin(APlayerController* NewPlayer)
 		return;
 	}
 
+	// 1) 서버 고유 식별자 보장
 	PS->EnsurePersistentId_Server();
 
-	UE_LOG(LogMosesSpawn, Log, TEXT("[LobbyGM] PostLogin OK PC=%s Pid=%s"),
+	// 2) 자동 로그인(임시 정책)
+	// 개발자 주석:
+	// - 지금 Phase 0에선 "로그인 UI/DB"를 생략하고 자동 로그인으로 간주한다.
+	// - JoinRoom에서 NotLoggedIn으로 Reject 나는 케이스를 막기 위해 서버에서 확정한다.
+	PS->SetLoggedIn_Server(true);
+
+	UE_LOG(LogMosesSpawn, Log, TEXT("[LobbyGM] PostLogin OK PC=%s Pid=%s LoggedIn=%d"),
 		*GetNameSafe(MPC),
-		*PS->GetPersistentId().ToString(EGuidFormats::DigitsWithHyphens));
+		*PS->GetPersistentId().ToString(EGuidFormats::DigitsWithHyphens),
+		PS->IsLoggedIn() ? 1 : 0);
 }
+
 
 void AMosesLobbyGameMode::HandleStartGameRequest(AMosesPlayerController* RequestPC)
 {
@@ -220,4 +231,18 @@ int32 AMosesLobbyGameMode::ResolveCharacterId(const FName CharacterId) const
 	}
 
 	return -1;
+}
+
+void AMosesLobbyGameMode::HandleStartGame(AMosesPlayerController* RequestPC)
+{
+	// 개발자 주석:
+	// - 여기에서 "네가 이미 구현해둔 StartGame 처리 함수"를 호출하도록 연결해라.
+	// - 로그에 찍히는 [LobbyGM] StartGame ACCEPT ... 코드가 있는 곳으로 연결하면 됨.
+
+	UE_LOG(LogMosesSpawn, Warning, TEXT("[LobbyGM] HandleStartGame ENTER PC=%s"), *GetNameSafe(RequestPC));
+
+	// ✅ 아래 한 줄을 "네 실제 함수명"으로 바꿔.
+	// 예) StartGame(RequestPC);  /  TryStartMatch(RequestPC);  /  ServerStartGame(RequestPC);
+	// 지금 네 프로젝트에 있는 함수 이름이 뭐든 그걸 호출하면 된다.
+	//StartGame(RequestPC); // <-- 이 줄이 컴파일 안 나면, 네가 가진 진짜 함수명으로 바꿔라.
 }
