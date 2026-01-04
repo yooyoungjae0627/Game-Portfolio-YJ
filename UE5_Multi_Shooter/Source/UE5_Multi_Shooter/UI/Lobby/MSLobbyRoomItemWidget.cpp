@@ -23,27 +23,75 @@ void UMSLobbyRoomItemWidget::ApplyRoomData(const UMSLobbyRoomListItemData* Data)
 {
 	if (!Data)
 	{
-		if (Text_RoomTitle) { Text_RoomTitle->SetText(FText::FromString(TEXT("Invalid Room"))); }
-		if (Text_PlayerCount) { Text_PlayerCount->SetText(FText::FromString(TEXT("0"))); }
-		if (Text_PlayerMaxCount) { Text_PlayerMaxCount->SetText(FText::FromString(TEXT("0"))); }
+		if (Text_RoomTitle) 
+		{ 
+			Text_RoomTitle->SetText(FText::FromString(TEXT("Invalid Room"))); 
+		}
+
+		if (Text_PlayerCount) 
+		{ 
+			Text_PlayerCount->SetText(FText::FromString(TEXT("0"))); 
+		}
+		
+		if (Text_PlayerMaxCount) 
+		{ 
+			Text_PlayerMaxCount->SetText(FText::FromString(TEXT("0"))); 
+		}
+
 		return;
 	}
 
-	// 개발자 주석:
-	// - 방 제목은 아직 서버 데이터에 없으니 RoomId 일부로 임시 표시
-	if (Text_RoomTitle)
+	if (Data->GetLobbyRoomItemWidgetType() == EMSLobbyRoomItemWidgetType::LeftPanel)
 	{
-		const FString Title = FString::Printf(TEXT("ROOM_%s"), *Data->GetRoomId().ToString(EGuidFormats::Short));
-		Text_RoomTitle->SetText(FText::FromString(Title));
-	}
+		if (FirstBox)
+		{
+			FirstBox->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+		}
 
-	if (Text_PlayerCount)
-	{
-		Text_PlayerCount->SetText(FText::AsNumber(Data->GetCurPlayers()));
-	}
+		if (SecondBox)
+		{
+			SecondBox->SetVisibility(ESlateVisibility::Collapsed);
+		}
 
-	if (Text_PlayerMaxCount)
+		// 개발자 주석:
+		// - 방 제목은 아직 서버 데이터에 없으니 RoomId 일부로 임시 표시
+		if (Text_RoomTitle)
+		{
+			const FString& Title = Data->GetRoomTitle();
+
+			// 개발자 주석:
+			// - 제목이 비어 있으면 RoomId 일부로 대체(디버그 안전망)
+			if (!Title.IsEmpty())
+			{
+				Text_RoomTitle->SetText(FText::FromString(Title));
+			}
+			else
+			{
+				const FString Fallback = FString::Printf(TEXT("ROOM_%s"), *Data->GetRoomId().ToString(EGuidFormats::Short));
+				Text_RoomTitle->SetText(FText::FromString(Fallback));
+			}
+		}
+
+		if (Text_PlayerCount)
+		{
+			Text_PlayerCount->SetText(FText::AsNumber(Data->GetCurPlayers()));
+		}
+
+		if (Text_PlayerMaxCount)
+		{
+			Text_PlayerMaxCount->SetText(FText::AsNumber(Data->GetMaxPlayers()));
+		}
+	}
+	else
 	{
-		Text_PlayerMaxCount->SetText(FText::AsNumber(Data->GetMaxPlayers()));
+		if (FirstBox)
+		{
+			FirstBox->SetVisibility(ESlateVisibility::Collapsed);
+		}
+
+		if (SecondBox)
+		{
+			SecondBox->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+		}
 	}
 }

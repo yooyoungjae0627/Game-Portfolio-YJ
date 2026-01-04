@@ -1,9 +1,10 @@
-﻿#include "MosesLobbyGameState.h"
+﻿// MosesLobbyGameState.cpp
+#include "MosesLobbyGameState.h"
 
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
+#include "UE5_Multi_Shooter/MosesGameInstance.h"
 #include "UE5_Multi_Shooter/Player/MosesPlayerState.h"
 #include "UE5_Multi_Shooter/System/MosesLobbyLocalPlayerSubsystem.h"
-#include "UE5_Multi_Shooter/MosesGameInstance.h"
 
 #include "Net/UnrealNetwork.h"
 
@@ -53,7 +54,8 @@ void AMosesLobbyGameState::PostInitializeComponents()
 {
 	Super::PostInitializeComponents();
 
-	// FastArray 콜백에서 로그 컨텍스트를 찍기 위한 Owner 설정(비복제)
+	// 개발자 주석:
+	// - FastArray 콜백에서 GameState(NetMode 등) 컨텍스트를 찍기 위해 Owner를 세팅한다(비복제).
 	RoomList.SetOwner(this);
 
 	UE_LOG(LogMosesRoom, Log, TEXT("[LobbyGS][%s] PostInit -> RoomList Owner set."),
@@ -64,7 +66,8 @@ void AMosesLobbyGameState::BeginPlay()
 {
 	Super::BeginPlay();
 
-	// Travel/재생성/PIE 케이스 대비해서 BeginPlay에서도 한 번 더
+	// 개발자 주석:
+	// - Travel/재생성/PIE 케이스 대비해서 BeginPlay에서도 한 번 더 세팅한다.
 	RoomList.SetOwner(this);
 
 	UE_LOG(LogMosesRoom, Log, TEXT("[LobbyGS][%s] BeginPlay -> RoomList Owner set."),
@@ -75,8 +78,47 @@ void AMosesLobbyGameState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>&
 {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 
-	// FastArray 컨테이너 자체를 Replicate 해야 Delta 복제가 동작한다.
+	// 개발자 주석:
+	// - FastArray 컨테이너 자체를 Replicate 해야 Delta 복제가 동작한다.
 	DOREPLIFETIME(AMosesLobbyGameState, RoomList);
+}
+
+// =========================================================
+// UI Notify (single entry)
+// =========================================================
+
+void AMosesLobbyGameState::NotifyRoomStateChanged_LocalPlayers() const
+{
+	UE_LOG(LogMosesRoom, Log, TEXT("[LobbyGS][%s] NotifyRoomStateChanged_LocalPlayers()"), MosesNetModeToStr_UObject(this));
+	// 개발자 주석:
+	// - GameState는 UI를 직접 만지지 않는다.
+	// - LocalPlayerSubsystem에게만 "RoomStateChanged"를 Notify한다.
+	// - Widget은 Subsystem 이벤트를 받아 갱신한다.
+	// - DS는 LocalPlayer가 없으므로 자연스럽게 아무 일도 안 한다.
+	if (UMosesGameInstance* GI = UMosesGameInstance::Get(this))
+	{
+		const TArray<ULocalPlayer*>& LocalPlayers = GI->GetLocalPlayers();
+		for (ULocalPlayer* LP : LocalPlayers)
+		{
+			if (!LP)
+			{
+				continue;
+			}
+
+			if (UMosesLobbyLocalPlayerSubsystem* Subsys = LP->GetSubsystem<UMosesLobbyLocalPlayerSubsystem>())
+			{
+				Subsys->NotifyRoomStateChanged();
+			}
+		}
+	}
+}
+
+void AMosesLobbyGameState::OnRep_RoomList()
+{
+	// 개발자 주석:
+	// - RepNotify는 "백업용"으로 둔다.
+	// - FastArray는 PostReplicatedAdd/Change/Remove가 메인 트리거다.
+	NotifyRoomStateChanged_LocalPlayers();
 }
 
 // =========================================================
@@ -95,7 +137,7 @@ bool FMosesLobbyRoomItem::Contains(const FGuid& Pid) const
 
 bool FMosesLobbyRoomItem::IsAllReady() const
 {
-	// 정책:
+	// 개발자 주석:
 	// - Start 가능 조건은 "정원 충족 + 모두 Ready"
 	// - 정원 미충족이면 Ready가 모두 1이어도 Start 불가
 	if (MaxPlayers <= 0)
@@ -107,7 +149,7 @@ bool FMosesLobbyRoomItem::IsAllReady() const
 	{
 		return false;
 	}
-		
+
 	// Ready 배열 정합성(1:1)
 	if (MemberReady.Num() != MemberPids.Num())
 	{
@@ -191,7 +233,8 @@ const FMosesLobbyRoomItem* AMosesLobbyGameState::FindRoom(const FGuid& RoomId) c
 
 void AMosesLobbyGameState::MarkRoomDirty(FMosesLobbyRoomItem& Item)
 {
-	// FastArray 아이템 변경 시 반드시 호출(델타 복제 반영)
+	// 개발자 주석:
+	// - FastArray 아이템 변경 시 반드시 호출(델타 복제 반영)
 	RoomList.MarkItemDirty(Item);
 }
 
@@ -208,7 +251,8 @@ void AMosesLobbyGameState::RemoveEmptyRoomIfNeeded(const FGuid& RoomId)
 		return;
 	}
 
-	// 아이템 제거는 MarkArrayDirty가 필요
+	// 개발자 주석:
+	// - 아이템 제거는 MarkArrayDirty가 필요
 	for (int32 i = 0; i < RoomList.Items.Num(); ++i)
 	{
 		if (RoomList.Items[i].RoomId == RoomId)
@@ -275,46 +319,105 @@ void AMosesLobbyGameState::LogRoom_JoinRejected(EMosesRoomJoinResult Reason, con
 // =========================================================
 // Server API : Create / Join / Leave
 // =========================================================
-
-FGuid AMosesLobbyGameState::Server_CreateRoom(AMosesPlayerState* HostPS, int32 MaxPlayers)
+FGuid AMosesLobbyGameState::Server_CreateRoom(
+	AMosesPlayerState* HostPS,
+	const FString& RoomTitle,
+	int32 MaxPlayers
+)
 {
-	UE_LOG(LogMosesSpawn, Warning, TEXT("ROOM ADDED"));
-
+	// - 이 함수는 "방 생성"의 최종 권한을 가진 서버 전용 로직이다.
+	// - GameState는 서버 + 모든 클라이언트에 복제되므로
+	//   방 목록 관리에 가장 적합한 위치다.
 	check(HasAuthority());
 
+	// - 방장을 맡을 PlayerState가 없거나
+	// - 최대 인원이 비정상 값이면
+	//   방 생성 자체를 거부한다.
 	if (!HostPS || MaxPlayers <= 0)
 	{
+		// - Invalid Guid는 "방 생성 실패"를 의미한다.
 		return FGuid();
 	}
 
-	// 정책: 이미 방에 있으면 먼저 이탈(단일 소속)
+	// - 방을 새로 만들려는 플레이어가
+	//   이미 다른 방에 소속되어 있는 경우
+	//   한 플레이어가 여러 방에 속하지 않도록
+	//   기존 방에서 먼저 나가게 처리한다.
 	if (HostPS->GetRoomId().IsValid())
 	{
 		Server_LeaveRoom(HostPS);
 	}
 
+	// - 새로 생성될 방 정보를 담을 구조체.
+	// - 아직 네트워크로 전파되지 않은 로컬 서버 데이터 상태.
 	FMosesLobbyRoomItem NewRoom;
+
+	// - 방을 유일하게 식별하기 위한 서버 생성 GUID.
+	// - 클라이언트 입력이 아닌, 서버가 직접 생성한다.
 	NewRoom.RoomId = FGuid::NewGuid();
+
+	// - 방 최대 인원은 서버가 확정한 값.
+	// - UI에서 받은 값이라도 서버 기준이 최종 정답이다.
 	NewRoom.MaxPlayers = MaxPlayers;
 
+	// - 방 제목은 클라이언트 입력을 그대로 신뢰하지 않는다.
+	// - 앞/뒤 공백 제거로 UI 이상 표시 방지.
+	// - 최대 길이 제한으로 패킷/레이아웃 안정성 확보.
+	// - 이 값이 그대로 모든 클라이언트 UI에 복제된다.
+	NewRoom.RoomTitle = RoomTitle.TrimStartAndEnd().Left(24);
+
+	// - PlayerState를 고유하게 식별하는 PID를 서버에서 획득.
+	// - Room 구조체에는 Actor 포인터 대신 ID만 저장해
+	//   네트워크 안정성과 직렬화 안전성을 확보한다.
 	const FGuid HostPid = GetPidChecked(HostPS);
 
-	// Host 등록(첫 멤버)
+	// - 방장 PID 지정.
 	NewRoom.HostPid = HostPid;
+
+	// - 방 생성 시점에는
+	//   방장 혼자만 멤버로 포함된 상태로 시작한다.
 	NewRoom.MemberPids = { HostPid };
-	NewRoom.MemberReady = { 0 }; // 기본 NotReady
 
+	// - Ready 상태 배열.
+	// - 방장은 방 생성 직후 Ready 상태가 아니다.
+	NewRoom.MemberReady = { 0 };
+
+	// - 서버의 방 목록 배열에 새 방 추가.
+	// - 아직 클라이언트로 전송되지는 않은 상태.
 	RoomList.Items.Add(NewRoom);
-	RoomList.MarkArrayDirty(); // 아이템 추가/삭제는 ArrayDirty
 
-	// PS 상태 반영(서버 authoritative)
+	// - FastArraySerializer 사용 중.
+	// - 배열이 변경되었음을 네트워크 시스템에 명시적으로 알림.
+	// - 이 호출이 있어야 클라이언트에 방 목록 변경이 전파된다.
+	RoomList.MarkArrayDirty();
+
+	// - 방장을 맡은 PlayerState에
+	//   "내가 어떤 방에 속했는지" 서버 기준으로 확정.
+	// - bIsHost=true 로 방장 권한 부여.
 	HostPS->ServerSetRoom(NewRoom.RoomId, /*bIsHost*/ true);
+
+	// - 방 생성 직후에는 Ready 상태를 강제로 false로 초기화.
+	// - 이전 방의 Ready 상태가 남아있지 않도록 보장.
 	HostPS->ServerSetReady(false);
 
+	// - 방 목록 및 PlayerState 변경 사항을
+	//   기본 NetUpdate 주기를 기다리지 않고
+	//   즉시 클라이언트로 복제하도록 강제 요청.
 	ForceNetUpdate();
+
+	// - 로컬 플레이어용 Subsystem/UI에
+	//   방 상태 변경 이벤트를 전달.
+	// - 네트워크 로직과 UI 로직을 분리하기 위한 호출.
+	NotifyRoomStateChanged_LocalPlayers();
+
+	// - 디버깅 및 재현 로그 기록용.
 	LogRoom_Create(NewRoom);
+
+	// - 최종적으로 생성된 방의 RoomId 반환.
+	// - 호출 측에서 성공 여부 판단 및 후속 처리에 사용.
 	return NewRoom.RoomId;
 }
+
 
 bool AMosesLobbyGameState::Server_JoinRoom(AMosesPlayerState* JoinPS, const FGuid& RoomId)
 {
@@ -343,7 +446,8 @@ bool AMosesLobbyGameState::Server_JoinRoom(AMosesPlayerState* JoinPS, const FGui
 		return false;
 	}
 
-	// 정책: 다른 방에 있으면 먼저 이탈(단일 소속)
+	// 개발자 주석:
+	// - 정책: 다른 방에 있으면 먼저 이탈(단일 소속)
 	if (JoinPS->GetRoomId().IsValid())
 	{
 		Server_LeaveRoom(JoinPS);
@@ -401,11 +505,12 @@ void AMosesLobbyGameState::Server_LeaveRoom(AMosesPlayerState* PS)
 	{
 		return;
 	}
-		
+
 	const FGuid LeavingRoomId = PS->GetRoomId();
 	FMosesLobbyRoomItem* Room = FindRoomMutable(LeavingRoomId);
 
-	// Room이 없으면 PS만 정리(불일치 복구)
+	// 개발자 주석:
+	// - Room이 없으면 PS만 정리(불일치 복구)
 	if (!Room)
 	{
 		PS->ServerSetRoom(FGuid(), false);
@@ -429,7 +534,8 @@ void AMosesLobbyGameState::Server_LeaveRoom(AMosesPlayerState* PS)
 		Room->EnsureReadySize();
 	}
 
-	// 호스트 승계 정책: 호스트가 나가면 첫 멤버로 승계
+	// 개발자 주석:
+	// - 호스트 승계 정책: 호스트가 나가면 첫 멤버로 승계
 	if (Room->HostPid == Pid)
 	{
 		Room->HostPid = (Room->MemberPids.Num() > 0) ? Room->MemberPids[0] : FGuid();
@@ -506,28 +612,28 @@ bool AMosesLobbyGameState::Server_CanStartMatch(const FGuid& RoomId, FString& Ou
 	check(HasAuthority());
 
 	const FMosesLobbyRoomItem* Room = FindRoom(RoomId);
-	if (!Room) 
-	{ 
-		OutReason = TEXT("NoRoom"); 
-		return false; 
-	}
-
-	if (Room->MaxPlayers <= 0) 
-	{ 
-		OutReason = TEXT("InvalidMaxPlayers"); 
-		return false; 
-	}
-
-	if (Room->MemberPids.Num() != Room->MaxPlayers) 
+	if (!Room)
 	{
-		OutReason = TEXT("NotFull"); 
-		return false; 
+		OutReason = TEXT("NoRoom");
+		return false;
 	}
 
-	if (!Room->IsAllReady()) 
+	if (Room->MaxPlayers <= 0)
 	{
-		OutReason = TEXT("NotAllReady"); 
-		return false; 
+		OutReason = TEXT("InvalidMaxPlayers");
+		return false;
+	}
+
+	if (Room->MemberPids.Num() != Room->MaxPlayers)
+	{
+		OutReason = TEXT("NotFull");
+		return false;
+	}
+
+	if (!Room->IsAllReady())
+	{
+		OutReason = TEXT("NotAllReady");
+		return false;
 	}
 
 	OutReason = TEXT("OK");
@@ -535,7 +641,7 @@ bool AMosesLobbyGameState::Server_CanStartMatch(const FGuid& RoomId, FString& Ou
 }
 
 // =========================================================
-// FastArray callbacks (client-side logs)
+// FastArray callbacks (client-side logs + UI notify)
 // =========================================================
 
 void FMosesLobbyRoomItem::PostReplicatedAdd(const FMosesLobbyRoomList& InArraySerializer)
@@ -548,6 +654,14 @@ void FMosesLobbyRoomItem::PostReplicatedAdd(const FMosesLobbyRoomList& InArraySe
 		*RoomId.ToString(EGuidFormats::DigitsWithHyphens),
 		MemberPids.Num(),
 		MaxPlayers);
+
+	// 개발자 주석:
+	// - 클라가 델타를 수신한 "바로 그 순간" UI 갱신 신호를 때린다.
+	// - 방 목록은 "모두에게" 보여야 하므로 OwnerOnly 같은 조건이 없다.
+	if (GS && NM == NM_Client)
+	{
+		GS->NotifyRoomStateChanged_LocalPlayers();
+	}
 }
 
 void FMosesLobbyRoomItem::PostReplicatedChange(const FMosesLobbyRoomList& InArraySerializer)
@@ -561,6 +675,11 @@ void FMosesLobbyRoomItem::PostReplicatedChange(const FMosesLobbyRoomList& InArra
 		MemberPids.Num(),
 		MaxPlayers,
 		*HostPid.ToString(EGuidFormats::DigitsWithHyphens));
+
+	if (GS && NM == NM_Client)
+	{
+		GS->NotifyRoomStateChanged_LocalPlayers();
+	}
 }
 
 void FMosesLobbyRoomItem::PreReplicatedRemove(const FMosesLobbyRoomList& InArraySerializer)
@@ -571,30 +690,9 @@ void FMosesLobbyRoomItem::PreReplicatedRemove(const FMosesLobbyRoomList& InArray
 	UE_LOG(LogMosesRoom, Log, TEXT("[ROOM][%s][C] RepRoom DEL RoomId=%s"),
 		MosesNetModeToStr(NM),
 		*RoomId.ToString(EGuidFormats::DigitsWithHyphens));
-}
 
-// =========================================================
-// RepNotify -> UI update delegation
-// =========================================================
-
-void AMosesLobbyGameState::OnRep_RoomList()
-{
-	// GameState는 UI를 직접 만지지 않는다.
-	// LocalPlayerSubsystem이 "클라 UI 갱신" 책임을 가진다.
-	if (UMosesGameInstance* GI = UMosesGameInstance::Get(this))
+	if (GS && NM == NM_Client)
 	{
-		const TArray<ULocalPlayer*>& LocalPlayers = GI->GetLocalPlayers();
-		for (ULocalPlayer* LP : LocalPlayers)
-		{
-			if (!LP)
-			{
-				continue;
-			}
-
-			if (UMosesLobbyLocalPlayerSubsystem* Subsys = LP->GetSubsystem<UMosesLobbyLocalPlayerSubsystem>())
-			{
-				Subsys->NotifyRoomStateChanged();
-			}
-		}
+		GS->NotifyRoomStateChanged_LocalPlayers();
 	}
 }

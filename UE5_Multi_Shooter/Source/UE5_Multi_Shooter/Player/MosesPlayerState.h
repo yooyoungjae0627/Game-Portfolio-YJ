@@ -82,6 +82,12 @@ public:
 	UPROPERTY(Replicated)
 	FString DebugName;
 
+	// ---------------------------
+	// Server-only
+	// ---------------------------
+	/** 서버에서 PersistentId가 없으면 생성해서 세팅한다. (PostLogin에서 호출) */
+	void EnsurePersistentId_Server();
+
 private:
 	// ---------------------------
 	// RepNotify (UI 동기화/로그 포인트)
@@ -115,8 +121,11 @@ private:
 	UPROPERTY(ReplicatedUsing = OnRep_Ready)
 	bool bReady = false;
 
+	// 개발자 주석:
+	// - 캐릭터는 2개 고정.
+	// - 디폴트는 1번 캐릭터(=TypeA).
 	UPROPERTY(ReplicatedUsing = OnRep_SelectedCharacterId)
-	int32 SelectedCharacterId = -1;
+	int32 SelectedCharacterId = 1;
 
 	/** 현재 소속 룸 ID (없으면 Invalid) */
 	UPROPERTY(ReplicatedUsing = OnRep_Room)

@@ -51,7 +51,7 @@ public:
 	// ---------------------------
 
 	UFUNCTION(Server, Reliable)
-	void Server_CreateRoom(int32 MaxPlayers);
+	void Server_CreateRoom(const FString& RoomTitle, int32 MaxPlayers);
 
 	UFUNCTION(Server, Reliable)
 	void Server_JoinRoom(const FGuid& RoomId);
@@ -134,6 +134,13 @@ private:
 	/** 공통 레퍼런스 획득(서버 RPC에서 반복되는 null 체크 제거 목적) */
 	AMosesLobbyGameState* GetLobbyGameStateChecked_Log(const TCHAR* Caller) const;
 	AMosesPlayerState* GetMosesPlayerStateChecked_Log(const TCHAR* Caller) const;
+
+	// ---------------------------
+	// Lobby Input / Cursor policy
+	// ---------------------------
+	void ApplyLobbyInputMode_LocalOnly();
+	void RestoreNonLobbyInputMode_LocalOnly();
+
 
 private:
 	// ---------------------------

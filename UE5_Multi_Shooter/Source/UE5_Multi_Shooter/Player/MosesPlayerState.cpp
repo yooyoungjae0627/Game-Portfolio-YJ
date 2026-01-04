@@ -107,16 +107,22 @@ void AMosesPlayerState::ServerSetSelectedCharacterId(int32 InId)
 {
 	check(HasAuthority());
 
-	if (SelectedCharacterId == InId)
+	const int32 SafeId = FMath::Clamp(InId, 1, 2);
+
+	if (SelectedCharacterId == SafeId)
 	{
 		return;
 	}
 
-	SelectedCharacterId = InId;
+	SelectedCharacterId = SafeId;
 
 	UE_LOG(LogMosesPlayer, Log, TEXT("[CharSel][SV][PS] Set SelectedCharacterId=%d Pid=%s"),
 		SelectedCharacterId,
 		*PersistentId.ToString(EGuidFormats::DigitsWithHyphens));
+
+	// 개발자 주석:
+	// - 즉시 반영 체감을 원하면 강제 업데이트(선택)
+	ForceNetUpdate();
 }
 
 void AMosesPlayerState::ServerSetRoom(const FGuid& InRoomId, bool bInIsHost)
@@ -179,6 +185,14 @@ static void NotifyOwningLocalPlayer_PSChanged(AMosesPlayerState* PS)
 
 void AMosesPlayerState::OnRep_PersistentId()
 {
+	// 개발자 주석:
+	// - 클라에서 PersistentId가 "도착"한 타이밍.
+	// - 여기서 UI 갱신 트리거(Subsystem Notify) 등을 걸면
+	//   'Pid not ready' 타이밍 이슈가 구조적으로 사라진다.
+	UE_LOG(LogMosesPlayer, Log, TEXT("[PS][CL] OnRep_PersistentId -> %s PS=%s"),
+		*PersistentId.ToString(EGuidFormats::DigitsWithHyphens),
+		*GetNameSafe(this));
+
 	NotifyOwningLocalPlayer_PSChanged(this);
 }
 
@@ -204,4 +218,31 @@ void AMosesPlayerState::OnRep_SelectedCharacterId()
 void AMosesPlayerState::OnRep_Room()
 {
 	NotifyOwningLocalPlayer_PSChanged(this);
+}
+
+void AMosesPlayerState::EnsurePersistentId_Server()
+{
+	// 개발자 주석:
+	// - PersistentId는 룸 시스템의 "키"다. (RoomList.MemberPids, HostPid 등)
+	// - 이 키가 Invalid면 GameState에서 check가 터지거나, 멤버 관리가 불가능해진다.
+	// - 따라서 서버 PostLogin 시점에 "무조건" 세팅해준다.
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	if (PersistentId.IsValid())
+	{
+		return;
+	}
+
+	PersistentId = FGuid::NewGuid();
+
+	// 개발자 주석:
+	// - 가능하면 빨리 클라로 보내서 UI/RoomList 로직이 안정적으로 돌게 한다.
+	ForceNetUpdate();
+
+	UE_LOG(LogMosesPlayer, Log, TEXT("[PS][SV] EnsurePersistentId_Server -> %s PS=%s"),
+		*PersistentId.ToString(EGuidFormats::DigitsWithHyphens),
+		*GetNameSafe(this));
 }

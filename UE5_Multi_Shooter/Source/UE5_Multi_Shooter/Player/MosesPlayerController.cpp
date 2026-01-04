@@ -81,8 +81,7 @@ void AMosesPlayerController::TravelToLobby_Exec()
 // --------------------------------------------------
 // Client → Server RPC (Lobby)
 // --------------------------------------------------
-
-void AMosesPlayerController::Server_CreateRoom_Implementation(int32 MaxPlayers)
+void AMosesPlayerController::Server_CreateRoom_Implementation(const FString& RoomTitle, int32 MaxPlayers)
 {
 	UE_LOG(LogMosesSpawn, Warning, TEXT("CREATE ROOM RPC CALLED"));
 
@@ -93,19 +92,28 @@ void AMosesPlayerController::Server_CreateRoom_Implementation(int32 MaxPlayers)
 		return;
 	}
 
-	// 입력값 방어: 실수/악의적 호출 대비
 	const int32 SafeMaxPlayers = FMath::Clamp(MaxPlayers, Lobby_MinRoomMaxPlayers, Lobby_MaxRoomMaxPlayers);
 
-	const FGuid NewRoomId = LGS->Server_CreateRoom(PS, SafeMaxPlayers);
+	// 개발자 주석:
+	// - 서버에서도 한 번 더 Trim/길이 제한을 건다(최종 방어선).
+	// - 빈 제목이면 디폴트로 치환(UX 안전망).
+	FString SafeTitle = RoomTitle.TrimStartAndEnd().Left(24);
+	if (SafeTitle.IsEmpty())
+	{
+		SafeTitle = TEXT("방 제목 없음");
+	}
+
+	const FGuid NewRoomId = LGS->Server_CreateRoom(PS, SafeTitle, SafeMaxPlayers);
+
 	if (!NewRoomId.IsValid())
 	{
-		UE_LOG(LogMosesSpawn, Warning, TEXT("[LobbyRPC][SERVER] CreateRoom FAIL Max=%d PC=%s"),
-			SafeMaxPlayers, *GetNameSafe(this));
+		UE_LOG(LogMosesSpawn, Warning, TEXT("[LobbyRPC][SERVER] CreateRoom FAIL Title=%s Max=%d PC=%s"),
+			*SafeTitle, SafeMaxPlayers, *GetNameSafe(this));
 		return;
 	}
 
-	UE_LOG(LogMosesSpawn, Warning, TEXT("[LobbyRPC][SERVER] CreateRoom OK Room=%s Max=%d PC=%s"),
-		*NewRoomId.ToString(), SafeMaxPlayers, *GetNameSafe(this));
+	UE_LOG(LogMosesSpawn, Warning, TEXT("[LobbyRPC][SERVER] CreateRoom OK Room=%s Title=%s Max=%d PC=%s"),
+		*NewRoomId.ToString(), *SafeTitle, SafeMaxPlayers, *GetNameSafe(this));
 }
 
 void AMosesPlayerController::Server_JoinRoom_Implementation(const FGuid& RoomId)
@@ -367,6 +375,7 @@ void AMosesPlayerController::BeginPlay()
 	if (!IsLobbyContext())
 	{
 		RestoreNonLobbyDefaults_LocalOnly();
+		RestoreNonLobbyInputMode_LocalOnly(); 
 		return;
 	}
 
@@ -377,6 +386,7 @@ void AMosesPlayerController::BeginPlay()
 	// Experience/Possess/CameraManager 흐름에서 ViewTarget이 덮이는 케이스가 있어
 	// 즉시 1회 + 지연 1회 재적용(정책값 LobbyPreviewCameraDelay)
 	ApplyLobbyPreviewCamera();
+	ApplyLobbyInputMode_LocalOnly(); 
 
 	GetWorldTimerManager().SetTimer(
 		LobbyPreviewCameraTimerHandle,
@@ -401,6 +411,7 @@ void AMosesPlayerController::OnPossess(APawn* InPawn)
 	{
 		bAutoManageActiveCameraTarget = false;
 		ApplyLobbyPreviewCamera();
+		ApplyLobbyInputMode_LocalOnly();
 	}
 }
 
@@ -599,4 +610,44 @@ AMosesPlayerState* AMosesPlayerController::GetMosesPlayerStateChecked_Log(const 
 	}
 
 	return PS;
+}
+
+void AMosesPlayerController::ApplyLobbyInputMode_LocalOnly()
+{
+	// 개발자 주석:
+	// - 로비에서는 마우스 커서가 항상 보여야 하고 UI 클릭이 가능해야 한다.
+	// - GameOnly 입력 모드가 되면 커서가 사라지거나 UI 입력이 씹힐 수 있다.
+	if (!IsLocalController())
+	{
+		return;
+	}
+
+	bShowMouseCursor = true;
+	bEnableClickEvents = true;
+	bEnableMouseOverEvents = true;
+
+	FInputModeGameAndUI Mode;
+	Mode.SetHideCursorDuringCapture(false);
+	Mode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+
+	// 포커스 위젯은 Subsystem이 로비 위젯을 들고 있으니, Phase0에서는 비워도 OK.
+	// (원하면 LobbyWidget을 꺼내서 SetWidgetToFocus까지 걸 수 있음)
+	SetInputMode(Mode);
+}
+
+void AMosesPlayerController::RestoreNonLobbyInputMode_LocalOnly()
+{
+	// 개발자 주석:
+	// - 로비에서 나가면 게임 입력으로 복구해야 한다.
+	if (!IsLocalController())
+	{
+		return;
+	}
+
+	bShowMouseCursor = false;
+	bEnableClickEvents = false;
+	bEnableMouseOverEvents = false;
+
+	FInputModeGameOnly Mode;
+	SetInputMode(Mode);
 }

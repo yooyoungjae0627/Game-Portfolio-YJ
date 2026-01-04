@@ -30,6 +30,34 @@ void AMosesLobbyGameMode::BeginPlay()
 		bUseSeamlessTravel ? 1 : 0, *MatchMapTravelURL);
 }
 
+void AMosesLobbyGameMode::PostLogin(APlayerController* NewPlayer)
+{
+	Super::PostLogin(NewPlayer);
+
+	// 개발자 주석:
+	// - PostLogin은 서버에서 "이 플레이어의 PlayerState가 확정"되는 대표 타이밍이다.
+	// - 여기서 PersistentId를 세팅해두면,
+	//   이후 Room/Ready/CharacterSelect 로직에서 Pid Invalid로 터질 일이 거의 없다.
+	AMosesPlayerController* MPC = Cast<AMosesPlayerController>(NewPlayer);
+	if (!MPC)
+	{
+		return;
+	}
+
+	AMosesPlayerState* PS = MPC->GetPlayerState<AMosesPlayerState>();
+	if (!PS)
+	{
+		UE_LOG(LogMosesSpawn, Warning, TEXT("[LobbyGM] PostLogin (NoPlayerState) PC=%s"), *GetNameSafe(MPC));
+		return;
+	}
+
+	PS->EnsurePersistentId_Server();
+
+	UE_LOG(LogMosesSpawn, Log, TEXT("[LobbyGM] PostLogin OK PC=%s Pid=%s"),
+		*GetNameSafe(MPC),
+		*PS->GetPersistentId().ToString(EGuidFormats::DigitsWithHyphens));
+}
+
 void AMosesLobbyGameMode::HandleStartGameRequest(AMosesPlayerController* RequestPC)
 {
 	if (!HasAuthority())

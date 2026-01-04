@@ -74,16 +74,17 @@ void UMSCreateRoomPopupWidget::OnClicked_Confirm()
 	{
 		if (Txt_Error)
 		{
-			Txt_Error->SetText(FText::FromString(TEXT("인원은 숫자로 입력하세요. (예: 2~4)")));
+			Txt_Error->SetText(
+				FText::FromString(TEXT("인원은 2~4 사이의 숫자만 입력할 수 있습니다."))
+			);
 			Txt_Error->SetVisibility(ESlateVisibility::Visible);
 		}
 		return;
 	}
 
 	// 개발자 주석:
-	// - 1차 방어: UI에서 값이 비정상이면 여기서 컷
-	// - 최종 Clamp는 서버에서도 한 번 더 한다.
-	MaxPlayers = FMath::Clamp(MaxPlayers, 2, 4);
+	// - UI 1차 방어 통과
+	// - 서버에서 동일한 Clamp/Validate 로직을 반드시 다시 수행해야 함
 
 	if (Txt_Error)
 	{
@@ -113,15 +114,29 @@ bool UMSCreateRoomPopupWidget::TryParseMaxPlayers(int32& OutMaxPlayers) const
 		return false;
 	}
 
-	const FString Raw = EditableText_MaxPlayers->GetText().ToString().TrimStartAndEnd();
-	if (Raw.IsEmpty())
+	const FString RawText =
+		EditableText_MaxPlayers->GetText().ToString().TrimStartAndEnd();
+
+	if (RawText.IsEmpty())
 	{
 		return false;
 	}
 
-	OutMaxPlayers = FCString::Atoi(*Raw);
-	return (OutMaxPlayers > 0);
+	// 숫자 파싱
+	const int32 ParsedValue = FCString::Atoi(*RawText);
+
+	// 개발자 주석:
+	// - 0 이하, 5 이상은 UI 단계에서 컷
+	// - 허용 범위: 2 ~ 4
+	if (ParsedValue < 2 || ParsedValue > 4)
+	{
+		return false;
+	}
+
+	OutMaxPlayers = ParsedValue;
+	return true;
 }
+
 
 FString UMSCreateRoomPopupWidget::GetRoomTitleText() const
 {

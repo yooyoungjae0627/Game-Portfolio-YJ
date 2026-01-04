@@ -15,6 +15,14 @@ class USizeBox;
  * - GameState의 FastArray(UStruct)를 UI에 직접 꽂지 말고,
  *   UI 전용 Data UObject로 변환해서 ListView에 넣는다.
  */
+
+UENUM(BlueprintType)
+enum class EMSLobbyRoomItemWidgetType : uint8
+{
+	LeftPanel UMETA(DisplayName = "LeftPanel"),
+	RightPanel UMETA(DisplayName = "RightPanel"),
+};
+
 UCLASS()
 class UE5_MULTI_SHOOTER_API UMSLobbyRoomListItemData : public UObject
 {
@@ -24,32 +32,40 @@ public:
 	// ---------------------------
 	// Functions
 	// ---------------------------
-
-	void Init(const FGuid& InRoomId, const int32 InMaxPlayers, const int32 InCurPlayers)
+	void Init(
+		const FGuid& InRoomId,
+		const FString& InRoomTitle,
+		const int32 InMaxPlayers,
+		const int32 InCurPlayers,
+		const EMSLobbyRoomItemWidgetType InLobbyRoomItemWidgetType)
 	{
 		RoomId = InRoomId;
+		RoomTitle = InRoomTitle;
 		MaxPlayers = InMaxPlayers;
 		CurPlayers = InCurPlayers;
+		LobbyRoomItemWidgetType = InLobbyRoomItemWidgetType;
 	}
 
 	const FGuid& GetRoomId() const { return RoomId; }
+	const FString& GetRoomTitle() const { return RoomTitle; }
 	int32 GetMaxPlayers() const { return MaxPlayers; }
 	int32 GetCurPlayers() const { return CurPlayers; }
+	EMSLobbyRoomItemWidgetType GetLobbyRoomItemWidgetType() const { return LobbyRoomItemWidgetType; }
 
 private:
 	// ---------------------------
 	// Variables
 	// ---------------------------
-
-	UPROPERTY()
 	FGuid RoomId;
 
-	UPROPERTY()
-	int32 MaxPlayers = 0;
+	FString RoomTitle;
 
-	UPROPERTY()
+	int32 MaxPlayers = 0;
 	int32 CurPlayers = 0;
+
+	EMSLobbyRoomItemWidgetType LobbyRoomItemWidgetType;
 };
+
 
 
 /**

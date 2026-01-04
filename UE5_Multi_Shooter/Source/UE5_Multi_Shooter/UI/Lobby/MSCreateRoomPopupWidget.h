@@ -94,6 +94,6 @@ private:
 	// ---------------------------
 
 	FString DefaultTitle = TEXT("");
-	int32 DefaultMaxPlayers = 4;
+	int32 DefaultMaxPlayers;
 	bool bDefaultsApplied = false;
 };
