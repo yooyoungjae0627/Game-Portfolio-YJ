@@ -1,9 +1,11 @@
-﻿// MosesLobbyLocalPlayerSubsystem.h
-#pragma once
+﻿#pragma once
 
 #include "Subsystems/LocalPlayerSubsystem.h"
 #include "UE5_Multi_Shooter/UI/Lobby/MosesLobbyViewTypes.h"
+#include "TimerManager.h"
+
 #include "MosesLobbyLocalPlayerSubsystem.generated.h"
+
 
 class UMosesLobbyWidget;
 class ALobbyPreviewActor;
@@ -39,6 +41,26 @@ protected:
 
 public:
 	// ---------------------------
+	// UI Only: Rules View
+	// ---------------------------
+
+	/** [게임 진행 방법] 버튼: 로컬 UI/카메라만 전환 */
+	void EnterRulesView_UIOnly();
+
+	/** [나가기] 버튼: 로컬 UI/카메라만 원복 */
+	void ExitRulesView_UIOnly();
+
+	// ---------------------------
+	// LobbyWidget registration
+	// ---------------------------
+
+	/**
+	 *  LobbyWidget 인스턴스를 Subsystem에 알려줘야
+	 *  Subsystem이 UI모드 전환을 호출할 수 있다.
+	 */
+	void SetLobbyWidget(UMosesLobbyWidget* InWidget);
+
+	// ---------------------------
 	// View mode (로컬 연출 모드)
 	// ---------------------------
 	void EnterRulesView();
@@ -71,7 +93,6 @@ public:
 	// ---------------------------
 	// Lobby Preview (Public API - Widget에서 호출)
 	// ---------------------------
-	void RequestPrevCharacterPreview_LocalOnly();
 	void RequestNextCharacterPreview_LocalOnly();
 
 	ELobbyViewMode GetLobbyViewMode() const { return LobbyViewMode; }
@@ -98,7 +119,6 @@ private:
 	class AMosesPlayerController* GetMosesPC_LocalOnly() const;
 	class AMosesPlayerState* GetMosesPS_LocalOnly() const;
 
-private:
 	// ---------------------------
 	// Internal
 	// ---------------------------
@@ -109,6 +129,17 @@ private:
 	// ---------------------------
 	ACameraActor* FindCameraByTag(const FName& CameraTag) const;
 	void SetViewTargetToCameraTag(const FName& CameraTag, float BlendTime);
+
+	void SwitchToCamera(ACameraActor* TargetCam, const TCHAR* LogFromTo);
+	void ApplyRulesViewToWidget(bool bEnable);
+
+	APlayerController* GetLocalPC() const;
+
+	// ---------------------------
+	// Retry control (중복 예약 방지)
+	// ---------------------------
+	void RequestPreviewRefreshRetry_NextTick();
+	void ClearPreviewRefreshRetry();
 
 	// ---------------------------
 	// State
@@ -129,4 +160,22 @@ private:
 	// 개발자 주석: "프리뷰"는 로컬 연출이므로 서버/복제 없이 Local에서만 유지한다.
 	int32 LocalPreviewSelectedId = 1;
 
+	// 현재 모드 (왕복 10회 꼬임 방지)
+	bool bInRulesView = false;
+
+	// 카메라 태그 (레벨 배치 Actor Tag와 동일하게 맞춰라)
+	UPROPERTY(EditDefaultsOnly, Category = "Lobby|Camera")
+	FName LobbyPreviewCameraTag = TEXT("LobbyPreviewCamera");
+
+	UPROPERTY(EditDefaultsOnly, Category = "Lobby|Camera")
+	FName DialogueCameraTag = TEXT("DialogueCamera_LobbyNPC");
+
+	// 블렌드 세팅
+	UPROPERTY(EditDefaultsOnly, Category = "Lobby|Camera")
+	float CameraBlendTime = 0.35f;
+
+	// ---------------------------
+	// Timer
+	// ---------------------------
+	FTimerHandle PreviewRefreshRetryHandle;
 };

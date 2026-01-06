@@ -1,11 +1,10 @@
-﻿
-#include "UE5_Multi_Shooter/System/MosesLobbyLocalPlayerSubsystem.h"
+﻿#include "UE5_Multi_Shooter/System/MosesLobbyLocalPlayerSubsystem.h"
 #include "UE5_Multi_Shooter/System/MosesUIRegistrySubsystem.h"
 
 #include "UE5_Multi_Shooter/Player/MosesPlayerController.h"
 #include "UE5_Multi_Shooter/Player/MosesPlayerState.h"
 
-#include "UE5_Multi_Shooter/GameMode/GameState/MosesLobbyGameState.h" 
+#include "UE5_Multi_Shooter/GameMode/GameState/MosesLobbyGameState.h"
 
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
 #include "UE5_Multi_Shooter/UI/Lobby/MosesLobbyWidget.h"
@@ -19,6 +18,9 @@
 #include "Engine/GameInstance.h"
 #include "Kismet/GameplayStatics.h"
 #include "Blueprint/UserWidget.h"
+
+// ✅ 추가: PS NULL 재시도(타이머)용
+#include "TimerManager.h"
 
 // =========================================================
 // Engine
@@ -41,6 +43,8 @@ void UMosesLobbyLocalPlayerSubsystem::Deinitialize()
 	// 개발자 주석:
 	// - 로컬플레이어가 내려갈 때 UI도 내려준다.
 	DeactivateLobbyUI();
+
+	ExitRulesView_UIOnly();
 
 	CachedLobbyPreviewActor = nullptr;
 
@@ -73,11 +77,19 @@ void UMosesLobbyLocalPlayerSubsystem::ExitRulesView()
 
 void UMosesLobbyLocalPlayerSubsystem::ActivateLobbyUI()
 {
-	UE_LOG(LogMosesSpawn, Log, TEXT("[UIFlow] ActivateLobbyUI ENTER LP=%s World=%s"),
-		*GetNameSafe(GetLocalPlayer()),
-		*GetNameSafe(GetWorld()));
+	// ✅ 추가: 멀티 PIE에서 "이 Subsystem이 어느 LP에 붙었는지" 즉시 증명 로그
+	{
+		ULocalPlayer* LP = GetLocalPlayer();
+		UWorld* World = GetWorld();
+		APlayerController* PC_FromLP = (LP && World) ? LP->GetPlayerController(World) : nullptr;
 
-	// 개발자 주석:
+		UE_LOG(LogMosesSpawn, Warning, TEXT("[UIFlow][CHECK] ThisSubsys=%s LP=%s PC_FromLP=%s LP.PlayerController(raw)=%s"),
+			*GetNameSafe(this),
+			*GetNameSafe(LP),
+			*GetNameSafe(PC_FromLP),
+			*GetNameSafe(LP ? LP->PlayerController : nullptr));
+	}
+
 	// - 디버깅용: 경로가 실제 로딩되는지 즉시 확인
 	{
 		const FSoftClassPath TestPath(TEXT("/GF_Lobby/Lobby/UI/WBP_LobbyPage.WBP_LobbyPage_C"));
@@ -146,6 +158,14 @@ void UMosesLobbyLocalPlayerSubsystem::ActivateLobbyUI()
 		return;
 	}
 
+	// ✅ 추가: 멀티 PIE에서 PC0 고정/잘못된 PC를 초기에 차단
+	// - "로컬 컨트롤러"가 아니면 이 LP의 UI를 만들면 안 된다.
+	if (!PC->IsLocalController())
+	{
+		UE_LOG(LogMosesSpawn, Error, TEXT("[UIFlow] ActivateLobbyUI FAIL (PC is not local) PC=%s"), *GetNameSafe(PC));
+		return;
+	}
+
 	LobbyWidget = CreateWidget<UMosesLobbyWidget>(PC, LoadedClass);
 	if (!LobbyWidget)
 	{
@@ -206,6 +226,14 @@ void UMosesLobbyLocalPlayerSubsystem::NotifyRoomStateChanged()
 	LobbyRoomStateChangedEvent.Broadcast();
 }
 
+void UMosesLobbyLocalPlayerSubsystem::NotifyJoinRoomResult(EMosesRoomJoinResult Result, const FGuid& RoomId)
+{
+	UE_LOG(LogMosesSpawn, Verbose, TEXT("[UIFlow] NotifyJoinRoomResult Result=%d Room=%s"),
+		(int32)Result, *RoomId.ToString());
+
+	LobbyJoinRoomResultEvent.Broadcast(Result, RoomId);
+}
+
 // =========================================================
 // Lobby Preview (Public API - Widget에서 호출)
 // =========================================================
@@ -217,17 +245,6 @@ void UMosesLobbyLocalPlayerSubsystem::RequestNextCharacterPreview_LocalOnly()
 	LocalPreviewSelectedId = (LocalPreviewSelectedId >= 2) ? 1 : 2;
 
 	UE_LOG(LogMosesSpawn, Warning, TEXT("[CharNext] Local -> %d"), LocalPreviewSelectedId);
-
-	ApplyPreviewBySelectedId_LocalOnly(LocalPreviewSelectedId);
-}
-
-void UMosesLobbyLocalPlayerSubsystem::RequestPrevCharacterPreview_LocalOnly()
-{
-	UE_LOG(LogMosesSpawn, Warning, TEXT("[CharPrev] ENTER Local=%d"), LocalPreviewSelectedId);
-
-	LocalPreviewSelectedId = (LocalPreviewSelectedId <= 1) ? 2 : 1;
-
-	UE_LOG(LogMosesSpawn, Warning, TEXT("[CharPrev] Local -> %d"), LocalPreviewSelectedId);
 
 	ApplyPreviewBySelectedId_LocalOnly(LocalPreviewSelectedId);
 }
@@ -249,24 +266,44 @@ void UMosesLobbyLocalPlayerSubsystem::RefreshLobbyPreviewCharacter_LocalOnly()
 {
 	UWorld* World = GetWorld();
 
-	UE_LOG(LogMosesSpawn, Warning, TEXT("[CharPreview] RefreshLobbyPreviewCharacter ENTER World=%s NetMode=%d"),
-		*GetNameSafe(World),
-		World ? (int32)World->GetNetMode() : -1);
+	UE_LOG(LogMosesSpawn, Warning, TEXT("[CharPreview] ENTER World=%s NetMode=%d Subsys=%s LP=%s"),
+		*GetPathNameSafe(World),
+		World ? (int32)World->GetNetMode() : -1,
+		*GetPathNameSafe(this),
+		*GetPathNameSafe(GetLocalPlayer()));
 
-	// 개발자 주석:
 	// - DS는 화면 없음
 	if (!World || World->GetNetMode() == NM_DedicatedServer)
 	{
-		UE_LOG(LogMosesSpawn, Warning, TEXT("[CharPreview] Refresh SKIP (NoWorld or DedicatedServer)"));
+		UE_LOG(LogMosesSpawn, Warning, TEXT("[CharPreview] SKIP (NoWorld or DedicatedServer)"));
 		return;
 	}
 
-	const AMosesPlayerState* PS = GetMosesPS_LocalOnly();
-	if (!PS)
+	// ✅ 디버그: 지금 이 타이밍에 Subsystem이 보고 있는 PC/PS 상태를 먼저 출력
+	AMosesPlayerController* DebugPC = GetMosesPC_LocalOnly();
+	AMosesPlayerState* DebugPS = DebugPC ? DebugPC->GetPlayerState<AMosesPlayerState>() : nullptr;
+
+	UE_LOG(LogMosesSpawn, Warning, TEXT("[CharPreview][DEBUG] PC=%s IsLocal=%d PS=%s"),
+		*GetPathNameSafe(DebugPC),
+		DebugPC ? (DebugPC->IsLocalController() ? 1 : 0) : 0,
+		*GetPathNameSafe(DebugPS));
+
+	// ✅ 핵심:
+	// - Travel/Join 직후에는 PC는 있어도 PS가 몇 틱 NULL일 수 있음 (정상)
+	// - 이때 "SetTimerForNextTick 중복 예약"이 폭발하면 로그 스팸 + 흔들림이 생김
+	// - 그래서 재시도는 딱 1개만 예약한다.
+	if (!DebugPC || !DebugPC->IsLocalController() || !DebugPS)
 	{
-		UE_LOG(LogMosesSpawn, Error, TEXT("[CharPreview] Refresh FAIL: PS NULL"));
+		UE_LOG(LogMosesSpawn, Warning, TEXT("[CharPreview] WAIT (PC/PS not ready) -> retry next tick"));
+		RequestPreviewRefreshRetry_NextTick();
 		return;
 	}
+
+	// ✅ 성공했으면 재시도 타이머는 즉시 제거 (스팸 제거)
+	ClearPreviewRefreshRetry();
+
+	// - 여기부터는 기존 로직 유지
+	const AMosesPlayerState* PS = DebugPS; // GetMosesPS_LocalOnly() 재호출 대신 위에서 잡은 걸 사용
 
 	int32 SelectedId = PS->GetSelectedCharacterId();
 	if (SelectedId != 1 && SelectedId != 2)
@@ -277,7 +314,6 @@ void UMosesLobbyLocalPlayerSubsystem::RefreshLobbyPreviewCharacter_LocalOnly()
 
 	UE_LOG(LogMosesSpawn, Warning, TEXT("[CharPreview] Refresh -> Apply SelectedId=%d"), SelectedId);
 
-	// 개발자 주석:
 	// - 처음 UI 켤 때만 PS 기반으로 로컬값 초기화(디폴트=1)
 	const int32 PSId = PS->GetSelectedCharacterId();
 	if (PSId == 1 || PSId == 2)
@@ -354,13 +390,14 @@ ALobbyPreviewActor* UMosesLobbyLocalPlayerSubsystem::GetOrFindLobbyPreviewActor_
 
 AMosesPlayerController* UMosesLobbyLocalPlayerSubsystem::GetMosesPC_LocalOnly() const
 {
+	UWorld* World = GetWorld();
 	ULocalPlayer* LP = GetLocalPlayer();
-	if (!LP)
+	if (!World || !LP)
 	{
 		return nullptr;
 	}
 
-	return Cast<AMosesPlayerController>(LP->PlayerController);
+	return Cast<AMosesPlayerController>(LP->GetPlayerController(World)); // ★ 이게 정석
 }
 
 AMosesPlayerState* UMosesLobbyLocalPlayerSubsystem::GetMosesPS_LocalOnly() const
@@ -373,6 +410,10 @@ AMosesPlayerState* UMosesLobbyLocalPlayerSubsystem::GetMosesPS_LocalOnly() const
 
 	return PC->GetPlayerState<AMosesPlayerState>();
 }
+
+// =========================================================
+// Internal
+// =========================================================
 
 void UMosesLobbyLocalPlayerSubsystem::SetLobbyViewMode(ELobbyViewMode NewMode)
 {
@@ -388,6 +429,10 @@ void UMosesLobbyLocalPlayerSubsystem::SetLobbyViewMode(ELobbyViewMode NewMode)
 	OnLobbyViewModeChanged.Broadcast(LobbyViewMode);
 }
 
+// =========================================================
+// Camera helpers
+// =========================================================
+
 ACameraActor* UMosesLobbyLocalPlayerSubsystem::FindCameraByTag(const FName& CameraTag) const
 {
 	UWorld* World = GetWorld();
@@ -396,17 +441,16 @@ ACameraActor* UMosesLobbyLocalPlayerSubsystem::FindCameraByTag(const FName& Came
 		return nullptr;
 	}
 
-	TArray<AActor*> FoundActors;
-	UGameplayStatics::GetAllActorsWithTag(World, CameraTag, FoundActors);
+	TArray<AActor*> Found;
+	UGameplayStatics::GetAllActorsOfClass(World, ACameraActor::StaticClass(), Found);
 
-	for (AActor* Actor : FoundActors)
+	for (AActor* A : Found)
 	{
-		if (ACameraActor* Camera = Cast<ACameraActor>(Actor))
+		if (A && A->ActorHasTag(CameraTag))
 		{
-			return Camera;
+			return Cast<ACameraActor>(A);
 		}
 	}
-
 	return nullptr;
 }
 
@@ -434,10 +478,144 @@ void UMosesLobbyLocalPlayerSubsystem::SetViewTargetToCameraTag(const FName& Came
 	PC->SetViewTargetWithBlend(TargetCam, BlendTime);
 }
 
-void UMosesLobbyLocalPlayerSubsystem::NotifyJoinRoomResult(EMosesRoomJoinResult Result, const FGuid& RoomId)
+void UMosesLobbyLocalPlayerSubsystem::SwitchToCamera(ACameraActor* TargetCam, const TCHAR* LogFromTo)
 {
-	UE_LOG(LogMosesSpawn, Verbose, TEXT("[UIFlow] NotifyJoinRoomResult Result=%d Room=%s"),
-		(int32)Result, *RoomId.ToString());
+	APlayerController* PC = GetLocalPC();
+	if (!PC || !TargetCam)
+	{
+		UE_LOG(LogMosesSpawn, Warning, TEXT("[Camera] Switch failed. PC=%s Cam=%s"),
+			*GetNameSafe(PC), *GetNameSafe(TargetCam));
+		return;
+	}
 
-	LobbyJoinRoomResultEvent.Broadcast(Result, RoomId);
+	PC->SetViewTargetWithBlend(TargetCam, CameraBlendTime);
+	UE_LOG(LogMosesSpawn, Log, TEXT("%s"), LogFromTo);
+}
+
+APlayerController* UMosesLobbyLocalPlayerSubsystem::GetLocalPC() const
+{
+	if (!GetLocalPlayer())
+	{
+		return nullptr;
+	}
+
+	return GetLocalPlayer()->GetPlayerController(GetWorld());
+}
+
+void UMosesLobbyLocalPlayerSubsystem::ApplyRulesViewToWidget(bool bEnable)
+{
+	if (!LobbyWidget)
+	{
+		UE_LOG(LogMosesSpawn, Warning, TEXT("[RulesView] ApplyRulesViewToWidget: LobbyWidget is null"));
+		return;
+	}
+
+	LobbyWidget->SetRulesViewMode(bEnable);
+}
+
+// =========================================================
+// UI Only: Rules View
+// =========================================================
+
+void UMosesLobbyLocalPlayerSubsystem::EnterRulesView_UIOnly()
+{
+	// 중복 진입 방지 (왕복 10회 꼬임 방지 핵심)
+	if (bInRulesView)
+	{
+		return;
+	}
+
+	bInRulesView = true;
+
+	UE_LOG(LogMosesSpawn, Log, TEXT("[RulesView] Enter"));
+
+	// 1) 카메라 전환
+	ACameraActor* LobbyCam = FindCameraByTag(LobbyPreviewCameraTag);
+	ACameraActor* DialogueCam = FindCameraByTag(DialogueCameraTag);
+
+	if (!DialogueCam)
+	{
+		UE_LOG(LogMosesSpawn, Error, TEXT("[Camera] Dialogue camera not found. Tag=%s"), *DialogueCameraTag.ToString());
+	}
+	else
+	{
+		SwitchToCamera(DialogueCam, TEXT("[Camera] LobbyPreview -> DialogueCamera"));
+	}
+
+	// 2) UI 모드 전환 (패널 collapsed + dialogue ui on)
+	ApplyRulesViewToWidget(true);
+}
+
+void UMosesLobbyLocalPlayerSubsystem::ExitRulesView_UIOnly()
+{
+	// 중복 종료 방지
+	if (!bInRulesView)
+	{
+		return;
+	}
+
+	bInRulesView = false;
+
+	UE_LOG(LogMosesSpawn, Log, TEXT("[RulesView] Exit"));
+
+	// 1) 카메라 복귀
+	ACameraActor* LobbyCam = FindCameraByTag(LobbyPreviewCameraTag);
+	if (!LobbyCam)
+	{
+		UE_LOG(LogMosesSpawn, Error, TEXT("[Camera] Lobby preview camera not found. Tag=%s"), *LobbyPreviewCameraTag.ToString());
+	}
+	else
+	{
+		SwitchToCamera(LobbyCam, TEXT("[Camera] DialogueCamera -> LobbyPreview"));
+	}
+
+	// 2) UI 원복
+	ApplyRulesViewToWidget(false);
+}
+
+// =========================================================
+// LobbyWidget registration
+// =========================================================
+
+void UMosesLobbyLocalPlayerSubsystem::SetLobbyWidget(UMosesLobbyWidget* InWidget)
+{
+	LobbyWidget = InWidget;
+}
+
+// =========================================================
+// Retry control (중복 예약 방지)
+// =========================================================
+
+void UMosesLobbyLocalPlayerSubsystem::RequestPreviewRefreshRetry_NextTick()
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	FTimerManager& TM = World->GetTimerManager();
+
+	// ✅ 이미 예약돼 있으면 또 예약하지 않음
+	if (TM.TimerExists(PreviewRefreshRetryHandle) && (TM.IsTimerActive(PreviewRefreshRetryHandle) || TM.IsTimerPending(PreviewRefreshRetryHandle)))
+	{
+		return;
+	}
+
+	// ✅ SetTimerForNextTick은 "핸들 반환" 방식만 지원한다.
+	PreviewRefreshRetryHandle = TM.SetTimerForNextTick(
+		this,
+		&UMosesLobbyLocalPlayerSubsystem::RefreshLobbyPreviewCharacter_LocalOnly
+	);
+}
+
+void UMosesLobbyLocalPlayerSubsystem::ClearPreviewRefreshRetry()
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	World->GetTimerManager().ClearTimer(PreviewRefreshRetryHandle);
 }

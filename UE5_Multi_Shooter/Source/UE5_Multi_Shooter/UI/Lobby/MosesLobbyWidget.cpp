@@ -1,6 +1,4 @@
-﻿// MosesLobbyWidget.cpp
-
-#include "MosesLobbyWidget.h"
+﻿#include "MosesLobbyWidget.h"
 
 #include "Components/Button.h"
 #include "Components/CheckBox.h"
@@ -8,10 +6,13 @@
 #include "Components/VerticalBox.h"
 #include "Components/CanvasPanelSlot.h"
 #include "Components/HorizontalBox.h"
+#include "Components/Overlay.h"
 
 #include "Engine/LocalPlayer.h"
 #include "Engine/World.h"
 #include "TimerManager.h"
+
+#include "UE5_Multi_Shooter/MosesLogChannels.h"
 
 #include "UE5_Multi_Shooter/Player/MosesPlayerController.h"
 #include "UE5_Multi_Shooter/Player/MosesPlayerState.h"
@@ -36,13 +37,27 @@ void UMosesLobbyWidget::NativeConstruct()
 		*GetNameSafe(GetOwningLocalPlayer()),
 		*GetNameSafe(GetWorld()));
 
+	if (RightPanel)
+	{
+		RightPanel->SetVisibility(ESlateVisibility::Collapsed);
+	}
+
+	if (LeftPanel)
+	{
+		LeftPanel->SetVisibility(ESlateVisibility::Collapsed);
+	}
+
+	if (RoomListViewOverlay)
+	{
+		RoomListViewOverlay->SetVisibility(ESlateVisibility::Collapsed);
+	}
+
 	CacheLocalSubsystem();
 	BindLobbyButtons();
 	BindListViewEvents();
 	BindSubsystemEvents();
+	SetRulesViewMode(false);
 
-	// 개발자 주석:
-	// - 초기 동기화는 1회로 통일 (중복 호출 금지)
 	RefreshAll_UI();
 }
 
@@ -70,6 +85,16 @@ void UMosesLobbyWidget::NativeDestruct()
 		Button_StartGame->OnClicked.RemoveAll(this);
 	}
 
+	if (Btn_GameRules)
+	{
+		Btn_GameRules->OnClicked.RemoveAll(this);
+	}
+
+	if (Btn_ExitDialogue)
+	{
+		Btn_ExitDialogue->OnClicked.RemoveAll(this);
+	}
+
 	if (CheckBox_Ready)
 	{
 		CheckBox_Ready->OnCheckStateChanged.RemoveAll(this);
@@ -80,14 +105,9 @@ void UMosesLobbyWidget::NativeDestruct()
 		RoomListView->OnItemClicked().RemoveAll(this);
 	}
 
-	if (Btn_CharPrev)
+	if (Btn_SelectedChracter)
 	{
-		Btn_CharPrev->OnClicked.RemoveAll(this);
-	}
-
-	if (Btn_CharNext)
-	{
-		Btn_CharNext->OnClicked.RemoveAll(this);
+		Btn_SelectedChracter->OnClicked.RemoveAll(this);
 	}
 
 	LobbyLPS = nullptr;
@@ -104,61 +124,48 @@ void UMosesLobbyWidget::NativeDestruct()
 void UMosesLobbyWidget::CacheLocalSubsystem()
 {
 	ULocalPlayer* LP = GetOwningLocalPlayer();
-
-	UE_LOG(LogTemp, Warning, TEXT("[LobbyUI] CacheLocalSubsystem OwningLP=%s"),
-		*GetNameSafe(LP));
-
 	LobbyLPS = LP ? LP->GetSubsystem<UMosesLobbyLocalPlayerSubsystem>() : nullptr;
 
-	UE_LOG(LogTemp, Warning, TEXT("[LobbyUI] CacheLocalSubsystem LobbyLPS=%s"),
+	UE_LOG(LogTemp, Warning, TEXT("[LobbyUI] CacheLocalSubsystem OwningLP=%s LobbyLPS=%s"),
+		*GetNameSafe(LP),
 		*GetNameSafe(LobbyLPS));
 }
 
 void UMosesLobbyWidget::BindLobbyButtons()
 {
-	// Create
 	if (Button_CreateRoom)
 	{
-		Button_CreateRoom->OnClicked.RemoveAll(this);
 		Button_CreateRoom->OnClicked.AddDynamic(this, &UMosesLobbyWidget::OnClicked_CreateRoom);
 	}
 
-	// Leave
 	if (Button_LeaveRoom)
 	{
-		Button_LeaveRoom->OnClicked.RemoveAll(this);
 		Button_LeaveRoom->OnClicked.AddDynamic(this, &UMosesLobbyWidget::OnClicked_LeaveRoom);
 	}
 
-	// Start
 	if (Button_StartGame)
 	{
-		Button_StartGame->OnClicked.RemoveAll(this);
 		Button_StartGame->OnClicked.AddDynamic(this, &UMosesLobbyWidget::OnClicked_StartGame);
 	}
 
-	// Ready
 	if (CheckBox_Ready)
 	{
-		CheckBox_Ready->OnCheckStateChanged.RemoveAll(this);
 		CheckBox_Ready->OnCheckStateChanged.AddDynamic(this, &UMosesLobbyWidget::OnReadyChanged);
 	}
 
-	// Character Preview
-	UE_LOG(LogTemp, Warning, TEXT("[LobbyUI] BindCharacterButtons Prev=%s Next=%s"),
-		*GetNameSafe(Btn_CharPrev),
-		*GetNameSafe(Btn_CharNext));
-
-	if (Btn_CharPrev)
+	if (Btn_SelectedChracter)
 	{
-		Btn_CharPrev->OnClicked.RemoveAll(this);
-		Btn_CharPrev->OnClicked.AddDynamic(this, &UMosesLobbyWidget::OnClicked_CharPrev);
+		Btn_SelectedChracter->OnClicked.AddDynamic(this, &UMosesLobbyWidget::OnClicked_CharNext);
 	}
 
-	if (Btn_CharNext)
+	if (Btn_GameRules)
 	{
-		Btn_CharNext->OnClicked.RemoveAll(this);
-		Btn_CharNext->OnClicked.AddDynamic(this, &UMosesLobbyWidget::OnClicked_CharNext);
+		Btn_GameRules->OnClicked.AddDynamic(this, &UMosesLobbyWidget::OnClicked_GameRules);
+	}
+
+	if (Btn_ExitDialogue)
+	{
+		Btn_ExitDialogue->OnClicked.AddDynamic(this, &UMosesLobbyWidget::OnClicked_ExitDialogue);
 	}
 }
 
@@ -169,7 +176,6 @@ void UMosesLobbyWidget::BindListViewEvents()
 		return;
 	}
 
-	RoomListView->OnItemClicked().RemoveAll(this);
 	RoomListView->OnItemClicked().AddUObject(this, &UMosesLobbyWidget::OnRoomItemClicked);
 }
 
@@ -233,12 +239,34 @@ void UMosesLobbyWidget::RefreshRoomListFromGameState()
 		return;
 	}
 
-	const AMosesLobbyGameState* LGS = GetWorld() ? GetWorld()->GetGameState<AMosesLobbyGameState>() : nullptr;
+	const AMosesLobbyGameState* LGS = GetWorld()
+		? GetWorld()->GetGameState<AMosesLobbyGameState>()
+		: nullptr;
+
 	if (!LGS)
 	{
 		return;
 	}
 
+	// 1) 방이 하나라도 있는가?
+	const bool bHasAnyRoom = (LGS->GetRooms().Num() > 0);
+
+	// 2) 나는 방 밖인가? (Rep or Pending 기준)
+	const AMosesPlayerState* PS = GetMosesPS();
+	const bool bInRoomByRep = (PS && PS->GetRoomId().IsValid());
+	const bool bInRoom_UIOnly = bInRoomByRep || bPendingEnterRoom_UIOnly;
+
+	// ✅ Overlay는 "방이 존재" + "내가 방 밖"일 때만 보여준다.
+	if (RoomListViewOverlay)
+	{
+		const bool bShouldShowOverlay = bHasAnyRoom && !bInRoom_UIOnly;
+
+		RoomListViewOverlay->SetVisibility(
+			bShouldShowOverlay ? ESlateVisibility::SelfHitTestInvisible : ESlateVisibility::Collapsed
+		);
+	}
+
+	// 방 밖일 때만 리스트 갱신 (너의 기존 정책 유지)
 	RoomListView->ClearListItems();
 
 	for (const FMosesLobbyRoomItem& Room : LGS->GetRooms())
@@ -248,6 +276,7 @@ void UMosesLobbyWidget::RefreshRoomListFromGameState()
 		RoomListView->AddItem(Item);
 	}
 }
+
 
 void UMosesLobbyWidget::RefreshPanelsByPlayerState()
 {
@@ -528,22 +557,17 @@ void UMosesLobbyWidget::OnReadyChanged(bool bIsChecked)
 	UpdateStartButton();
 }
 
-void UMosesLobbyWidget::OnClicked_CharPrev()
-{
-	UE_LOG(LogTemp, Warning, TEXT("[CharPreview][UI] OnClicked_CharPrev LobbyLPS=%s"),
-		*GetNameSafe(LobbyLPS));
-
-	if (!LobbyLPS)
-	{
-		UE_LOG(LogTemp, Error, TEXT("[CharPreview][UI] CharPrev FAIL: LobbyLPS NULL (OwningLP broken?)"));
-		return;
-	}
-
-	LobbyLPS->RequestPrevCharacterPreview_LocalOnly();
-}
-
 void UMosesLobbyWidget::OnClicked_CharNext()
 {
+	UE_LOG(LogMosesSpawn, Warning,
+		TEXT("[BTN] GameRules | Widget=%s | World=%s | OwningLP=%s | OwningPC=%s | IsLocalPC=%d | NetMode=%d"),
+		*GetPathNameSafe(this),
+		*GetPathNameSafe(GetWorld()),
+		*GetPathNameSafe(GetOwningLocalPlayer()),
+		*GetPathNameSafe(GetOwningPlayer()),
+		GetOwningPlayer() ? (GetOwningPlayer()->IsLocalController() ? 1 : 0) : 0,
+		GetWorld() ? (int32)GetWorld()->GetNetMode() : -1);
+
 	UE_LOG(LogTemp, Warning, TEXT("[CharPreview][UI] OnClicked_CharNext LobbyLPS=%s"),
 		*GetNameSafe(LobbyLPS));
 
@@ -603,6 +627,23 @@ AMosesPlayerState* UMosesLobbyWidget::GetMosesPS() const
 	// - UE 버전에 따라 GetOwningPlayerState<T>()가 없거나 템플릿이 꼬이는 케이스가 있다.
 	// - 항상 안전하게 Cast로 통일한다.
 	return Cast<AMosesPlayerState>(GetOwningPlayerState());
+}
+
+UMosesLobbyLocalPlayerSubsystem* UMosesLobbyWidget::GetLobbySubsys() const
+{
+	const APlayerController* PC = GetOwningPlayer();
+	if (!PC)
+	{
+		return nullptr;
+	}
+
+	const ULocalPlayer* LP = PC->GetLocalPlayer();
+	if (!LP)
+	{
+		return nullptr;
+	}
+
+	return LP->GetSubsystem<UMosesLobbyLocalPlayerSubsystem>();
 }
 
 // ---------------------------
@@ -685,4 +726,73 @@ FString UMosesLobbyWidget::JoinFailReasonToText(EMosesRoomJoinResult Result) con
 	case EMosesRoomJoinResult::NotLoggedIn:   return TEXT("로그인이 필요합니다.");
 	default:                                  return TEXT("입장에 실패했습니다.");
 	}
+}
+
+void UMosesLobbyWidget::SetRulesViewMode(bool bEnable)
+{
+	// - 버튼 왕복 10회 눌러도 UI 꼬임 없게, "현재 상태면 중복 적용 금지"
+	
+	if (bRulesViewEnabled == bEnable)
+	{
+		return;
+	}
+
+	bRulesViewEnabled = bEnable;
+
+	auto SetVisSafe = [](UWidget* W, ESlateVisibility Vis)
+		{
+			if (W)
+			{
+				W->SetVisibility(Vis);
+			}
+		};
+
+	if (bEnable)
+	{
+		// RulesView ON:
+		// - 로비 패널 싹 숨기기
+		SetVisSafe(LeftPanel, ESlateVisibility::Collapsed);
+		SetVisSafe(RightPanel, ESlateVisibility::Collapsed);
+		SetVisSafe(CharacterSelectedButtonsBox, ESlateVisibility::Collapsed);
+
+		// - 나가기 버튼/대화 UI는 켜기
+		SetVisSafe(Btn_ExitDialogue, ESlateVisibility::Visible);
+		//SetVisSafe(DialogueUIRoot, ESlateVisibility::Visible);
+	}
+	else
+	{
+		// RulesView OFF:
+		// - 로비 패널 원복
+		SetVisSafe(LeftPanel, ESlateVisibility::SelfHitTestInvisible);
+		SetVisSafe(RightPanel, ESlateVisibility::SelfHitTestInvisible);
+		SetVisSafe(CharacterSelectedButtonsBox, ESlateVisibility::SelfHitTestInvisible);
+
+		// - 나가기/대화 UI 끄기
+		SetVisSafe(Btn_ExitDialogue, ESlateVisibility::Collapsed);
+		//SetVisSafe(DialogueUIRoot, ESlateVisibility::Collapsed);
+	}
+}
+
+void UMosesLobbyWidget::OnClicked_GameRules()
+{
+	UMosesLobbyLocalPlayerSubsystem* Subsys = GetLobbySubsys();
+	if (!Subsys)
+	{
+		UE_LOG(LogMosesSpawn, Warning, TEXT("[LobbyUI] OnClicked_GameRules: Subsystem is null"));
+		return;
+	}
+
+	Subsys->EnterRulesView_UIOnly();
+}
+
+void UMosesLobbyWidget::OnClicked_ExitDialogue()
+{
+	UMosesLobbyLocalPlayerSubsystem* Subsys = GetLobbySubsys();
+	if (!Subsys)
+	{
+		UE_LOG(LogMosesSpawn, Warning, TEXT("[LobbyUI] OnClicked_ExitDialogue: Subsystem is null"));
+		return;
+	}
+
+	Subsys->ExitRulesView_UIOnly();
 }

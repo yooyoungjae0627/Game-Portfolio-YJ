@@ -456,6 +456,19 @@ void AMosesPlayerController::OnPossess(APawn* InPawn)
 	}
 }
 
+void AMosesPlayerController::OnRep_PlayerState()
+{
+	Super::OnRep_PlayerState();
+
+	if (ULocalPlayer* LP = GetLocalPlayer())
+	{
+		if (UMosesLobbyLocalPlayerSubsystem* LPS = LP->GetSubsystem<UMosesLobbyLocalPlayerSubsystem>())
+		{
+			LPS->NotifyPlayerStateChanged(); // 내부에서 Refresh까지 호출하고 있으니 OK
+		}
+	}
+}
+
 // --------------------------------------------------
 // Travel Guard (Server RPC → Server Only DoXXX)
 // --------------------------------------------------

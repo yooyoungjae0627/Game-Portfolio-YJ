@@ -6,6 +6,7 @@
 
 enum class EMosesRoomJoinResult : uint8;
 
+class UOverlay;
 class UButton;
 class UCheckBox;
 class UListView;
@@ -89,10 +90,14 @@ protected:
 	void OnReadyChanged(bool bIsChecked);
 
 	UFUNCTION()
-	void OnClicked_CharPrev();
+	void OnClicked_CharNext();
 
 	UFUNCTION()
-	void OnClicked_CharNext();
+	void OnClicked_GameRules();
+
+	UFUNCTION()
+	void OnClicked_ExitDialogue();
+
 
 	void OnRoomItemClicked(UObject* ClickedItem);
 
@@ -101,6 +106,7 @@ protected:
 	// ---------------------------
 	AMosesPlayerController* GetMosesPC() const;
 	AMosesPlayerState* GetMosesPS() const;
+	UMosesLobbyLocalPlayerSubsystem* GetLobbySubsys() const;
 
 	// ---------------------------
 	// Pending Enter Room (UI Only)
@@ -117,42 +123,36 @@ protected:
 	void HandleJoinRoomResult_UI(EMosesRoomJoinResult Result, const FGuid& RoomId);
 	FString JoinFailReasonToText(EMosesRoomJoinResult Result) const;
 
-	// ---------------------------
-	// UI Update
-	// ---------------------------
-
-	/** 현재 로컬 플레이어(내가 보는 화면)의 상태로 UI를 갱신한다 */
-	void RefreshHostClientPanels();
-
-	/** 로컬 PC 가져오기 */
-	AMosesPlayerController* GetMosesPC_Local() const;
-
-	/** 로컬 PS 가져오기 */
-	AMosesPlayerState* GetMosesPS_Local() const;
-
-	/** 방 입장 상태인지(Host/Client 공통) */
-	bool IsLocalInRoom() const;
 
 	/** Host인지 */
 	bool IsLocalHost() const;
+
+public:
+	/** 
+	 *  RulesView(게임 진행 방법 보기) 진입/복귀 시
+	 *  Widget 내부 패널/버튼 가시성만 책임진다.
+	 *  (카메라 전환/상태 판단은 Subsystem)
+	 */
+	void SetRulesViewMode(bool bEnable);
+
 
 private:
 	// ---------------------------
 	// Widgets (BindWidget)
 	// ---------------------------
-	UPROPERTY(meta = (BindWidget))
+	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UButton> Button_CreateRoom = nullptr;
 
-	UPROPERTY(meta = (BindWidget))
+	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UButton> Button_LeaveRoom = nullptr;
 
-	UPROPERTY(meta = (BindWidget))
+	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UButton> Button_StartGame = nullptr;
 
-	UPROPERTY(meta = (BindWidget))
+	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UCheckBox> CheckBox_Ready = nullptr;
 
-	UPROPERTY(meta = (BindWidget))
+	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UListView> RoomListView = nullptr;
 
 	UPROPERTY(meta = (BindWidgetOptional))
@@ -164,13 +164,20 @@ private:
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UHorizontalBox> ClientPanel = nullptr;
 
-	// 개발자 주석:
-	// - WBP에서 이름을 Btn_CharPrev / Btn_CharNext 로 맞춰라.
 	UPROPERTY(meta = (BindWidgetOptional))
-	TObjectPtr<UButton> Btn_CharPrev = nullptr;
+	TObjectPtr<UButton> Btn_SelectedChracter = nullptr;
 
 	UPROPERTY(meta = (BindWidgetOptional))
-	TObjectPtr<UButton> Btn_CharNext = nullptr;
+	TObjectPtr<UOverlay> RoomListViewOverlay = nullptr;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UButton> Btn_GameRules = nullptr;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UButton> Btn_ExitDialogue = nullptr;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UVerticalBox> CharacterSelectedButtonsBox = nullptr;
 
 private:
 	// ---------------------------
@@ -200,4 +207,7 @@ private:
 	float PendingEnterRoomTimeoutSeconds = 2.0f;
 
 	FTimerHandle PendingEnterRoomTimerHandle;
+
+	// UI 꼬임 방지용 로컬 캐시
+	bool bRulesViewEnabled = false;
 };
