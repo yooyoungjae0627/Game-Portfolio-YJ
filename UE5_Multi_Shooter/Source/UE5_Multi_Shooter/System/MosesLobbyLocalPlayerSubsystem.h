@@ -2,16 +2,28 @@
 #pragma once
 
 #include "Subsystems/LocalPlayerSubsystem.h"
+#include "UE5_Multi_Shooter/UI/Lobby/MosesLobbyViewTypes.h"
 #include "MosesLobbyLocalPlayerSubsystem.generated.h"
 
 class UMosesLobbyWidget;
 class ALobbyPreviewActor;
+class ACameraActor;
 
 enum class EMosesRoomJoinResult : uint8;
 
 DECLARE_MULTICAST_DELEGATE(FOnLobbyPlayerStateChanged);
 DECLARE_MULTICAST_DELEGATE(FOnLobbyRoomStateChanged);
+DECLARE_MULTICAST_DELEGATE_OneParam(FOnLobbyViewModeChanged, ELobbyViewMode /*NewMode*/);
 DECLARE_MULTICAST_DELEGATE_TwoParams(FOnLobbyJoinRoomResult, EMosesRoomJoinResult /*Result*/, const FGuid& /*RoomId*/);
+
+/**
+ * UMosesLobbyLocalPlayerSubsystem
+ *
+ * 역할:
+ * - 클라 전용 연출 실행자
+ * - 로비 화면 "보기 모드" 전환(규칙 보기 등)을 책임진다.
+ * - UI는 상태만 받아서 보여주기/숨기기만 한다.
+ */
 
 UCLASS()
 class UE5_MULTI_SHOOTER_API UMosesLobbyLocalPlayerSubsystem : public ULocalPlayerSubsystem
@@ -26,6 +38,12 @@ protected:
 	virtual void Deinitialize() override;
 
 public:
+	// ---------------------------
+	// View mode (로컬 연출 모드)
+	// ---------------------------
+	void EnterRulesView();
+	void ExitRulesView();
+
 	// ---------------------------
 	// UI control (Public API)
 	// ---------------------------
@@ -56,6 +74,11 @@ public:
 	void RequestPrevCharacterPreview_LocalOnly();
 	void RequestNextCharacterPreview_LocalOnly();
 
+	ELobbyViewMode GetLobbyViewMode() const { return LobbyViewMode; }
+
+	// UI가 구독하는 이벤트
+	FOnLobbyViewModeChanged OnLobbyViewModeChanged;
+
 private:
 	// ---------------------------
 	// Internal helpers
@@ -77,6 +100,17 @@ private:
 
 private:
 	// ---------------------------
+	// Internal
+	// ---------------------------
+	void SetLobbyViewMode(ELobbyViewMode NewMode);
+
+	// ---------------------------
+	// Camera helpers
+	// ---------------------------
+	ACameraActor* FindCameraByTag(const FName& CameraTag) const;
+	void SetViewTargetToCameraTag(const FName& CameraTag, float BlendTime);
+
+	// ---------------------------
 	// State
 	// ---------------------------
 	UPROPERTY(Transient)
@@ -90,7 +124,9 @@ private:
 
 	FOnLobbyJoinRoomResult LobbyJoinRoomResultEvent;
 
-	// 개발자 주석:
-	// - "프리뷰"는 로컬 연출이므로 서버/복제 없이 Local에서만 유지한다.
+	ELobbyViewMode LobbyViewMode = ELobbyViewMode::Default;
+
+	// 개발자 주석: "프리뷰"는 로컬 연출이므로 서버/복제 없이 Local에서만 유지한다.
 	int32 LocalPreviewSelectedId = 1;
+
 };

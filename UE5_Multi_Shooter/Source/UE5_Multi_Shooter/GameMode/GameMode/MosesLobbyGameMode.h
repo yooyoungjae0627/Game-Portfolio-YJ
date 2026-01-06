@@ -1,7 +1,7 @@
 ﻿#pragma once
 
-#include "CoreMinimal.h"
 #include "GameFramework/GameModeBase.h"
+#include "UE5_Multi_Shooter/MosesDialogueTypes.h"
 #include "MosesLobbyGameMode.generated.h"
 
 class AMosesPlayerController;
@@ -9,17 +9,16 @@ class AMosesPlayerState;
 class AMosesLobbyGameState;
 class UMSCharacterCatalog;
 
+class APlayerController;
+
 /**
  * AMosesLobbyGameMode
  *
- * 역할
- * - StartGame 요청의 "최종 검증문"
- * - 검증 OK면 ServerTravel로 Match 맵 이동 트리거
- *
- * 왜 GameState가 아니라 여기인가?
- * - Travel은 서버의 룰/흐름(Authority Rule)이라 GameMode 책임이 가장 안전
- * - GameState는 데이터 단일진실(룸/페이즈/리스트)
+ * - 서버 전용 "심판/규칙" 클래스.
+ * - 클라가 어떤 버튼을 눌렀든,
+ *   최종 '허용/거부/상태 변경'은 여기서 결정한다.
  */
+
 UCLASS()
 class UE5_MULTI_SHOOTER_API AMosesLobbyGameMode : public AGameModeBase
 {
@@ -45,6 +44,18 @@ public:
 	// - 내부에서 기존 네 StartGame 로직으로 위임하면 된다.
 	void HandleStartGame(class AMosesPlayerController* RequestPC);
 
+	// ---------------------------
+	// Request handlers (PC가 Server RPC로 요청하면 여기가 받는다)
+	// ---------------------------
+	void HandleRequestEnterLobbyDialogue(APlayerController* RequestPC);
+	void HandleRequestExitLobbyDialogue(APlayerController* RequestPC);
+
+	// ---------------------------
+	// Dialogue progression API 
+	// ---------------------------
+	void ServerAdvanceLine(int32 NextLineIndex, float Duration, bool bNPCSpeaking);
+	void ServerSetSubState(int32 NewSubStateAsInt, float RemainingTime, bool bNPCSpeaking);
+
 protected:
 	virtual void BeginPlay() override;
 	virtual void PostLogin(APlayerController* NewPlayer) override;
@@ -60,7 +71,13 @@ private:
 
 	int32 ResolveCharacterId(const FName CharacterId) const;
 
+	// ---------------------------
+	// Validate rules 
+	// ---------------------------
+	bool CanEnterLobbyDialogue(APlayerController* RequestPC) const;
+	bool CanExitLobbyDialogue(APlayerController* RequestPC) const;
 
+private:
 	UPROPERTY(EditDefaultsOnly, Category = "CharacterSelect")
 	TObjectPtr<UMSCharacterCatalog> CharacterCatalog = nullptr;
 

@@ -10,12 +10,12 @@
 	"DocsURL": "",
 	"MarketplaceURL": "",
 	"SupportURL": "",
-	"EnabledByDefault": false,
+	"EnabledByDefault": true,
 	"CanContainContent": true,
 	"IsBetaVersion": false,
 	"IsExperimentalVersion": false,
 	"Installed": false,
-	"ExplicitlyLoaded": true,
-	"BuiltInInitialFeatureState": "Registered",
+	"ExplicitlyLoaded": false,
+	"BuiltInInitialFeatureState": "Active",
 	"GameFeatureData": "/GF_Lobby_Data/GF_Lobby.GF_Lobby"
 }

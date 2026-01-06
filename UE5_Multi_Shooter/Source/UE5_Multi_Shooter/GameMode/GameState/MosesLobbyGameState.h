@@ -1,8 +1,8 @@
-﻿// MosesLobbyGameState.h
-#pragma once
+﻿#pragma once
 
-#include "CoreMinimal.h"
+
 #include "GameFramework/GameStateBase.h"
+#include "UE5_Multi_Shooter/MosesDialogueTypes.h"
 #include "Net/Serialization/FastArraySerializer.h"
 #include "MosesLobbyGameState.generated.h"
 
@@ -101,6 +101,9 @@ struct TStructOpsTypeTraits<FMosesLobbyRoomList> : public TStructOpsTypeTraitsBa
 	enum { WithNetDeltaSerializer = true };
 };
 
+DECLARE_MULTICAST_DELEGATE_OneParam(FOnMosesPhaseChanged, EGamePhase /*NewPhase*/);
+DECLARE_MULTICAST_DELEGATE_OneParam(FOnMosesDialogueStateChanged, const FDialogueNetState& /*NewState*/);
+
 /**
  * AMosesLobbyGameState
  *
@@ -158,6 +161,29 @@ public:
 	// - ListenServer는 서버 코드에서 호출해도 "로컬 UI"만 즉시 갱신된다.
 	void NotifyRoomStateChanged_LocalPlayers() const;
 
+	// ---------------------------
+	// Read-only (클라/서버 모두 읽기 가능)
+	// ---------------------------
+	EGamePhase GetGamePhase() const { return GamePhase; }
+	const FDialogueNetState& GetDialogueNetState() const { return DialogueNetState; }
+
+	// ---------------------------
+	// Events (클라/서버 모두 구독 가능)
+	// ---------------------------
+	FOnMosesPhaseChanged OnPhaseChanged;
+	FOnMosesDialogueStateChanged OnDialogueStateChanged;
+
+	// ---------------------------
+	// Server-only mutators
+	// ---------------------------
+	// 개발자 주석:
+	// - "상태 변경"은 서버만 한다.
+	// - 클라는 절대 이 함수 호출하면 안 된다(불려도 내부에서 HasAuthority()로 컷).
+	void ServerEnterLobbyDialogue();
+	void ServerExitLobbyDialogue();
+	void ServerSetSubState(EDialogueSubState NewSubState, float NewRemainingTime, bool bInNPCSpeaking);
+	void ServerAdvanceLine(int32 NextLineIndex, float Duration, bool bInNPCSpeaking);
+
 protected:
 	// ---------------------------
 	// RepNotify (backup)
@@ -187,10 +213,43 @@ private:
 	void LogRoom_JoinAccepted(const FMosesLobbyRoomItem& Room) const;
 	void LogRoom_JoinRejected(EMosesRoomJoinResult Reason, const FGuid& RoomId, const AMosesPlayerState* JoinPS) const;
 
+	// ---------------------------
+	// Internal helpers
+	// ---------------------------
+	bool IsServerAuth() const;
+
+	/**
+	 * BroadcastAll_ServerToo
+	 *
+	 * 개발자 주석:
+	 * - 서버는 "자기 자신에게" RepNotify가 오지 않는다.
+	 * - 그러나 서버에서도 UI/연출(리스너)이 동일 이벤트를 받아야 하는 경우가 있다.
+	 * - 따라서 서버에서 값을 바꾼 직후, 서버도 동일 브로드캐스트를 수동 호출한다.
+	 */
+	void BroadcastAll_ServerToo();
+
+	// ---------------------------
+	// RepNotify (이벤트만)
+	// ---------------------------
+	UFUNCTION()
+	void OnRep_GamePhase();
+
+	UFUNCTION()
+	void OnRep_DialogueNetState();
+
 private:
 	// ---------------------------
 	// Replicated state
 	// ---------------------------
 	UPROPERTY(ReplicatedUsing = OnRep_RoomList)
 	FMosesLobbyRoomList RoomList;
+
+	// ---------------------------
+	// Replicated state (전광판 데이터)
+	// ---------------------------
+	UPROPERTY(ReplicatedUsing = OnRep_GamePhase)
+	EGamePhase GamePhase = EGamePhase::Lobby;
+
+	UPROPERTY(ReplicatedUsing = OnRep_DialogueNetState)
+	FDialogueNetState DialogueNetState;
 };

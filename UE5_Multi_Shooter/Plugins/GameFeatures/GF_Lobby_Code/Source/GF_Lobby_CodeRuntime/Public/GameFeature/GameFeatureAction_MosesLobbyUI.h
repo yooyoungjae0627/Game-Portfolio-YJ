@@ -26,8 +26,10 @@ public:
 	virtual void OnGameFeatureDeactivating(FGameFeatureDeactivatingContext& Context) override;
 
 private:
+	/** GF가 제공하는 Lobby Widget 경로 */
 	UPROPERTY(EditDefaultsOnly, Category = "LobbyUI")
 	FSoftClassPath LobbyWidgetClassPath =
-		FSoftClassPath(TEXT("/GF_Lobby_Code/Lobby/UI/WBP_LobbyPage.WBP_LobbyPage_C"));
+		FSoftClassPath(TEXT("/GF_Lobby/Lobby/UI/WBP_LobbyPage.WBP_LobbyPage_C"));
+
 
 };

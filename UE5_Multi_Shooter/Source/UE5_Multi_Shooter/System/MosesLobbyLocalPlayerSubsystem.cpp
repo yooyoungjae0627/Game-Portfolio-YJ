@@ -12,6 +12,8 @@
 
 #include "UE5_Multi_Shooter/Lobby/LobbyPreviewActor.h"
 
+#include "Camera/CameraActor.h"
+
 #include "Engine/World.h"
 #include "Engine/LocalPlayer.h"
 #include "Engine/GameInstance.h"
@@ -25,6 +27,9 @@
 void UMosesLobbyLocalPlayerSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
 	Super::Initialize(Collection);
+
+	// - 기본값은 Default 로비 화면
+	LobbyViewMode = ELobbyViewMode::Default;
 
 	UE_LOG(LogMosesSpawn, Log, TEXT("[UIFlow] LobbySubsys Initialize LP=%s World=%s"),
 		*GetNameSafe(GetLocalPlayer()),
@@ -44,6 +49,24 @@ void UMosesLobbyLocalPlayerSubsystem::Deinitialize()
 	Super::Deinitialize();
 }
 
+void UMosesLobbyLocalPlayerSubsystem::EnterRulesView()
+{
+	// 1) 상태 변경 (UI 숨김/표시)
+	SetLobbyViewMode(ELobbyViewMode::RulesView);
+
+	// 2) 카메라 전환
+	SetViewTargetToCameraTag(TEXT("LobbyRulesCamera"), /*BlendTime*/0.35f);
+}
+
+void UMosesLobbyLocalPlayerSubsystem::ExitRulesView()
+{
+	// 1) 상태 변경 (UI 원복)
+	SetLobbyViewMode(ELobbyViewMode::Default);
+
+	// 2) 카메라 원복
+	SetViewTargetToCameraTag(TEXT("LobbyPreviewCamera"), /*BlendTime*/0.35f);
+}
+
 // =========================================================
 // UI control
 // =========================================================
@@ -57,7 +80,7 @@ void UMosesLobbyLocalPlayerSubsystem::ActivateLobbyUI()
 	// 개발자 주석:
 	// - 디버깅용: 경로가 실제 로딩되는지 즉시 확인
 	{
-		const FSoftClassPath TestPath(TEXT("/GF_Lobby_Code/Lobby/UI/WBP_LobbyPage.WBP_LobbyPage_C"));
+		const FSoftClassPath TestPath(TEXT("/GF_Lobby/Lobby/UI/WBP_LobbyPage.WBP_LobbyPage_C"));
 		UClass* TestClass = TestPath.TryLoadClass<UUserWidget>();
 
 		UE_LOG(LogMosesSpawn, Warning, TEXT("[PATH PROOF] %s : %s -> Class=%s"),
@@ -97,7 +120,7 @@ void UMosesLobbyLocalPlayerSubsystem::ActivateLobbyUI()
 	{
 		// 개발자 주석:
 		// - GF 디버깅/임시 강제 경로
-		WidgetPath = FSoftClassPath(TEXT("/GF_Lobby_Code/Lobby/UI/WBP_LobbyPage.WBP_LobbyPage_C"));
+		WidgetPath = FSoftClassPath(TEXT("/GF_Lobby/Lobby/UI/WBP_LobbyPage.WBP_LobbyPage_C"));
 
 		UE_LOG(LogMosesSpawn, Warning, TEXT("[UIFlow] LobbyWidgetPath NULL -> FORCE SET = %s"),
 			*WidgetPath.ToString());
@@ -349,6 +372,66 @@ AMosesPlayerState* UMosesLobbyLocalPlayerSubsystem::GetMosesPS_LocalOnly() const
 	}
 
 	return PC->GetPlayerState<AMosesPlayerState>();
+}
+
+void UMosesLobbyLocalPlayerSubsystem::SetLobbyViewMode(ELobbyViewMode NewMode)
+{
+	if (LobbyViewMode == NewMode)
+	{
+		return;
+	}
+
+	LobbyViewMode = NewMode;
+
+	// - Subsystem은 "상태 변경"을 이벤트로 방송만 한다.
+	// - 실제 UI 갱신은 Widget에서 수행.
+	OnLobbyViewModeChanged.Broadcast(LobbyViewMode);
+}
+
+ACameraActor* UMosesLobbyLocalPlayerSubsystem::FindCameraByTag(const FName& CameraTag) const
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return nullptr;
+	}
+
+	TArray<AActor*> FoundActors;
+	UGameplayStatics::GetAllActorsWithTag(World, CameraTag, FoundActors);
+
+	for (AActor* Actor : FoundActors)
+	{
+		if (ACameraActor* Camera = Cast<ACameraActor>(Actor))
+		{
+			return Camera;
+		}
+	}
+
+	return nullptr;
+}
+
+void UMosesLobbyLocalPlayerSubsystem::SetViewTargetToCameraTag(const FName& CameraTag, float BlendTime)
+{
+	ULocalPlayer* LP = GetLocalPlayer();
+	if (!LP)
+	{
+		return;
+	}
+
+	APlayerController* PC = LP->GetPlayerController(GetWorld());
+	if (!PC)
+	{
+		return;
+	}
+
+	ACameraActor* TargetCam = FindCameraByTag(CameraTag);
+	if (!TargetCam)
+	{
+		// 태그가 안 달렸거나 이름이 틀리면 여기서 실패함
+		return;
+	}
+
+	PC->SetViewTargetWithBlend(TargetCam, BlendTime);
 }
 
 void UMosesLobbyLocalPlayerSubsystem::NotifyJoinRoomResult(EMosesRoomJoinResult Result, const FGuid& RoomId)
