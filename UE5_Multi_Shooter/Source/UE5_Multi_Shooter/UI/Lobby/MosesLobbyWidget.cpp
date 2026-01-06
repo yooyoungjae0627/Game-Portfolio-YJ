@@ -312,35 +312,31 @@ void UMosesLobbyWidget::RefreshRightPanelControlsByRole()
 	const bool bInRoom = PS->GetRoomId().IsValid() || bPendingEnterRoom_UIOnly;
 	const bool bIsHost = PS->IsRoomHost();
 
-	// ✅ Start 버튼: 호스트만
+	// 전환 중이면, Host/Client 구분 UI를 잠깐이라도 보여주지 않기
+	const bool bAllowRoleSpecificUI = (bInRoom && !bPendingEnterRoom_UIOnly);
+
 	if (Button_StartGame)
 	{
-		Button_StartGame->SetVisibility((bInRoom && bIsHost) ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+		Button_StartGame->SetVisibility((bAllowRoleSpecificUI && bIsHost) ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
 	}
 
-	// ✅ Ready: 호스트 제외
 	if (CheckBox_Ready)
 	{
-		const bool bShowReady = (bInRoom && !bIsHost);
+		const bool bShowReady = (bAllowRoleSpecificUI && !bIsHost);
 		CheckBox_Ready->SetVisibility(bShowReady ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
-		CheckBox_Ready->SetIsEnabled(bInRoom && !bIsHost && !bPendingEnterRoom_UIOnly);
+		CheckBox_Ready->SetIsEnabled(bShowReady);
 	}
 
-	// ✅ Leave: 방 안이면 표시
 	if (Button_LeaveRoom)
 	{
-		Button_LeaveRoom->SetVisibility(bInRoom ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
-		Button_LeaveRoom->SetIsEnabled(bInRoom && !bPendingEnterRoom_UIOnly);
+		Button_LeaveRoom->SetVisibility(bAllowRoleSpecificUI ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+		Button_LeaveRoom->SetIsEnabled(bAllowRoleSpecificUI);
 	}
 
-	// ✅✅✅ 요구사항: Host/ClientPanel 정책
-	// Host(방 생성자): ClientPanel Collapsed
-	// 참가 클라:        ClientPanel SelfHitTestInvisible
 	if (ClientPanel)
 	{
-		if (!bInRoom)
+		if (!bAllowRoleSpecificUI)
 		{
-			// 방 밖이면 의미 없으니 안전하게 닫음
 			ClientPanel->SetVisibility(ESlateVisibility::Collapsed);
 		}
 		else
@@ -356,14 +352,12 @@ void UMosesLobbyWidget::RefreshRightPanelControlsByRole()
 
 void UMosesLobbyWidget::HandleRoomStateChanged_UI()
 {
-	// 개발자 주석:
 	// - Room 목록/멤버 변경 같은 전광판 이벤트
 	RefreshAll_UI();
 }
 
 void UMosesLobbyWidget::HandlePlayerStateChanged_UI()
 {
-	// 개발자 주석:
 	// - PS.RoomId 복제 도착이 "방 입장 확정" 타이밍이다.
 	// - 이때만 Pending을 해제한다 (Ok 수신 시점에는 절대 해제 금지)
 	const AMosesPlayerState* PS = GetMosesPS();
@@ -487,7 +481,6 @@ bool UMosesLobbyWidget::CanStartGame_UIOnly() const
 		return false;
 	}
 
-	// 개발자 주석:
 	// - 서버 정책과 동일해야 한다.
 	// - "호스트 제외" 전원 Ready 이면 Start 가능
 	return Room->IsAllReady();
@@ -536,7 +529,6 @@ void UMosesLobbyWidget::OnClicked_StartGame()
 
 void UMosesLobbyWidget::OnReadyChanged(bool bIsChecked)
 {
-	// 개발자 주석:
 	// - Pending 중에는 Ready 조작 금지 (UI만 방 안처럼 보이는 상태)
 	if (bPendingEnterRoom_UIOnly)
 	{
@@ -588,7 +580,6 @@ void UMosesLobbyWidget::OnRoomItemClicked(UObject* ClickedItem)
 		return;
 	}
 
-	// 개발자 주석:
 	// - 클라 1차 프리체크 (방 가득 찼으면 RPC 보내지 않음)
 	const AMosesLobbyGameState* LGS = GetWorld() ? GetWorld()->GetGameState<AMosesLobbyGameState>() : nullptr;
 	if (LGS)
@@ -623,7 +614,6 @@ AMosesPlayerController* UMosesLobbyWidget::GetMosesPC() const
 
 AMosesPlayerState* UMosesLobbyWidget::GetMosesPS() const
 {
-	// 개발자 주석:
 	// - UE 버전에 따라 GetOwningPlayerState<T>()가 없거나 템플릿이 꼬이는 케이스가 있다.
 	// - 항상 안전하게 Cast로 통일한다.
 	return Cast<AMosesPlayerState>(GetOwningPlayerState());
@@ -698,7 +688,6 @@ void UMosesLobbyWidget::OnPendingEnterRoomTimeout_UIOnly()
 
 void UMosesLobbyWidget::HandleJoinRoomResult_UI(EMosesRoomJoinResult Result, const FGuid& RoomId)
 {
-	// 개발자 주석:
 	// - Ok = 서버 승인. 최종 전환은 PS.RoomId 복제 도착으로 확정.
 	// - Ok에서 Pending을 풀면 Rep 도착 전 순간에 Left로 되돌아가 "깜빡임"이 생긴다.
 	if (Result == EMosesRoomJoinResult::Ok)
@@ -754,6 +743,10 @@ void UMosesLobbyWidget::SetRulesViewMode(bool bEnable)
 		SetVisSafe(LeftPanel, ESlateVisibility::Collapsed);
 		SetVisSafe(RightPanel, ESlateVisibility::Collapsed);
 		SetVisSafe(CharacterSelectedButtonsBox, ESlateVisibility::Collapsed);
+
+		SetVisSafe(Button_StartGame, ESlateVisibility::Collapsed);
+		SetVisSafe(ClientPanel, ESlateVisibility::Collapsed);
+
 
 		// - 나가기 버튼/대화 UI는 켜기
 		SetVisSafe(Btn_ExitDialogue, ESlateVisibility::Visible);
