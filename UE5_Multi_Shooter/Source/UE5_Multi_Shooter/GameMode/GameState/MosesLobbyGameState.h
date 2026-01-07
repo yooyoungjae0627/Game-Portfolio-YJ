@@ -6,6 +6,7 @@
 #include "Net/Serialization/FastArraySerializer.h"
 #include "MosesLobbyGameState.generated.h"
 
+class UMosesDialogueLineDataAsset;
 class AMosesPlayerState;
 class UMosesLobbyLocalPlayerSubsystem;
 
@@ -182,9 +183,24 @@ public:
 	void ServerEnterLobbyDialogue();
 	void ServerExitLobbyDialogue();
 	void ServerSetSubState(EDialogueSubState NewSubState, float NewRemainingTime, bool bInNPCSpeaking);
+	
+	// 서버 전용: "다음 줄"로 진행 
+	void ServerAdvanceLine();
 	void ServerAdvanceLine(int32 NextLineIndex, float Duration, bool bInNPCSpeaking);
 
+	// ===========================
+	// Dialogue (Server Machine)
+	// ===========================
+	// 
+	// 서버 전용: Dialogue 시작 (DataAsset 확정)
+	void ServerBeginDialogue(UMosesDialogueLineDataAsset* InData);
+
+	// 서버 전용: Pause / Resume / 기타 Flow 전환
+	void ServerSetFlowState(EDialogueFlowState NewState);
+
 protected:
+	virtual void Tick(float DeltaSeconds) override;
+
 	// ---------------------------
 	// RepNotify (backup)
 	// ---------------------------
@@ -196,6 +212,15 @@ protected:
 	void OnRep_RoomList();
 
 private:
+	// ---------------------------
+	// RepNotify (이벤트만)
+	// ---------------------------
+	UFUNCTION()
+	void OnRep_GamePhase();
+
+	UFUNCTION()
+	void OnRep_DialogueNetState();
+
 	// ---------------------------
 	// Internal helpers
 	// ---------------------------
@@ -229,13 +254,20 @@ private:
 	void BroadcastAll_ServerToo();
 
 	// ---------------------------
-	// RepNotify (이벤트만)
+	// Dialogue Machine (Server-only)
 	// ---------------------------
-	UFUNCTION()
-	void OnRep_GamePhase();
+	void TickDialogue(float DeltaSeconds);
+	void AdvanceDialogueLine();
+	void AdvanceDialogueLine_Internal();
 
-	UFUNCTION()
-	void OnRep_DialogueNetState();
+	// DoD 로그 유틸 (서버 전용)
+	void LogDialogueSpeaking_DoD() const;
+	void LogDialoguePause_DoD() const;
+	void LogDialogueResume_DoD() const;
+
+	void ServerApplyPhase(EGamePhase NewPhase, EDialogueCommandType CmdType);
+	void ServerStampCommand(EDialogueCommandType CmdType);
+	void ServerResetDialogueNetState_KeepSeq(EDialogueCommandType CmdType);
 
 private:
 	// ---------------------------
@@ -252,4 +284,12 @@ private:
 
 	UPROPERTY(ReplicatedUsing = OnRep_DialogueNetState)
 	FDialogueNetState DialogueNetState;
+
+	// 서버 전용 데이터 (복제 ❌)
+	UPROPERTY()
+	TObjectPtr<UMosesDialogueLineDataAsset> DialogueData;
+
+	// 서버 전용: Speaking 로그 스팸 방지용 (복제 ❌)
+	UPROPERTY()
+	float DialogueSpeakingLogCooldown = 0.0f;
 };

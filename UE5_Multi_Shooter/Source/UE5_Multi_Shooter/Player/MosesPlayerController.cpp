@@ -493,6 +493,125 @@ void AMosesPlayerController::Server_TravelToLobby_Implementation()
 	DoServerTravelToLobby();
 }
 
+void AMosesPlayerController::Server_DialogueAdvanceLine_Implementation()
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	AMosesLobbyGameMode* LobbyGM = GetWorld() ? GetWorld()->GetAuthGameMode<AMosesLobbyGameMode>() : nullptr;
+	if (!LobbyGM)
+	{
+		return;
+	}
+
+	LobbyGM->HandleDialogueAdvanceLineRequest(this);
+}
+
+void AMosesPlayerController::Server_DialogueSetFlowState_Implementation(EDialogueFlowState NewState)
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	AMosesLobbyGameMode* LobbyGM = GetWorld() ? GetWorld()->GetAuthGameMode<AMosesLobbyGameMode>() : nullptr;
+	if (!LobbyGM)
+	{
+		return;
+	}
+
+	LobbyGM->HandleDialogueSetFlowStateRequest(this, NewState);
+}
+
+void AMosesPlayerController::Server_RequestEnterLobbyDialogue_Implementation()
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	AMosesLobbyGameState* LGS = GetLobbyGameStateChecked_Log(TEXT("Server_RequestEnterLobbyDialogue"));
+	AMosesPlayerState* PS = GetMosesPlayerStateChecked_Log(TEXT("Server_RequestEnterLobbyDialogue"));
+	if (!LGS || !PS)
+	{
+		return;
+	}
+
+	// =========================================================
+	// Gate Policy (권장)
+	// - 로그인 필요
+	// - 방 소속 필요
+	// - 호스트만 Phase 전환 가능
+	// =========================================================
+	if (!PS->IsLoggedIn())
+	{
+		UE_LOG(LogMosesSpawn, Warning, TEXT("[DOD][Gate][SV] Enter REJECT NotLoggedIn PC=%s"), *GetNameSafe(this));
+		return;
+	}
+
+	if (!PS->GetRoomId().IsValid())
+	{
+		UE_LOG(LogMosesSpawn, Warning, TEXT("[DOD][Gate][SV] Enter REJECT NotInRoom PC=%s"), *GetNameSafe(this));
+		return;
+	}
+
+	if (!PS->IsRoomHost())
+	{
+		UE_LOG(LogMosesSpawn, Warning, TEXT("[DOD][Gate][SV] Enter REJECT NotHost PC=%s"), *GetNameSafe(this));
+		return;
+	}
+
+	if (LGS->GetGamePhase() == EGamePhase::LobbyDialogue)
+	{
+		UE_LOG(LogMosesSpawn, Log, TEXT("[DOD][Gate][SV] Enter SKIP (AlreadyLobbyDialogue)"));
+		return;
+	}
+
+	UE_LOG(LogMosesSpawn, Log, TEXT("[DOD][Gate][SV] Enter ACCEPT PC=%s"), *GetNameSafe(this));
+
+	LGS->ServerEnterLobbyDialogue();
+}
+
+void AMosesPlayerController::Server_RequestExitLobbyDialogue_Implementation()
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	AMosesLobbyGameState* LGS = GetLobbyGameStateChecked_Log(TEXT("Server_RequestExitLobbyDialogue"));
+	AMosesPlayerState* PS = GetMosesPlayerStateChecked_Log(TEXT("Server_RequestExitLobbyDialogue"));
+	if (!LGS || !PS)
+	{
+		return;
+	}
+
+	// 정책(권장): 호스트만 종료 가능
+	if (!PS->GetRoomId().IsValid())
+	{
+		UE_LOG(LogMosesSpawn, Warning, TEXT("[DOD][Gate][SV] Exit REJECT NotInRoom PC=%s"), *GetNameSafe(this));
+		return;
+	}
+
+	if (!PS->IsRoomHost())
+	{
+		UE_LOG(LogMosesSpawn, Warning, TEXT("[DOD][Gate][SV] Exit REJECT NotHost PC=%s"), *GetNameSafe(this));
+		return;
+	}
+
+
+	if (LGS->GetGamePhase() == EGamePhase::Lobby)
+	{
+		UE_LOG(LogMosesSpawn, Log, TEXT("[DOD][Gate][SV] Exit SKIP (AlreadyLobby)"));
+		return;
+	}
+
+	UE_LOG(LogMosesSpawn, Log, TEXT("[DOD][Gate][SV] Exit ACCEPT PC=%s"), *GetNameSafe(this));
+	LGS->ServerExitLobbyDialogue();
+}
+
 void AMosesPlayerController::DoServerTravelToMatch()
 {
 	UWorld* World = GetWorld();

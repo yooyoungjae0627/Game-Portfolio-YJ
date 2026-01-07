@@ -11,6 +11,9 @@ class UMosesLobbyWidget;
 class ALobbyPreviewActor;
 class ACameraActor;
 
+struct FDialogueNetState;
+
+enum class EGamePhase : uint8;
 enum class EMosesRoomJoinResult : uint8;
 
 DECLARE_MULTICAST_DELEGATE(FOnLobbyPlayerStateChanged);
@@ -60,11 +63,6 @@ public:
 	 */
 	void SetLobbyWidget(UMosesLobbyWidget* InWidget);
 
-	// ---------------------------
-	// View mode (로컬 연출 모드)
-	// ---------------------------
-	void EnterRulesView();
-	void ExitRulesView();
 
 	// ---------------------------
 	// UI control (Public API)
@@ -97,10 +95,22 @@ public:
 
 	ELobbyViewMode GetLobbyViewMode() const { return LobbyViewMode; }
 
+	// ---------------------------
+	//  UI -> Server Phase Request
+	// ---------------------------
+	void RequestEnterLobbyDialogue();
+	void RequestExitLobbyDialogue();
+
+	// UI(Widget)는 이 이벤트만 보고 패널/버블 Visible만 전환한다.
+	DECLARE_MULTICAST_DELEGATE_OneParam(FOnRulesViewModeChanged, bool /*bEnable*/);
+	FOnRulesViewModeChanged& OnRulesViewModeChanged() { return RulesViewModeChangedEvent; }
+
 	// UI가 구독하는 이벤트
 	FOnLobbyViewModeChanged OnLobbyViewModeChanged;
 
 private:
+	FOnRulesViewModeChanged RulesViewModeChangedEvent;
+
 	// ---------------------------
 	// Internal helpers
 	// ---------------------------
@@ -140,6 +150,17 @@ private:
 	// ---------------------------
 	void RequestPreviewRefreshRetry_NextTick();
 	void ClearPreviewRefreshRetry();
+
+	// ---------------------------
+	// Bind GS events (LateJoin recover)
+	// ---------------------------
+	void BindLobbyGameStateEvents();
+	class AMosesLobbyGameState* GetLobbyGameState() const;
+
+	void HandlePhaseChanged(EGamePhase NewPhase);
+	void HandleDialogueStateChanged(const FDialogueNetState& NewState);
+
+	bool bBoundToGameState = false;
 
 	// ---------------------------
 	// State

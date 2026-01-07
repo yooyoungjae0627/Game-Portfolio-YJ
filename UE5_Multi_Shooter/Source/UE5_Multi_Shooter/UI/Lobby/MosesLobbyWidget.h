@@ -12,7 +12,9 @@ class UCheckBox;
 class UListView;
 class UVerticalBox;
 class UHorizontalBox;
+class USizeBox;
 
+class UMosesDialogueBubbleWidget;
 class UMosesLobbyLocalPlayerSubsystem;
 class AMosesPlayerController;
 class AMosesPlayerState;
@@ -57,6 +59,9 @@ protected:
 	void HandleRoomStateChanged_UI();
 	void HandlePlayerStateChanged_UI();
 
+	// RulesView 모드 변경 이벤트 핸들러 (Subsystem -> Widget)
+	void HandleRulesViewModeChanged_UI(bool bEnable);
+
 	// ---------------------------
 	// Create Room Popup
 	// ---------------------------
@@ -98,7 +103,6 @@ protected:
 	UFUNCTION()
 	void OnClicked_ExitDialogue();
 
-
 	void OnRoomItemClicked(UObject* ClickedItem);
 
 	// ---------------------------
@@ -123,18 +127,16 @@ protected:
 	void HandleJoinRoomResult_UI(EMosesRoomJoinResult Result, const FGuid& RoomId);
 	FString JoinFailReasonToText(EMosesRoomJoinResult Result) const;
 
-
 	/** Host인지 */
 	bool IsLocalHost() const;
 
 public:
-	/** 
-	 *  RulesView(게임 진행 방법 보기) 진입/복귀 시
-	 *  Widget 내부 패널/버튼 가시성만 책임진다.
-	 *  (카메라 전환/상태 판단은 Subsystem)
+	/**
+	 * RulesView 진입/복귀 시
+	 * - Widget 내부 패널/버튼/말풍선 가시성만 책임진다.
+	 * - 카메라 전환/상태 판단은 Subsystem
 	 */
 	void SetRulesViewMode(bool bEnable);
-
 
 private:
 	// ---------------------------
@@ -178,6 +180,10 @@ private:
 
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UVerticalBox> CharacterSelectedButtonsBox = nullptr;
+
+	// ✅ 말풍선(대화 자막) — RulesView에서만 Visible로 켠다.
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<USizeBox> DialogueBubbleWidget = nullptr;
 
 private:
 	// ---------------------------

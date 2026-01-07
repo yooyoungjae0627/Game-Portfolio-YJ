@@ -101,6 +101,15 @@ public:
 	UFUNCTION(Client, Reliable)
 	void Client_JoinRoomResult(EMosesRoomJoinResult Result, const FGuid& RoomId);
 
+	// ---------------------------
+	// Phase Request Gate
+	// ---------------------------
+	UFUNCTION(Server, Reliable)
+	void Server_RequestEnterLobbyDialogue();
+
+	UFUNCTION(Server, Reliable)
+	void Server_RequestExitLobbyDialogue();
+
 protected:
 	// ---------------------------
 	// Lifecycle (Local UI / Camera)
@@ -120,6 +129,15 @@ private:
 
 	UFUNCTION(Server, Reliable)
 	void Server_TravelToLobby();
+
+	// ---------------------------
+	// Dialogue (Client -> Server)
+	// ---------------------------
+	UFUNCTION(Server, Reliable)
+	void Server_DialogueAdvanceLine();
+
+	UFUNCTION(Server, Reliable)
+	void Server_DialogueSetFlowState(EDialogueFlowState NewState);
 
 	void DoServerTravelToMatch();
 	void DoServerTravelToLobby();
@@ -149,6 +167,7 @@ private:
 	// ---------------------------
 	void ApplyLobbyInputMode_LocalOnly();
 	void RestoreNonLobbyInputMode_LocalOnly();
+
 
 private:
 	// ---------------------------

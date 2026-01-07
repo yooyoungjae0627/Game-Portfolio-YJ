@@ -7,6 +7,7 @@
 #include "Components/CanvasPanelSlot.h"
 #include "Components/HorizontalBox.h"
 #include "Components/Overlay.h"
+#include "Components/SizeBox.h"
 
 #include "Engine/LocalPlayer.h"
 #include "Engine/World.h"
@@ -19,6 +20,7 @@
 #include "UE5_Multi_Shooter/GameMode/GameState/MosesLobbyGameState.h"
 #include "UE5_Multi_Shooter/System/MosesLobbyLocalPlayerSubsystem.h"
 
+#include "UE5_Multi_Shooter/UI/Lobby/MosesDialogueBubbleWidget.h"
 #include "UE5_Multi_Shooter/UI/Lobby/MSCreateRoomPopupWidget.h"
 #include "UE5_Multi_Shooter/UI/Lobby/MSLobbyRoomItemWidget.h"
 
@@ -30,12 +32,21 @@ void UMosesLobbyWidget::NativeConstruct()
 {
 	Super::NativeConstruct();
 
-	// 개발자 주석:
-	// - OwningPlayer/LocalPlayer가 NULL이면 CreateWidget을 GetWorld로 만든 케이스 가능성이 높다.
 	UE_LOG(LogTemp, Warning, TEXT("[LobbyUI] NativeConstruct OwningPlayer=%s OwningLP=%s World=%s"),
 		*GetNameSafe(GetOwningPlayer()),
 		*GetNameSafe(GetOwningLocalPlayer()),
 		*GetNameSafe(GetWorld()));
+
+	// 기본: 로비 시작 시 말풍선은 무조건 숨김
+	if (DialogueBubbleWidget)
+	{
+		UE_LOG(LogMosesSpawn, Warning, TEXT("[LobbyUI] DialogueBubbleWidget OK = %s"), *GetNameSafe(DialogueBubbleWidget));
+		DialogueBubbleWidget->SetVisibility(ESlateVisibility::Collapsed);
+	}
+	else
+	{
+		UE_LOG(LogMosesSpawn, Error, TEXT("[LobbyUI] DialogueBubbleWidget is NULL. (BindWidgetOptional failed)"));
+	}
 
 	if (RightPanel)
 	{
@@ -56,6 +67,8 @@ void UMosesLobbyWidget::NativeConstruct()
 	BindLobbyButtons();
 	BindListViewEvents();
 	BindSubsystemEvents();
+
+	// RulesView OFF로 시작 (패널/버튼/말풍선 포함)
 	SetRulesViewMode(false);
 
 	RefreshAll_UI();
@@ -189,10 +202,12 @@ void UMosesLobbyWidget::BindSubsystemEvents()
 	LobbyLPS->OnLobbyPlayerStateChanged().RemoveAll(this);
 	LobbyLPS->OnLobbyRoomStateChanged().RemoveAll(this);
 	LobbyLPS->OnLobbyJoinRoomResult().RemoveAll(this);
+	LobbyLPS->OnRulesViewModeChanged().RemoveAll(this);
 
 	LobbyLPS->OnLobbyPlayerStateChanged().AddUObject(this, &UMosesLobbyWidget::HandlePlayerStateChanged_UI);
 	LobbyLPS->OnLobbyRoomStateChanged().AddUObject(this, &UMosesLobbyWidget::HandleRoomStateChanged_UI);
 	LobbyLPS->OnLobbyJoinRoomResult().AddUObject(this, &UMosesLobbyWidget::HandleJoinRoomResult_UI);
+	LobbyLPS->OnRulesViewModeChanged().AddUObject(this, &UMosesLobbyWidget::HandleRulesViewModeChanged_UI);
 }
 
 void UMosesLobbyWidget::UnbindSubsystemEvents()
@@ -205,6 +220,7 @@ void UMosesLobbyWidget::UnbindSubsystemEvents()
 	LobbyLPS->OnLobbyPlayerStateChanged().RemoveAll(this);
 	LobbyLPS->OnLobbyRoomStateChanged().RemoveAll(this);
 	LobbyLPS->OnLobbyJoinRoomResult().RemoveAll(this);
+	LobbyLPS->OnRulesViewModeChanged().RemoveAll(this);
 }
 
 // ---------------------------
@@ -369,6 +385,12 @@ void UMosesLobbyWidget::HandlePlayerStateChanged_UI()
 	}
 
 	RefreshAll_UI();
+}
+
+void UMosesLobbyWidget::HandleRulesViewModeChanged_UI(bool bEnable)
+{
+	UE_LOG(LogMosesSpawn, Log, TEXT("[LobbyUI] HandleRulesViewModeChanged_UI bEnable=%d"), bEnable ? 1 : 0);
+	SetRulesViewMode(bEnable);
 }
 
 // ---------------------------
@@ -719,10 +741,10 @@ FString UMosesLobbyWidget::JoinFailReasonToText(EMosesRoomJoinResult Result) con
 
 void UMosesLobbyWidget::SetRulesViewMode(bool bEnable)
 {
-	// - 버튼 왕복 10회 눌러도 UI 꼬임 없게, "현재 상태면 중복 적용 금지"
-	
 	if (bRulesViewEnabled == bEnable)
 	{
+		UE_LOG(LogMosesSpawn, Warning, TEXT("[LobbyUI] SetRulesViewMode SKIP Already=%d Bubble=%s"),
+			bEnable ? 1 : 0, *GetNameSafe(DialogueBubbleWidget));
 		return;
 	}
 
@@ -736,33 +758,38 @@ void UMosesLobbyWidget::SetRulesViewMode(bool bEnable)
 			}
 		};
 
+	UE_LOG(LogMosesSpawn, Warning, TEXT("[LobbyUI] SetRulesViewMode APPLY=%d Bubble=%s"),
+		bEnable ? 1 : 0, *GetNameSafe(DialogueBubbleWidget));
+
 	if (bEnable)
 	{
-		// RulesView ON:
-		// - 로비 패널 싹 숨기기
 		SetVisSafe(LeftPanel, ESlateVisibility::Collapsed);
 		SetVisSafe(RightPanel, ESlateVisibility::Collapsed);
 		SetVisSafe(CharacterSelectedButtonsBox, ESlateVisibility::Collapsed);
-
 		SetVisSafe(Button_StartGame, ESlateVisibility::Collapsed);
 		SetVisSafe(ClientPanel, ESlateVisibility::Collapsed);
 
-
-		// - 나가기 버튼/대화 UI는 켜기
 		SetVisSafe(Btn_ExitDialogue, ESlateVisibility::Visible);
-		//SetVisSafe(DialogueUIRoot, ESlateVisibility::Visible);
+
+		// ✅ Bubble ON
+		SetVisSafe(DialogueBubbleWidget, ESlateVisibility::SelfHitTestInvisible);
+
+		UE_LOG(LogMosesSpawn, Warning, TEXT("[LobbyUI] Bubble After ON Vis=%d"),
+			DialogueBubbleWidget ? (int32)DialogueBubbleWidget->GetVisibility() : -1);
 	}
 	else
 	{
-		// RulesView OFF:
-		// - 로비 패널 원복
 		SetVisSafe(LeftPanel, ESlateVisibility::SelfHitTestInvisible);
 		SetVisSafe(RightPanel, ESlateVisibility::SelfHitTestInvisible);
 		SetVisSafe(CharacterSelectedButtonsBox, ESlateVisibility::SelfHitTestInvisible);
 
-		// - 나가기/대화 UI 끄기
 		SetVisSafe(Btn_ExitDialogue, ESlateVisibility::Collapsed);
-		//SetVisSafe(DialogueUIRoot, ESlateVisibility::Collapsed);
+
+		// ✅ Bubble OFF
+		SetVisSafe(DialogueBubbleWidget, ESlateVisibility::Collapsed);
+
+		UE_LOG(LogMosesSpawn, Warning, TEXT("[LobbyUI] Bubble After OFF Vis=%d"),
+			DialogueBubbleWidget ? (int32)DialogueBubbleWidget->GetVisibility() : -1);
 	}
 }
 
@@ -775,7 +802,7 @@ void UMosesLobbyWidget::OnClicked_GameRules()
 		return;
 	}
 
-	Subsys->EnterRulesView_UIOnly();
+	Subsys->EnterRulesView_UIOnly(); // 즉시 카메라 이동
 }
 
 void UMosesLobbyWidget::OnClicked_ExitDialogue()
@@ -787,5 +814,5 @@ void UMosesLobbyWidget::OnClicked_ExitDialogue()
 		return;
 	}
 
-	Subsys->ExitRulesView_UIOnly();
+	Subsys->ExitRulesView_UIOnly(); // 즉시 카메라 복귀
 }

@@ -1,10 +1,12 @@
 ﻿#include "MosesLobbyGameState.h"
 
+#include "UE5_Multi_Shooter/Data/MosesDialogueScriptDataAsset.h"
+#include "UE5_Multi_Shooter/MosesDialogueTypes.h"
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
 #include "UE5_Multi_Shooter/MosesGameInstance.h"
 #include "UE5_Multi_Shooter/Player/MosesPlayerState.h"
 #include "UE5_Multi_Shooter/System/MosesLobbyLocalPlayerSubsystem.h"
-
+#include "UE5_Multi_Shooter/Data/MosesDialogueLineDataAsset.h"
 #include "UE5_Multi_Shooter/GameMode/GameMode/MosesLobbyGameMode.h"
 
 #include "Net/UnrealNetwork.h"
@@ -51,6 +53,8 @@ AMosesLobbyGameState::AMosesLobbyGameState()
 	// - GameState는 기본적으로 복제되지만,
 	//   명시적으로 bReplicates=true 해두면 의도를 분명히 한다.
 	bReplicates = true;
+	PrimaryActorTick.bCanEverTick = true;
+	PrimaryActorTick.bStartWithTickEnabled = true;
 }
 
 void AMosesLobbyGameState::PostInitializeComponents()
@@ -794,87 +798,58 @@ void FMosesLobbyRoomItem::PreReplicatedRemove(const FMosesLobbyRoomList& InArray
 
 void AMosesLobbyGameState::ServerEnterLobbyDialogue()
 {
-	// - 이 함수는 "서버만" 실행하는 상태 변경 함수다.
-	// - Lobby -> LobbyDialogue로 전환하면서, 대화 전광판(DialogueNetState)의 초기값을 세팅한다.
-	// - 클라는 이 함수를 직접 호출하면 안 되고, 반드시 PlayerController의 Server RPC를 통해
-	//   서버가 "판정"한 뒤에 여기로 들어오는 흐름을 지켜야 한다.
-
-	// - 서버 권한(Authority) 체크는 1차 안전장치.
-	// - 클라가 실수로 호출해도 그냥 return.
-	if (!IsServerAuth())
+	if (!HasAuthority())
 	{
 		return;
 	}
 
-	// 이미 대화 모드면 중복 진입 금지
 	if (GamePhase == EGamePhase::LobbyDialogue)
 	{
 		return;
 	}
 
-	UE_LOG(LogMosesSpawn, Log, TEXT("[Phase] Lobby -> LobbyDialogue"));
+	// 1) Phase 변경(서버 단일진실)
+	ServerApplyPhase(EGamePhase::LobbyDialogue, EDialogueCommandType::EnterDialogue);
 
-	// - 단일진실 변경: GamePhase는 서버가 확정한다.
-	// - 이 값은 Replicated라서 클라이언트들에게 자동으로 전달되고,
-	//   클라에서는 OnRep_GamePhase()가 호출된다.
-	GamePhase = EGamePhase::LobbyDialogue;
+	// 2) 전광판 초기값(예시)
+	DialogueNetState.LineIndex = 0;
+	DialogueNetState.FlowState = EDialogueFlowState::Speaking;
+	DialogueNetState.RemainingTime = 3.0f;
+	DialogueNetState.RateScale = 1.0f;
 
-	// - 대화 전광판 초기 세팅.
-	// - 실제 프로젝트에서는 DataTable/QuestState/DialogueScript 등에서
-	//   어떤 대사를 틀지 결정한 후 여기 값들을 세팅하면 된다.
-	DialogueNetState.SubState = EDialogueSubState::Listening; // (예) "듣는 중" 상태로 시작
-	DialogueNetState.LineIndex = 0;                           // 첫 번째 라인부터
-	DialogueNetState.RemainingTime = 3.0f;                    // (예) 3초짜리 라인/타이머
-	DialogueNetState.bNPCSpeaking = true;                     // (예) NPC가 말하는 연출
+	UE_LOG(LogMosesSpawn, Log, TEXT("[DOD][Dialogue][SV] Enter Line=%d Flow=%d T=%.2f Rate=%.2f"),
+		DialogueNetState.LineIndex,
+		(int32)DialogueNetState.FlowState,
+		DialogueNetState.RemainingTime,
+		DialogueNetState.RateScale);
 
-	// - 서버는 RepNotify(OnRep)가 "자기 자신에게는" 안 온다.
-	// - 그래서 서버도 동일한 흐름(이벤트 기반 UI/연출)을 유지하려면
-	//   상태 변경 직후 서버에서 직접 Broadcast를 한 번 쏴줘야 한다.
-	// - 이게 없으면 "서버에서 플레이 중인 Listen Server" 같은 환경에서
-	//   서버 화면 UI가 갱신이 안 되는 현상이 생길 수 있다.
+	// 3) 서버도 이벤트 흐름 통일
 	BroadcastAll_ServerToo();
-
-	// - Replication은 기본적으로 NetUpdate 주기에 맞춰 전송된다.
-	// - ForceNetUpdate()는 "이 액터는 곧바로 업데이트할 가치가 있다"는 힌트를 주는 함수.
-	// - 즉, 체감상 버튼 누른 직후 상태 전환이 더 빨리 도착하게(즉시성 향상) 도와준다.
-	// - (중요) 무조건 즉시 전송을 보장하는 마법은 아니고, 네트워크 상황/엔진 스케줄에 따라 달라진다.
 	ForceNetUpdate();
 }
 
 void AMosesLobbyGameState::ServerExitLobbyDialogue()
 {
-	// - LobbyDialogue -> Lobby로 복귀시키는 서버 전용 함수.
-	// - 대화 상태를 "완전히 리셋"해서 late join 포함, 모든 클라가
-	//   유령 대화 상태를 보지 않도록 만든다.
-	if (!IsServerAuth())
+	if (!HasAuthority())
 	{
 		return;
 	}
 
-	// - 이미 Lobby면 Exit할 게 없으므로 중복 호출 방지.
-	// - (예) Exit 버튼 연타 / 중복 RPC에 대한 방어.
 	if (GamePhase == EGamePhase::Lobby)
 	{
 		return;
 	}
 
-	UE_LOG(LogMosesSpawn, Log, TEXT("[Phase] LobbyDialogue -> Lobby"));
+	// 1) Phase 복귀
+	ServerApplyPhase(EGamePhase::Lobby, EDialogueCommandType::ExitDialogue);
 
-	// - 서버가 phase를 Lobby로 확정한다.
-	// - 클라는 이 값이 복제되면서 OnRep_GamePhase()를 통해 UI/카메라 복귀를 수행한다.
-	GamePhase = EGamePhase::Lobby;
+	// 2) 전광판 완전 리셋(유령 상태 방지)
+	ServerResetDialogueNetState_KeepSeq(EDialogueCommandType::ExitDialogue);
 
-	// - 전광판(대화 상태) 완전 초기화.
-	// - "Phase는 Lobby인데 DialogueNetState가 남아있는" 이상 상태를 방지한다.
-	// - 특히 LateJoin(늦게 접속한 플레이어)이 들어왔을 때
-	//   복제된 구조체가 이상한 값을 갖고 있으면 UI가 꼬이기 쉽다.
-	DialogueNetState = FDialogueNetState();
-
-	// - 서버도 즉시 UI/연출 이벤트를 받게 하기 위한 Broadcast.
 	BroadcastAll_ServerToo();
-	// - 리셋된 상태를 빠르게 전송하도록 힌트를 준다.
 	ForceNetUpdate();
 }
+
 
 void AMosesLobbyGameState::ServerSetSubState(EDialogueSubState NewSubState, float NewRemainingTime, bool bInNPCSpeaking)
 {
@@ -912,6 +887,32 @@ void AMosesLobbyGameState::ServerSetSubState(EDialogueSubState NewSubState, floa
 	ForceNetUpdate();
 }
 
+void AMosesLobbyGameState::ServerAdvanceLine()
+{
+	if (!IsServerAuth())
+	{
+		return;
+	}
+
+	if (!DialogueData)
+	{
+		UE_LOG(LogMosesSpawn, Warning, TEXT("[Dialogue][SV] AdvanceLine REJECT (NoDialogueData)"));
+		return;
+	}
+
+	// 정책: 대화 모드에서만
+	if (GamePhase != EGamePhase::LobbyDialogue)
+	{
+		UE_LOG(LogMosesSpawn, Warning, TEXT("[Dialogue][SV] AdvanceLine REJECT (NotLobbyDialogue) Phase=%d"), (int32)GamePhase);
+		return;
+	}
+
+	// 정책(선택): Pause 중에는 수동 진행 금지하고 싶으면 여기서 막기
+	// if (DialogueNetState.FlowState == EDialogueFlowState::Paused) { return; }
+
+	AdvanceDialogueLine_Internal(); // ✅ 이미 네가 만들어둔 "서버 틱/진행 정답" 사용
+}
+
 void AMosesLobbyGameState::ServerAdvanceLine(int32 NextLineIndex, float Duration, bool bInNPCSpeaking)
 {
 	// - 대화 라인을 "다음 줄로 넘기는" 서버 전용 함수.
@@ -923,26 +924,116 @@ void AMosesLobbyGameState::ServerAdvanceLine(int32 NextLineIndex, float Duration
 		return;
 	}
 
-	// - 라인 인덱스는 음수면 배열 접근/DT row 접근에서 크래시 날 수 있다.
-	// - 최소 0으로 보정(서버 최종 방어).
-	DialogueNetState.LineIndex = FMath::Max(0, NextLineIndex);
+	// 정책: DialogueData 없으면 진행 불가
+	if (!DialogueData)
+	{
+		return;
+	}
 
-	// - Duration도 음수면 UI 타이머 깨짐 -> 최소 0으로 보정.
-	DialogueNetState.RemainingTime = FMath::Max(0.0f, Duration);
+	// WaitingInput에서만 Next 허용하고 싶으면 게이트 추가 가능
+	// if (DialogueNetState.FlowState != EDialogueFlowState::WaitingInput) { return; }
 
-	// - 말하는 주체(연출용)
-	DialogueNetState.bNPCSpeaking = bInNPCSpeaking;
+	const int32 NextIndex = DialogueNetState.LineIndex + 1;
+	const FMosesDialogueLine* NextLine = DialogueData->GetLine(NextIndex);
 
-	UE_LOG(LogMosesSpawn, Log, TEXT("[DialogueState] Sub=%d Line=%d T=%.2f NPC=%d"),
-		(int32)DialogueNetState.SubState,
-		DialogueNetState.LineIndex,
-		DialogueNetState.RemainingTime,
-		DialogueNetState.bNPCSpeaking ? 1 : 0
-	);
+	if (!NextLine)
+	{
+		// 끝
+		DialogueNetState.FlowState = EDialogueFlowState::WaitingInput;
+		DialogueNetState.RemainingTime = 0.f;
+		ServerStampCommand(EDialogueCommandType::AdvanceLine);
 
-	// - 서버에도 즉시 이벤트 전달 + 빠른 복제 요청
+		BroadcastAll_ServerToo();
+		ForceNetUpdate();
+		return;
+	}
+
+	DialogueNetState.LineIndex = NextIndex;
+	DialogueNetState.FlowState = EDialogueFlowState::Speaking;
+	DialogueNetState.SubState = EDialogueSubState::Speaking;
+	DialogueNetState.RemainingTime = NextLine->Duration;
+
+	ServerStampCommand(EDialogueCommandType::AdvanceLine);
+
 	BroadcastAll_ServerToo();
 	ForceNetUpdate();
+}
+
+void AMosesLobbyGameState::ServerBeginDialogue(UMosesDialogueLineDataAsset* InData)
+{
+	if (!HasAuthority() || !InData)
+	{
+		return;
+	}
+
+	DialogueData = InData;
+
+	DialogueNetState.LineIndex = 0;
+	DialogueNetState.FlowState = EDialogueFlowState::Speaking;
+	DialogueNetState.SubState = EDialogueSubState::Speaking;
+
+	const FMosesDialogueLine* Line = DialogueData->GetLine(0);
+	DialogueNetState.RemainingTime = Line ? Line->Duration : 0.f;
+
+	// 말하는 주체(연출용) 정책은 네 기존값 그대로 두거나 필요하면 세팅
+	DialogueNetState.bNPCSpeaking = true;
+
+	ServerStampCommand(EDialogueCommandType::EnterDialogue);
+
+	BroadcastAll_ServerToo();
+	ForceNetUpdate();
+}
+
+void AMosesLobbyGameState::ServerSetFlowState(EDialogueFlowState NewState)
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	// 같은 상태면 스킵
+	if (DialogueNetState.FlowState == NewState)
+	{
+		return;
+	}
+
+	// Pause/Resume을 "정답"으로: RemainingTime은 유지, 감소는 TickDialogue의 Speaking 체크로 제어
+	DialogueNetState.FlowState = NewState;
+
+	ServerStampCommand(EDialogueCommandType::SetFlowState);
+
+	// DoD 로그
+	if (NewState == EDialogueFlowState::Paused)
+	{
+		LogDialoguePause_DoD();
+	}
+	else if (NewState == EDialogueFlowState::Speaking)
+	{
+		LogDialogueResume_DoD();
+
+		// Resume 직후 speaking 로그가 바로 보이게(쿨다운 리셋)
+		DialogueSpeakingLogCooldown = 0.0f;
+	}
+
+	BroadcastAll_ServerToo();
+	ForceNetUpdate();
+}
+
+void AMosesLobbyGameState::Tick(float DeltaSeconds)
+{
+	Super::Tick(DeltaSeconds);
+
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	if (GamePhase != EGamePhase::LobbyDialogue)
+	{
+		return;
+	}
+
+	TickDialogue(DeltaSeconds);
 }
 
 // =========================================================
@@ -972,17 +1063,16 @@ void AMosesLobbyGameState::OnRep_GamePhase()
 
 void AMosesLobbyGameState::OnRep_DialogueNetState()
 {
-	// - DialogueNetState 구조체가 복제되어 갱신될 때 호출되는 콜백.
-	// - 역시 여기서 "진행 로직"을 만들면 클라가 서버 역할을 하게 되므로 금지.
-	// - 오로지 "표시/연출"만 트리거한다.
-	UE_LOG(LogMosesSpawn, Log, TEXT("[OnRep] Dialogue Sub=%d Line=%d T=%.2f NPC=%d"),
-		(int32)DialogueNetState.SubState,
+	UE_LOG(LogMosesSpawn, Log,
+		TEXT("[DOD][OnRep] Dialogue Line=%d Flow=%d T=%.2f Rate=%.2f Cmd=%d Seq=%d (LateJoinRecoverPoint)"),
 		DialogueNetState.LineIndex,
+		(int32)DialogueNetState.FlowState,
 		DialogueNetState.RemainingTime,
-		DialogueNetState.bNPCSpeaking ? 1 : 0
+		DialogueNetState.RateScale,
+		(int32)DialogueNetState.LastCommandType,
+		DialogueNetState.LastCommandSeq
 	);
 
-	// - 위젯(자막/초상화/타이머) 또는 Subsystem이 이 이벤트를 받아서 갱신한다.
 	OnDialogueStateChanged.Broadcast(DialogueNetState);
 }
 
@@ -1011,3 +1101,157 @@ void AMosesLobbyGameState::BroadcastAll_ServerToo()
 	OnPhaseChanged.Broadcast(GamePhase);
 	OnDialogueStateChanged.Broadcast(DialogueNetState);
 }
+
+void AMosesLobbyGameState::TickDialogue(float DeltaSeconds)
+{
+	if (DialogueNetState.FlowState != EDialogueFlowState::Speaking)
+	{
+		return; // Pause면 멈춤
+	}
+
+	// RateScale 반영 (0 이하면 멈춤)
+	const float Rate = FMath::Max(0.0f, DialogueNetState.RateScale);
+	const float Delta = DeltaSeconds * Rate;
+
+	DialogueNetState.RemainingTime = FMath::Max(0.0f, DialogueNetState.RemainingTime - Delta);
+
+	// DoD Speaking 로그: 너무 많이 찍히지 않게 쿨다운 방식
+	DialogueSpeakingLogCooldown -= DeltaSeconds;
+	if (DialogueSpeakingLogCooldown <= 0.0f)
+	{
+		LogDialogueSpeaking_DoD();
+		DialogueSpeakingLogCooldown = 0.2f; // 0.2초마다 1번 정도
+	}
+
+	if (DialogueNetState.RemainingTime > 0.f)
+	{
+		return;
+	}
+
+	// 시간이 0이면 다음 라인으로
+	AdvanceDialogueLine_Internal();
+}
+
+void AMosesLobbyGameState::AdvanceDialogueLine()
+{
+	if (!DialogueData)
+	{
+		return;
+	}
+
+	const int32 NextIndex = DialogueNetState.LineIndex + 1;
+	const FMosesDialogueLine* NextLine = DialogueData->GetLine(NextIndex);
+
+	if (!NextLine)
+	{
+		// 대화 종료
+		DialogueNetState.FlowState = EDialogueFlowState::WaitingInput;
+		DialogueNetState.RemainingTime = 0.f;
+	}
+	else
+	{
+		DialogueNetState.LineIndex = NextIndex;
+		DialogueNetState.RemainingTime = NextLine->Duration;
+	}
+
+	// 증거/중복방지용 커맨드 기록
+	ServerStampCommand(EDialogueCommandType::AdvanceLine);
+
+	BroadcastAll_ServerToo();
+	ForceNetUpdate();
+}
+
+void AMosesLobbyGameState::AdvanceDialogueLine_Internal()
+{
+	if (!DialogueData)
+	{
+		return;
+	}
+
+	const int32 NextIndex = DialogueNetState.LineIndex + 1;
+	const FMosesDialogueLine* NextLine = DialogueData->GetLine(NextIndex);
+
+	if (!NextLine)
+	{
+		// 자동 진행 끝: 입력 대기 상태로 (정책)
+		DialogueNetState.FlowState = EDialogueFlowState::WaitingInput;
+		DialogueNetState.RemainingTime = 0.f;
+	}
+	else
+	{
+		DialogueNetState.LineIndex = NextIndex;
+		DialogueNetState.RemainingTime = NextLine->Duration;
+		DialogueNetState.FlowState = EDialogueFlowState::Speaking;
+		DialogueNetState.SubState = EDialogueSubState::Speaking;
+	}
+
+	ServerStampCommand(EDialogueCommandType::AdvanceLine);
+
+	BroadcastAll_ServerToo();
+	ForceNetUpdate();
+}
+
+void AMosesLobbyGameState::ServerStampCommand(EDialogueCommandType CmdType)
+{
+	check(HasAuthority());
+
+	DialogueNetState.LastCommandType = CmdType;
+	DialogueNetState.LastCommandSeq += 1;
+
+	UE_LOG(LogMosesSpawn, Log, TEXT("[DOD][Cmd][SV] Type=%d Seq=%d"),
+		(int32)DialogueNetState.LastCommandType,
+		DialogueNetState.LastCommandSeq);
+}
+
+void AMosesLobbyGameState::ServerApplyPhase(EGamePhase NewPhase, EDialogueCommandType CmdType)
+{
+	check(HasAuthority());
+
+	if (GamePhase == NewPhase)
+	{
+		return;
+	}
+
+	GamePhase = NewPhase;
+	ServerStampCommand(CmdType);
+
+	UE_LOG(LogMosesSpawn, Log, TEXT("[DOD][Phase][SV] -> %d"), (int32)GamePhase);
+
+	// 서버는 OnRep가 안 오므로 서버도 동일 이벤트 흐름 유지
+	BroadcastAll_ServerToo();
+	ForceNetUpdate();
+}
+
+void AMosesLobbyGameState::ServerResetDialogueNetState_KeepSeq(EDialogueCommandType CmdType)
+{
+	check(HasAuthority());
+
+	DialogueNetState = FDialogueNetState();
+	DialogueNetState.RateScale = 1.0f;
+
+	ServerStampCommand(CmdType);
+
+	UE_LOG(LogMosesSpawn, Log, TEXT("[DOD][DialogueNetState][SV] Reset"));
+}
+
+void AMosesLobbyGameState::LogDialogueSpeaking_DoD() const
+{
+	UE_LOG(LogMosesSpawn, Log, TEXT("[Dialogue] Speaking line=%d t=%.1f"),
+		DialogueNetState.LineIndex,
+		DialogueNetState.RemainingTime);
+}
+
+void AMosesLobbyGameState::LogDialoguePause_DoD() const
+{
+	UE_LOG(LogMosesSpawn, Log, TEXT("[Dialogue] Pause line=%d t=%.1f"),
+		DialogueNetState.LineIndex,
+		DialogueNetState.RemainingTime);
+}
+
+void AMosesLobbyGameState::LogDialogueResume_DoD() const
+{
+	UE_LOG(LogMosesSpawn, Log, TEXT("[Dialogue] Resume line=%d t=%.1f"),
+		DialogueNetState.LineIndex,
+		DialogueNetState.RemainingTime);
+}
+

@@ -448,3 +448,36 @@ void AMosesLobbyGameMode::ServerSetSubState(int32 NewSubStateAsInt, float Remain
 		GS->ServerSetSubState(NewSub, RemainingTime, bNPCSpeaking);
 	}
 }
+
+void AMosesLobbyGameMode::HandleDialogueAdvanceLineRequest(APlayerController* RequestPC)
+{
+	if (!HasAuthority() || !RequestPC)
+	{
+		return;
+	}
+
+	AMosesLobbyGameState* GS = GetGameState<AMosesLobbyGameState>();
+	if (!GS)
+	{
+		return;
+	}
+
+	// (선택) 권한 게이트: 호스트만 가능 등 정책 넣고 싶으면 여기서
+	GS->ServerAdvanceLine();
+}
+
+void AMosesLobbyGameMode::HandleDialogueSetFlowStateRequest(APlayerController* RequestPC, EDialogueFlowState NewState)
+{
+	if (!HasAuthority() || !RequestPC)
+	{
+		return;
+	}
+
+	AMosesLobbyGameState* GS = GetGameState<AMosesLobbyGameState>();
+	if (!GS)
+	{
+		return;
+	}
+
+	GS->ServerSetFlowState(NewState);
+}

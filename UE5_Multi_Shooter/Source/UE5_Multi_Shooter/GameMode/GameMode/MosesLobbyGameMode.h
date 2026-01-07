@@ -56,6 +56,12 @@ public:
 	void ServerAdvanceLine(int32 NextLineIndex, float Duration, bool bNPCSpeaking);
 	void ServerSetSubState(int32 NewSubStateAsInt, float RemainingTime, bool bNPCSpeaking);
 
+	// ---------------------------
+	// Dialogue Request handlers
+	// ---------------------------
+	void HandleDialogueAdvanceLineRequest(APlayerController* RequestPC);
+	void HandleDialogueSetFlowStateRequest(APlayerController* RequestPC, EDialogueFlowState NewState);
+
 protected:
 	virtual void BeginPlay() override;
 	virtual void PostLogin(APlayerController* NewPlayer) override;
@@ -76,6 +82,7 @@ private:
 	// ---------------------------
 	bool CanEnterLobbyDialogue(APlayerController* RequestPC) const;
 	bool CanExitLobbyDialogue(APlayerController* RequestPC) const;
+
 
 private:
 	UPROPERTY(EditDefaultsOnly, Category = "CharacterSelect")

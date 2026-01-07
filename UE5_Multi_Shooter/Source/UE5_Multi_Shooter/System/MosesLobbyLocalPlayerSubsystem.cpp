@@ -36,11 +36,12 @@ void UMosesLobbyLocalPlayerSubsystem::Initialize(FSubsystemCollectionBase& Colle
 	UE_LOG(LogMosesSpawn, Log, TEXT("[UIFlow] LobbySubsys Initialize LP=%s World=%s"),
 		*GetNameSafe(GetLocalPlayer()),
 		*GetNameSafe(GetWorld()));
+
+	BindLobbyGameStateEvents();
 }
 
 void UMosesLobbyLocalPlayerSubsystem::Deinitialize()
 {
-	// 개발자 주석:
 	// - 로컬플레이어가 내려갈 때 UI도 내려준다.
 	DeactivateLobbyUI();
 
@@ -53,22 +54,40 @@ void UMosesLobbyLocalPlayerSubsystem::Deinitialize()
 	Super::Deinitialize();
 }
 
-void UMosesLobbyLocalPlayerSubsystem::EnterRulesView()
+AMosesLobbyGameState* UMosesLobbyLocalPlayerSubsystem::GetLobbyGameState() const
 {
-	// 1) 상태 변경 (UI 숨김/표시)
-	SetLobbyViewMode(ELobbyViewMode::RulesView);
-
-	// 2) 카메라 전환
-	SetViewTargetToCameraTag(TEXT("LobbyRulesCamera"), /*BlendTime*/0.35f);
+	UWorld* World = GetWorld();
+	return World ? World->GetGameState<AMosesLobbyGameState>() : nullptr;
 }
 
-void UMosesLobbyLocalPlayerSubsystem::ExitRulesView()
+void UMosesLobbyLocalPlayerSubsystem::BindLobbyGameStateEvents()
 {
-	// 1) 상태 변경 (UI 원복)
-	SetLobbyViewMode(ELobbyViewMode::Default);
+	if (bBoundToGameState)
+	{
+		return;
+	}
 
-	// 2) 카메라 원복
-	SetViewTargetToCameraTag(TEXT("LobbyPreviewCamera"), /*BlendTime*/0.35f);
+	AMosesLobbyGameState* LGS = GetLobbyGameState();
+	if (!LGS)
+	{
+		return;
+	}
+
+	bBoundToGameState = true;
+
+	// =========================================================
+	// - GameState OnRep -> Broadcast
+	// - LPS는 이벤트를 받아 "연출" 실행
+	// =========================================================
+	LGS->OnPhaseChanged.AddUObject(this, &UMosesLobbyLocalPlayerSubsystem::HandlePhaseChanged);
+	LGS->OnDialogueStateChanged.AddUObject(this, &UMosesLobbyLocalPlayerSubsystem::HandleDialogueStateChanged);
+
+	UE_LOG(LogMosesSpawn, Log, TEXT("[DOD][LPS] BindLobbyGameStateEvents OK (LateJoinRecoverReady)"));
+
+	// ✅ LateJoin / 초기 접속 직후:
+	// - 이미 복제된 현재 상태가 있을 수 있으므로 "즉시 1회 적용"
+	HandlePhaseChanged(LGS->GetGamePhase());
+	HandleDialogueStateChanged(LGS->GetDialogueNetState());
 }
 
 // =========================================================
@@ -514,7 +533,7 @@ void UMosesLobbyLocalPlayerSubsystem::ApplyRulesViewToWidget(bool bEnable)
 }
 
 // =========================================================
-// UI Only: Rules View
+// UI Only: Rules View (Camera in Subsystem, UI in Widget via Event)
 // =========================================================
 
 void UMosesLobbyLocalPlayerSubsystem::EnterRulesView_UIOnly()
@@ -530,9 +549,7 @@ void UMosesLobbyLocalPlayerSubsystem::EnterRulesView_UIOnly()
 	UE_LOG(LogMosesSpawn, Log, TEXT("[RulesView] Enter"));
 
 	// 1) 카메라 전환
-	ACameraActor* LobbyCam = FindCameraByTag(LobbyPreviewCameraTag);
 	ACameraActor* DialogueCam = FindCameraByTag(DialogueCameraTag);
-
 	if (!DialogueCam)
 	{
 		UE_LOG(LogMosesSpawn, Error, TEXT("[Camera] Dialogue camera not found. Tag=%s"), *DialogueCameraTag.ToString());
@@ -542,8 +559,9 @@ void UMosesLobbyLocalPlayerSubsystem::EnterRulesView_UIOnly()
 		SwitchToCamera(DialogueCam, TEXT("[Camera] LobbyPreview -> DialogueCamera"));
 	}
 
-	// 2) UI 모드 전환 (패널 collapsed + dialogue ui on)
-	ApplyRulesViewToWidget(true);
+	// 2) UI 전환은 위젯이 한다: 이벤트만 쏜다
+	UE_LOG(LogMosesSpawn, Log, TEXT("[RulesView] Broadcast UI Mode: ON"));
+	RulesViewModeChangedEvent.Broadcast(true);
 }
 
 void UMosesLobbyLocalPlayerSubsystem::ExitRulesView_UIOnly()
@@ -569,8 +587,9 @@ void UMosesLobbyLocalPlayerSubsystem::ExitRulesView_UIOnly()
 		SwitchToCamera(LobbyCam, TEXT("[Camera] DialogueCamera -> LobbyPreview"));
 	}
 
-	// 2) UI 원복
-	ApplyRulesViewToWidget(false);
+	// 2) UI 원복은 위젯이 한다: 이벤트만 쏜다
+	UE_LOG(LogMosesSpawn, Log, TEXT("[RulesView] Broadcast UI Mode: OFF"));
+	RulesViewModeChangedEvent.Broadcast(false);
 }
 
 // =========================================================
@@ -618,4 +637,61 @@ void UMosesLobbyLocalPlayerSubsystem::ClearPreviewRefreshRetry()
 	}
 
 	World->GetTimerManager().ClearTimer(PreviewRefreshRetryHandle);
+}
+
+void UMosesLobbyLocalPlayerSubsystem::RequestEnterLobbyDialogue()
+{
+	AMosesPlayerController* PC = GetMosesPC_LocalOnly();
+	if (!PC || !PC->IsLocalController())
+	{
+		return;
+	}
+
+	UE_LOG(LogMosesSpawn, Log, TEXT("[DOD][UI->SV] RequestEnterLobbyDialogue"));
+	PC->Server_RequestEnterLobbyDialogue();
+}
+
+void UMosesLobbyLocalPlayerSubsystem::RequestExitLobbyDialogue()
+{
+	AMosesPlayerController* PC = GetMosesPC_LocalOnly();
+	if (!PC || !PC->IsLocalController())
+	{
+		return;
+	}
+
+	UE_LOG(LogMosesSpawn, Log, TEXT("[DOD][UI->SV] RequestExitLobbyDialogue"));
+	PC->Server_RequestExitLobbyDialogue();
+}
+
+void UMosesLobbyLocalPlayerSubsystem::HandlePhaseChanged(EGamePhase NewPhase)
+{
+	UE_LOG(LogMosesSpawn, Log, TEXT("[DOD][LPS] HandlePhaseChanged Phase=%d"), (int32)NewPhase);
+
+	// =========================================================
+	// "연출은 Phase 기반으로만 실행"
+	// - 버튼 클릭 시점에 UI-only 전환 금지
+	// =========================================================
+	if (NewPhase == EGamePhase::LobbyDialogue)
+	{
+		EnterRulesView_UIOnly();
+	}
+	else
+	{
+		ExitRulesView_UIOnly();
+	}
+}
+
+void UMosesLobbyLocalPlayerSubsystem::HandleDialogueStateChanged(const FDialogueNetState& NewState)
+{
+	UE_LOG(LogMosesSpawn, Verbose, TEXT("[DOD][LPS] Dialogue Line=%d Flow=%d T=%.2f Rate=%.2f Cmd=%d Seq=%d"),
+		NewState.LineIndex,
+		(int32)NewState.FlowState,
+		NewState.RemainingTime,
+		NewState.RateScale,
+		(int32)NewState.LastCommandType,
+		NewState.LastCommandSeq);
+
+	// Day7 범위:
+	// - 위젯이 필요하면 여기서 Widget에 전달하거나,
+	// - Widget이 Subsystem 이벤트를 직접 구독하도록 연결해도 된다.
 }

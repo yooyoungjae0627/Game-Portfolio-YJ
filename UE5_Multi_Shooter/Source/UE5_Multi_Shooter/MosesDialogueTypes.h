@@ -1,11 +1,10 @@
 ﻿#pragma once
 
+#include "Sound/SoundBase.h"
 #include "MosesDialogueTypes.generated.h"
 
 /**
  * EGamePhase
- *
- * 개발자 주석:
  * - "모든 클라이언트가 반드시 같은 화면 흐름을 봐야 하는" 전역 단계.
  * - 로비에서 '대화 모드'로 들어가는 것은 모두에게 공유되어야 하므로
  *   반드시 GameState(복제 전광판)에 넣는다.
@@ -13,29 +12,72 @@
 UENUM(BlueprintType)
 enum class EGamePhase : uint8
 {
-	Lobby        UMETA(DisplayName="Lobby"),
-	LobbyDialogue UMETA(DisplayName="LobbyDialogue"),
+	Lobby			UMETA(DisplayName = "Lobby"),
+	LobbyDialogue	UMETA(DisplayName = "LobbyDialogue"),
+};
+
+/**
+ * EDialogueFlowState
+ * - 서버 타이머/라인 진행에 직접 영향을 주는 "머신 상태".
+ * - Speaking일 때만 RemainingTime이 감소한다 (Day8 정답화).
+ */
+UENUM(BlueprintType)
+enum class EDialogueFlowState : uint8
+{
+	None			UMETA(DisplayName = "None"),
+	Speaking		UMETA(DisplayName = "Speaking"),     // 타이머 감소 O
+	Paused			UMETA(DisplayName = "Paused"),       // 타이머 감소 X
+	WaitingInput	UMETA(DisplayName = "WaitingInput"), // 다음 진행을 입력으로 기다림(타이머 감소 X)
+	Ended			UMETA(DisplayName = "Ended"),
+};
+
+/**
+ * EDialogueCommandType
+ * - "서버가 마지막으로 반영한 명령"의 종류.
+ * - 디버그/재전송/순서 보정(나중) 대비로 남긴다.
+ */
+UENUM(BlueprintType)
+enum class EDialogueCommandType : uint8
+{
+	None			UMETA(DisplayName = "None"),
+	EnterDialogue	UMETA(DisplayName = "EnterDialogue"),
+	ExitDialogue	UMETA(DisplayName = "ExitDialogue"),
+	AdvanceLine		UMETA(DisplayName = "AdvanceLine"),
+	SetFlowState	UMETA(DisplayName = "SetFlowState"),
 };
 
 /**
  * EDialogueSubState
- *
- * 개발자 주석:
- * - 대화 모드 안에서의 세부 상태.
- *   Listening / Speaking 정도만으로도 "연출/카메라/UI" 분기가 충분하다.
+ * - 대화 모드 안에서의 "연출/카메라/UI" 분기용 세부 상태.
+ * - Listening / Speaking 정도만으로도 충분히 강력하다.
+ * - FlowState(머신)와 SubState(연출)는 역할이 다르다.
  */
 UENUM(BlueprintType)
 enum class EDialogueSubState : uint8
 {
-	None      UMETA(DisplayName="None"),
-	Listening UMETA(DisplayName="Listening"),
-	Speaking  UMETA(DisplayName="Speaking"),
+	None		UMETA(DisplayName = "None"),
+	Listening	UMETA(DisplayName = "Listening"),
+	Speaking	UMETA(DisplayName = "Speaking"),
+};
+
+USTRUCT(BlueprintType)
+struct FMosesDialogueLine
+{
+	GENERATED_BODY()
+
+public:
+	UPROPERTY(EditAnywhere, BlueprintReadOnly)
+	FText SubtitleText;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, meta = (ClampMin = "0.0"))
+	float Duration = 2.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly)
+	TObjectPtr<USoundBase> VoiceSound = nullptr;
 };
 
 /**
  * FDialogueNetState
- *
- * 개발자 주석:
  * - "대화 진행 상태" 전광판.
  * - 서버가 유일하게 수정하고(GameMode/GameState),
  *   클라는 복제된 값을 보고 "표시/연출"만 한다.
@@ -43,26 +85,60 @@ enum class EDialogueSubState : uint8
  * 중요:
  * - 이 구조 덕분에 LateJoin(늦게 들어온 사람)도
  *   현재 LineIndex/SubState/RemainingTime을 즉시 받으면 화면이 복구된다.
+ *
+ * 권장 규칙:
+ * - GameState의 RepNotify(OnRep)에서는 "브로드캐스트만".
+ * - 실제 UI/연출(위젯/사운드/카메라)은 LPS/Widget에서 처리.
  */
 USTRUCT(BlueprintType)
 struct FDialogueNetState
 {
 	GENERATED_BODY()
 
-	// 현재 대화 서브상태 (서버가 확정)
-	UPROPERTY(EditAnywhere, BlueprintReadOnly)
+public:
+	/** 연출 분기용 서브상태 (서버 확정) */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly)
 	EDialogueSubState SubState = EDialogueSubState::None;
 
-	// 현재 대사 줄 번호(인덱스). 서버가 다음 줄을 결정한다.
-	UPROPERTY(EditAnywhere, BlueprintReadOnly)
+	/** 서버 머신 상태 (Speaking일 때만 RemainingTime 감소) */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly)
+	EDialogueFlowState FlowState = EDialogueFlowState::Paused;
+
+	/** 현재 대사 줄 번호(인덱스). 서버가 다음 줄을 결정한다. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly)
 	int32 LineIndex = 0;
 
-	// 현재 서브상태/대사에서 남은 시간(타이머 연출용).
-	// - 일단 "상태가 바뀌었다"를 느끼게 하는 용도(연출/디버그)로 둔다.
-	UPROPERTY(EditAnywhere, BlueprintReadOnly)
+	/** 현재 라인/상태에서 남은 시간(서버가 감소시키는 값) */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly)
 	float RemainingTime = 0.0f;
 
-	// NPC가 말하는지(혹은 플레이어가 말하는지) 같은 연출 플래그.
-	UPROPERTY(EditAnywhere, BlueprintReadOnly)
+	/** 타이머 속도 배율(기본 1.0). Day8/Day9 이후 빠른 재생 등에 사용 */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly)
+	float RateScale = 1.0f;
+
+	/** 누가 말하는지 같은 연출 플래그(클라 UI/카메라 분기용) */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly)
 	bool bNPCSpeaking = true;
+
+	/** 마지막으로 서버가 반영한 명령 타입(디버그/동기화 기준점) */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly)
+	EDialogueCommandType LastCommandType = EDialogueCommandType::None;
+
+	/** 마지막 명령 시퀀스(증가값). 중복/순서 문제 추적용 */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly)
+	int32 LastCommandSeq = 0;
+
+public:
+	/** 유틸: 상태 리셋(서버에서만 사용 권장) */
+	void ResetToDefault()
+	{
+		SubState = EDialogueSubState::None;
+		FlowState = EDialogueFlowState::Paused;
+		LineIndex = 0;
+		RemainingTime = 0.0f;
+		RateScale = 1.0f;
+		bNPCSpeaking = true;
+		LastCommandType = EDialogueCommandType::None;
+		LastCommandSeq = 0;
+	}
 };
