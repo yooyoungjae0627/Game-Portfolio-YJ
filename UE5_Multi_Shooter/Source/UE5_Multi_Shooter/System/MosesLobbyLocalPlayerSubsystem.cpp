@@ -712,16 +712,40 @@ void UMosesLobbyLocalPlayerSubsystem::ClearPreviewRefreshRetry()
 void UMosesLobbyLocalPlayerSubsystem::RequestEnterLobbyDialogue()
 {
 	AMosesPlayerController* PC = GetMosesPC_LocalOnly();
+	AMosesPlayerState* PS = PC ? PC->GetPlayerState<AMosesPlayerState>() : nullptr;
+
+	const bool bConnReady = (PC && PC->GetNetConnection());
+	const bool bPSReady = (PS != nullptr);
+	const bool bRoomValid = (PS && PS->GetRoomId().IsValid());
+
+	UE_LOG(LogMosesSpawn, Warning,
+		TEXT("[DOD][PRECHECK] PC=%s Local=%d Conn=%d PS=%s RoomValid=%d RoomId=%s"),
+		*GetNameSafe(PC),
+		PC ? (PC->IsLocalController() ? 1 : 0) : 0,
+		bConnReady ? 1 : 0,
+		*GetNameSafe(PS),
+		bRoomValid ? 1 : 0,
+		PS ? *PS->GetRoomId().ToString() : TEXT("None")
+	);
+
 	if (!PC || !PC->IsLocalController())
 	{
 		return;
 	}
 
-	// ✅ 핵심: 초기엔 NetConnection/PlayerState가 없어서 RPC가 씹힐 수 있음
-	if (!PC->GetNetConnection() || !PC->PlayerState)
+	// ✅ 여기! "3초 반복 클릭"의 정체가 보통 여기서 걸림
+	if (!bConnReady || !bPSReady)
 	{
 		UE_LOG(LogMosesSpawn, Warning, TEXT("[DOD][UI->SV] EnterLobbyDialogue WAIT (Conn/PS not ready) -> retry"));
 		RequestEnterDialogueRetry_NextTick();
+		return;
+	}
+
+	// ✅ 방 밖이면 애초에 보내지 말자 (사용자 체감 개선)
+	if (!bRoomValid)
+	{
+		UE_LOG(LogMosesSpawn, Warning, TEXT("[DOD][UI->SV] EnterLobbyDialogue BLOCK (NotInRoom yet)"));
+		RequestEnterDialogueRetry_NextTick(); // 또는 그냥 return (정책 선택)
 		return;
 	}
 
@@ -730,6 +754,7 @@ void UMosesLobbyLocalPlayerSubsystem::RequestEnterLobbyDialogue()
 	UE_LOG(LogMosesSpawn, Log, TEXT("[DOD][UI->SV] RequestEnterLobbyDialogue SEND"));
 	PC->Server_RequestEnterLobbyDialogue();
 }
+
 
 void UMosesLobbyLocalPlayerSubsystem::RequestExitLobbyDialogue()
 {

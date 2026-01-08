@@ -225,3 +225,24 @@ private:
 	bool bBoundToGameState = false;
 
 };
+
+// ===============================
+// Log spam guard helpers (cpp-local)
+// ===============================
+namespace MosesLobbyLogGuard
+{
+	static FORCEINLINE bool ChangedBool(bool& InOutCached, bool NewValue)
+	{
+		if (InOutCached == NewValue) return false;
+		InOutCached = NewValue;
+		return true;
+	}
+
+	template<typename T>
+	static FORCEINLINE bool ChangedValue(T& InOutCached, const T& NewValue)
+	{
+		if (InOutCached == NewValue) return false;
+		InOutCached = NewValue;
+		return true;
+	}
+}
