@@ -2,7 +2,7 @@
 
 #include "Subsystems/LocalPlayerSubsystem.h"
 #include "UE5_Multi_Shooter/UI/Lobby/MosesLobbyViewTypes.h"
-#include "TimerManager.h"
+#include "UE5_Multi_Shooter/MosesDialogueTypes.h"
 
 #include "MosesLobbyLocalPlayerSubsystem.generated.h"
 
@@ -19,7 +19,9 @@ enum class EMosesRoomJoinResult : uint8;
 DECLARE_MULTICAST_DELEGATE(FOnLobbyPlayerStateChanged);
 DECLARE_MULTICAST_DELEGATE(FOnLobbyRoomStateChanged);
 DECLARE_MULTICAST_DELEGATE_OneParam(FOnLobbyViewModeChanged, ELobbyViewMode /*NewMode*/);
+DECLARE_MULTICAST_DELEGATE_OneParam(FOnRulesViewModeChanged, bool /*bEnable*/);
 DECLARE_MULTICAST_DELEGATE_TwoParams(FOnLobbyJoinRoomResult, EMosesRoomJoinResult /*Result*/, const FGuid& /*RoomId*/);
+DECLARE_MULTICAST_DELEGATE_OneParam(FOnLobbyDialogueStateChanged, const FDialogueNetState& /*NewState*/);
 
 /**
  * UMosesLobbyLocalPlayerSubsystem
@@ -63,6 +65,8 @@ public:
 	 */
 	void SetLobbyWidget(UMosesLobbyWidget* InWidget);
 
+	void RequestEnterDialogueRetry_NextTick();
+	void ClearEnterDialogueRetry();
 
 	// ---------------------------
 	// UI control (Public API)
@@ -102,11 +106,19 @@ public:
 	void RequestExitLobbyDialogue();
 
 	// UI(Widget)는 이 이벤트만 보고 패널/버블 Visible만 전환한다.
-	DECLARE_MULTICAST_DELEGATE_OneParam(FOnRulesViewModeChanged, bool /*bEnable*/);
 	FOnRulesViewModeChanged& OnRulesViewModeChanged() { return RulesViewModeChangedEvent; }
 
 	// UI가 구독하는 이벤트
 	FOnLobbyViewModeChanged OnLobbyViewModeChanged;
+
+	// LobbyWidget 구독용
+	FOnLobbyDialogueStateChanged& OnLobbyDialogueStateChanged() { return LobbyDialogueStateChanged; }
+
+	// late join / 위젯 재생성 복구용
+	const FDialogueNetState& GetLastDialogueNetState() const { return LastDialogueNetState; }
+
+	// GameState 이벤트 수신/브로드캐스트
+	void NotifyDialogueStateChanged(const FDialogueNetState& NewState);
 
 private:
 	FOnRulesViewModeChanged RulesViewModeChangedEvent;
@@ -155,16 +167,21 @@ private:
 	// Bind GS events (LateJoin recover)
 	// ---------------------------
 	void BindLobbyGameStateEvents();
+	void UnbindLobbyGameStateEvents();
+
 	class AMosesLobbyGameState* GetLobbyGameState() const;
 
 	void HandlePhaseChanged(EGamePhase NewPhase);
 	void HandleDialogueStateChanged(const FDialogueNetState& NewState);
 
-	bool bBoundToGameState = false;
+private:
+	UFUNCTION()
+	void HandleGameStateDialogueChanged(const FDialogueNetState& NewState);
 
-	// ---------------------------
-	// State
-	// ---------------------------
+	// GameState 캐시
+	UPROPERTY(Transient)
+	TWeakObjectPtr<AMosesLobbyGameState> CachedLobbyGS;
+
 	UPROPERTY(Transient)
 	TObjectPtr<UMosesLobbyWidget> LobbyWidget = nullptr;
 
@@ -195,8 +212,16 @@ private:
 	UPROPERTY(EditDefaultsOnly, Category = "Lobby|Camera")
 	float CameraBlendTime = 0.35f;
 
-	// ---------------------------
-	// Timer
-	// ---------------------------
 	FTimerHandle PreviewRefreshRetryHandle;
+
+	// ---------------------------
+	// Retry control (Enter Dialogue RPC)
+	// ---------------------------
+	FTimerHandle EnterDialogueRetryHandle;
+
+	FOnLobbyDialogueStateChanged LobbyDialogueStateChanged;
+	FDialogueNetState LastDialogueNetState;
+
+	bool bBoundToGameState = false;
+
 };

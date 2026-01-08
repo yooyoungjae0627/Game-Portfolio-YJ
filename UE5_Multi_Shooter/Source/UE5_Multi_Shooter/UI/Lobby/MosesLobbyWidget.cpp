@@ -1,4 +1,6 @@
-﻿#include "MosesLobbyWidget.h"
+﻿// MosesLobbyWidget.cpp
+
+#include "MosesLobbyWidget.h"
 
 #include "Components/Button.h"
 #include "Components/CheckBox.h"
@@ -8,6 +10,10 @@
 #include "Components/HorizontalBox.h"
 #include "Components/Overlay.h"
 #include "Components/SizeBox.h"
+
+#include "Blueprint/WidgetTree.h"
+#include "Components/TextBlock.h"
+#include "Animation/WidgetAnimation.h"
 
 #include "Engine/LocalPlayer.h"
 #include "Engine/World.h"
@@ -24,9 +30,41 @@
 #include "UE5_Multi_Shooter/UI/Lobby/MSCreateRoomPopupWidget.h"
 #include "UE5_Multi_Shooter/UI/Lobby/MSLobbyRoomItemWidget.h"
 
-// ---------------------------
-// Engine
-// ---------------------------
+// =====================================================
+// ✅ Dialogue Types / DataAsset
+// =====================================================
+
+// ⚠️ 여기 경로는 네 프로젝트에 맞게 조정해라.
+// - FDialogueNetState, EDialogueFlowState, EDialogueSubState 정의된 헤더
+#include "UE5_Multi_Shooter/MosesDialogueTypes.h"
+
+// ⚠️ DataAsset 경로도 네 프로젝트 경로에 맞게 조정해라.
+#include "UE5_Multi_Shooter/Data/MosesDialogueLineDataAsset.h"
+
+// =====================================================
+// ✅ Bubble Animation helper
+// =====================================================
+
+static UWidgetAnimation* FindAnimByName(UUserWidget* Owner, const FName AnimName)
+{
+	if (!Owner)
+	{
+		return nullptr;
+	}
+
+	// BP 애니메이션 이름 기반 탐색(보수적으로 FindObject 시도)
+	if (UWidgetAnimation* A = FindObject<UWidgetAnimation>(Owner, *AnimName.ToString()))
+	{
+		return A;
+	}
+
+	// 폴백: 클래스에서 찾기(일부 케이스)
+	return FindObject<UWidgetAnimation>(Owner->GetClass(), *AnimName.ToString());
+}
+
+// =====================================================
+// Engine Lifecycle
+// =====================================================
 
 void UMosesLobbyWidget::NativeConstruct()
 {
@@ -68,10 +106,19 @@ void UMosesLobbyWidget::NativeConstruct()
 	BindListViewEvents();
 	BindSubsystemEvents();
 
+	// ✅ Bubble 내부 위젯 레퍼런스 캐시
+	CacheDialogueBubble_InternalRefs();
+
 	// RulesView OFF로 시작 (패널/버튼/말풍선 포함)
 	SetRulesViewMode(false);
 
 	RefreshAll_UI();
+
+	// ✅ 대화 상태 “즉시 복구”(late join / 위젯 재생성)
+	if (LobbyLPS)
+	{
+		HandleDialogueStateChanged_UI(LobbyLPS->GetLastDialogueNetState());
+	}
 }
 
 void UMosesLobbyWidget::NativeDestruct()
@@ -130,9 +177,9 @@ void UMosesLobbyWidget::NativeDestruct()
 	Super::NativeDestruct();
 }
 
-// ---------------------------
-// Setup / Bind
-// ---------------------------
+// =====================================================
+// Initialization / Binding
+// =====================================================
 
 void UMosesLobbyWidget::CacheLocalSubsystem()
 {
@@ -204,10 +251,16 @@ void UMosesLobbyWidget::BindSubsystemEvents()
 	LobbyLPS->OnLobbyJoinRoomResult().RemoveAll(this);
 	LobbyLPS->OnRulesViewModeChanged().RemoveAll(this);
 
+	// ✅ DialogueNetState 이벤트 구독
+	LobbyLPS->OnLobbyDialogueStateChanged().RemoveAll(this);
+
 	LobbyLPS->OnLobbyPlayerStateChanged().AddUObject(this, &UMosesLobbyWidget::HandlePlayerStateChanged_UI);
 	LobbyLPS->OnLobbyRoomStateChanged().AddUObject(this, &UMosesLobbyWidget::HandleRoomStateChanged_UI);
 	LobbyLPS->OnLobbyJoinRoomResult().AddUObject(this, &UMosesLobbyWidget::HandleJoinRoomResult_UI);
 	LobbyLPS->OnRulesViewModeChanged().AddUObject(this, &UMosesLobbyWidget::HandleRulesViewModeChanged_UI);
+
+	// ✅ DialogueNetState 이벤트 바인딩
+	LobbyLPS->OnLobbyDialogueStateChanged().AddUObject(this, &UMosesLobbyWidget::HandleDialogueStateChanged_UI);
 }
 
 void UMosesLobbyWidget::UnbindSubsystemEvents()
@@ -221,11 +274,14 @@ void UMosesLobbyWidget::UnbindSubsystemEvents()
 	LobbyLPS->OnLobbyRoomStateChanged().RemoveAll(this);
 	LobbyLPS->OnLobbyJoinRoomResult().RemoveAll(this);
 	LobbyLPS->OnRulesViewModeChanged().RemoveAll(this);
+
+	// ✅ DialogueNetState 이벤트 해제
+	LobbyLPS->OnLobbyDialogueStateChanged().RemoveAll(this);
 }
 
-// ---------------------------
-// Unified Refresh
-// ---------------------------
+// =====================================================
+// Unified UI Refresh
+// =====================================================
 
 void UMosesLobbyWidget::RefreshAll_UI()
 {
@@ -244,9 +300,9 @@ void UMosesLobbyWidget::RefreshAll_UI()
 	UpdateStartButton();
 }
 
-// ---------------------------
-// Lobby UI refresh internals
-// ---------------------------
+// =====================================================
+// UI Refresh Internals
+// =====================================================
 
 void UMosesLobbyWidget::RefreshRoomListFromGameState()
 {
@@ -292,7 +348,6 @@ void UMosesLobbyWidget::RefreshRoomListFromGameState()
 		RoomListView->AddItem(Item);
 	}
 }
-
 
 void UMosesLobbyWidget::RefreshPanelsByPlayerState()
 {
@@ -362,13 +417,12 @@ void UMosesLobbyWidget::RefreshRightPanelControlsByRole()
 	}
 }
 
-// ---------------------------
-// UI Refresh Entry (Subsystem에서 호출)
-// ---------------------------
+// =====================================================
+// Subsystem → UI Entry Points
+// =====================================================
 
 void UMosesLobbyWidget::HandleRoomStateChanged_UI()
 {
-	// - Room 목록/멤버 변경 같은 전광판 이벤트
 	RefreshAll_UI();
 }
 
@@ -380,7 +434,6 @@ void UMosesLobbyWidget::HandlePlayerStateChanged_UI()
 	if (PS && PS->GetRoomId().IsValid() && bPendingEnterRoom_UIOnly)
 	{
 		EndPendingEnterRoom_UIOnly();
-		// EndPending에서 RefreshAll을 호출하므로 여기서 추가 Refresh는 불필요
 		return;
 	}
 
@@ -393,9 +446,9 @@ void UMosesLobbyWidget::HandleRulesViewModeChanged_UI(bool bEnable)
 	SetRulesViewMode(bEnable);
 }
 
-// ---------------------------
-// Create Room Popup
-// ---------------------------
+// =====================================================
+// Create Room Popup Flow
+// =====================================================
 
 void UMosesLobbyWidget::OpenCreateRoomPopup()
 {
@@ -479,9 +532,9 @@ void UMosesLobbyWidget::CenterPopupWidget(UUserWidget* PopupWidget) const
 	}
 }
 
-// ---------------------------
-// Start button policy
-// ---------------------------
+// =====================================================
+// Start Game Policy
+// =====================================================
 
 bool UMosesLobbyWidget::CanStartGame_UIOnly() const
 {
@@ -503,8 +556,6 @@ bool UMosesLobbyWidget::CanStartGame_UIOnly() const
 		return false;
 	}
 
-	// - 서버 정책과 동일해야 한다.
-	// - "호스트 제외" 전원 Ready 이면 Start 가능
 	return Room->IsAllReady();
 }
 
@@ -518,9 +569,9 @@ void UMosesLobbyWidget::UpdateStartButton()
 	Button_StartGame->SetIsEnabled(!bPendingEnterRoom_UIOnly && CanStartGame_UIOnly());
 }
 
-// ---------------------------
-// UI Event handlers
-// ---------------------------
+// =====================================================
+// UI Event Handlers
+// =====================================================
 
 void UMosesLobbyWidget::OnClicked_CreateRoom()
 {
@@ -551,7 +602,6 @@ void UMosesLobbyWidget::OnClicked_StartGame()
 
 void UMosesLobbyWidget::OnReadyChanged(bool bIsChecked)
 {
-	// - Pending 중에는 Ready 조작 금지 (UI만 방 안처럼 보이는 상태)
 	if (bPendingEnterRoom_UIOnly)
 	{
 		if (CheckBox_Ready)
@@ -574,7 +624,7 @@ void UMosesLobbyWidget::OnReadyChanged(bool bIsChecked)
 void UMosesLobbyWidget::OnClicked_CharNext()
 {
 	UE_LOG(LogMosesSpawn, Warning,
-		TEXT("[BTN] GameRules | Widget=%s | World=%s | OwningLP=%s | OwningPC=%s | IsLocalPC=%d | NetMode=%d"),
+		TEXT("[BTN] CharNext | Widget=%s | World=%s | OwningLP=%s | OwningPC=%s | IsLocalPC=%d | NetMode=%d"),
 		*GetPathNameSafe(this),
 		*GetPathNameSafe(GetWorld()),
 		*GetPathNameSafe(GetOwningLocalPlayer()),
@@ -594,6 +644,41 @@ void UMosesLobbyWidget::OnClicked_CharNext()
 	LobbyLPS->RequestNextCharacterPreview_LocalOnly();
 }
 
+void UMosesLobbyWidget::OnClicked_GameRules()
+{
+	UMosesLobbyLocalPlayerSubsystem* Subsys = GetLobbySubsys();
+	if (!Subsys)
+	{
+		UE_LOG(LogMosesSpawn, Warning, TEXT("[LobbyUI] OnClicked_GameRules: Subsystem is null"));
+		return;
+	}
+
+	// ✅ (카메라/로컬 연출) 즉시 이동 — 카메라 스위칭은 Subsystem이 함
+	Subsys->EnterRulesView_UIOnly();
+
+	// ✅ 서버 요청도 Subsys로 위임 (중요)
+	Subsys->RequestEnterLobbyDialogue();
+}
+
+void UMosesLobbyWidget::OnClicked_ExitDialogue()
+{
+	UMosesLobbyLocalPlayerSubsystem* Subsys = GetLobbySubsys();
+	if (!Subsys)
+	{
+		UE_LOG(LogMosesSpawn, Warning, TEXT("[LobbyUI] OnClicked_ExitDialogue: Subsystem is null"));
+		return;
+	}
+
+	// ✅ (카메라/로컬 연출) 즉시 복귀 — 카메라 스위칭은 Subsystem이 함
+	Subsys->ExitRulesView_UIOnly();
+
+	// ✅ (서버 권한) 대화 모드 종료 요청
+	if (AMosesPlayerController* PC = GetMosesPC())
+	{
+		PC->Server_RequestExitLobbyDialogue();
+	}
+}
+
 void UMosesLobbyWidget::OnRoomItemClicked(UObject* ClickedItem)
 {
 	const UMSLobbyRoomListItemData* Item = Cast<UMSLobbyRoomListItemData>(ClickedItem);
@@ -602,7 +687,6 @@ void UMosesLobbyWidget::OnRoomItemClicked(UObject* ClickedItem)
 		return;
 	}
 
-	// - 클라 1차 프리체크 (방 가득 찼으면 RPC 보내지 않음)
 	const AMosesLobbyGameState* LGS = GetWorld() ? GetWorld()->GetGameState<AMosesLobbyGameState>() : nullptr;
 	if (LGS)
 	{
@@ -625,9 +709,9 @@ void UMosesLobbyWidget::OnRoomItemClicked(UObject* ClickedItem)
 	PC->Server_JoinRoom(Item->GetRoomId());
 }
 
-// ---------------------------
+// =====================================================
 // Helpers
-// ---------------------------
+// =====================================================
 
 AMosesPlayerController* UMosesLobbyWidget::GetMosesPC() const
 {
@@ -636,8 +720,6 @@ AMosesPlayerController* UMosesLobbyWidget::GetMosesPC() const
 
 AMosesPlayerState* UMosesLobbyWidget::GetMosesPS() const
 {
-	// - UE 버전에 따라 GetOwningPlayerState<T>()가 없거나 템플릿이 꼬이는 케이스가 있다.
-	// - 항상 안전하게 Cast로 통일한다.
 	return Cast<AMosesPlayerState>(GetOwningPlayerState());
 }
 
@@ -658,9 +740,15 @@ UMosesLobbyLocalPlayerSubsystem* UMosesLobbyWidget::GetLobbySubsys() const
 	return LP->GetSubsystem<UMosesLobbyLocalPlayerSubsystem>();
 }
 
-// ---------------------------
+bool UMosesLobbyWidget::IsLocalHost() const
+{
+	const AMosesPlayerState* PS = GetMosesPS();
+	return (PS && PS->IsRoomHost());
+}
+
+// =====================================================
 // Pending Enter Room (UI Only)
-// ---------------------------
+// =====================================================
 
 void UMosesLobbyWidget::BeginPendingEnterRoom_UIOnly()
 {
@@ -704,14 +792,12 @@ void UMosesLobbyWidget::OnPendingEnterRoomTimeout_UIOnly()
 	}
 }
 
-// ---------------------------
-// JoinRoom Result UI
-// ---------------------------
+// =====================================================
+// Join Room Result (Subsystem → UI)
+// =====================================================
 
 void UMosesLobbyWidget::HandleJoinRoomResult_UI(EMosesRoomJoinResult Result, const FGuid& RoomId)
 {
-	// - Ok = 서버 승인. 최종 전환은 PS.RoomId 복제 도착으로 확정.
-	// - Ok에서 Pending을 풀면 Rep 도착 전 순간에 Left로 되돌아가 "깜빡임"이 생긴다.
 	if (Result == EMosesRoomJoinResult::Ok)
 	{
 		return;
@@ -738,6 +824,203 @@ FString UMosesLobbyWidget::JoinFailReasonToText(EMosesRoomJoinResult Result) con
 	default:                                  return TEXT("입장에 실패했습니다.");
 	}
 }
+
+// =====================================================
+// ✅ Dialogue Bubble internals
+// =====================================================
+
+void UMosesLobbyWidget::CacheDialogueBubble_InternalRefs()
+{
+	CachedBubbleUserWidget = nullptr;
+	CachedTB_DialogueText = nullptr;
+	CachedAnim_FadeIn = nullptr;
+	CachedAnim_FadeOut = nullptr;
+
+	if (!DialogueBubbleWidget)
+	{
+		return;
+	}
+
+	// SizeBox Content가 WBP_DialogueBubble 인스턴스여야 가장 안전
+	if (UWidget* Content = DialogueBubbleWidget->GetContent())
+	{
+		CachedBubbleUserWidget = Cast<UUserWidget>(Content);
+	}
+
+	if (!CachedBubbleUserWidget)
+	{
+		UE_LOG(LogMosesSpawn, Warning, TEXT("[LobbyUI][Bubble] Content is not UserWidget. Put WBP_DialogueBubble directly into SizeBox."));
+		return;
+	}
+
+	if (CachedBubbleUserWidget->WidgetTree)
+	{
+		CachedTB_DialogueText = Cast<UTextBlock>(
+			CachedBubbleUserWidget->WidgetTree->FindWidget(TEXT("TB_DialogueText"))
+		);
+	}
+
+	CachedAnim_FadeIn = FindAnimByName(CachedBubbleUserWidget, TEXT("Anim_FadeIn"));
+	CachedAnim_FadeOut = FindAnimByName(CachedBubbleUserWidget, TEXT("Anim_FadeOut"));
+
+	UE_LOG(LogMosesSpawn, Log, TEXT("[LobbyUI][Bubble] Cache OK Bubble=%s TB=%s FadeIn=%s FadeOut=%s"),
+		*GetNameSafe(CachedBubbleUserWidget),
+		*GetNameSafe(CachedTB_DialogueText),
+		*GetNameSafe(CachedAnim_FadeIn),
+		*GetNameSafe(CachedAnim_FadeOut));
+}
+
+void UMosesLobbyWidget::HandleDialogueStateChanged_UI(const FDialogueNetState& NewState)
+{
+	ApplyDialogueState_ToBubbleUI(NewState);
+}
+
+bool UMosesLobbyWidget::ShouldShowBubbleInCurrentMode(const FDialogueNetState& NetState) const
+{
+	// ✅ 정책: RulesView에서만 버블 ON
+	if (!bRulesViewEnabled)
+	{
+		return false;
+	}
+
+	// ✅ NetState가 유효하고, 대화가 끝난 상태가 아니어야 함
+	// (네 프로젝트 enum 정의에 맞게 조정 가능)
+	return (NetState.SubState != EDialogueSubState::None) && (NetState.FlowState != EDialogueFlowState::Ended);
+}
+
+FText UMosesLobbyWidget::GetSubtitleTextFromNetState(const FDialogueNetState& NetState) const
+{
+	// 1) DataAsset에서 LineIndex로 뽑는다
+	if (DialogueLineData)
+	{
+		if (const FMosesDialogueLine* Line = DialogueLineData->GetLine(NetState.LineIndex))
+		{
+			return Line->SubtitleText;
+		}
+	}
+
+	// 2) 폴백(디버그)
+	return FText::FromString(FString::Printf(TEXT("Line %d"), NetState.LineIndex));
+}
+
+void UMosesLobbyWidget::ApplyDialogueState_ToBubbleUI(const FDialogueNetState& NewState)
+{
+	if (!DialogueBubbleWidget)
+	{
+		return;
+	}
+
+	// 내부 캐시 없으면 재시도
+	if (!CachedBubbleUserWidget || !CachedTB_DialogueText)
+	{
+		CacheDialogueBubble_InternalRefs();
+	}
+
+	// 표시 정책
+	const bool bShouldShow = ShouldShowBubbleInCurrentMode(NewState);
+
+	// --- 숨김 처리 ---
+	if (!bShouldShow)
+	{
+		HideDialogueBubble_UI(true);
+		return;
+	}
+
+	// --- 표시 처리 ---
+	const bool bSeqChanged = (CachedDialogueSeq != NewState.LastCommandSeq);
+	const bool bLineChanged = (CachedLineIndex != NewState.LineIndex);
+	const bool bFlowChanged = (CachedFlowState != NewState.FlowState);
+
+	CachedDialogueSeq = NewState.LastCommandSeq;
+	CachedLineIndex = NewState.LineIndex;
+	CachedFlowState = NewState.FlowState;
+
+	const bool bWasHidden = (DialogueBubbleWidget->GetVisibility() == ESlateVisibility::Collapsed);
+
+	ShowDialogueBubble_UI(bWasHidden);
+
+	// 텍스트는 라인/seq 바뀐 경우에만 갱신 (깜빡임 방지)
+	if (bLineChanged || bSeqChanged)
+	{
+		const FText Subtitle = GetSubtitleTextFromNetState(NewState);
+		SetDialogueBubbleText_UI(Subtitle);
+
+		UE_LOG(LogMosesSpawn, Log, TEXT("[DOD][UI] BubbleVisible=1 Text='%s' line=%d Flow=%d Seq=%d"),
+			*Subtitle.ToString(),
+			NewState.LineIndex,
+			(int32)NewState.FlowState,
+			NewState.LastCommandSeq);
+	}
+
+	(void)bFlowChanged;
+}
+
+void UMosesLobbyWidget::ShowDialogueBubble_UI(bool bPlayFadeIn)
+{
+	if (!DialogueBubbleWidget)
+	{
+		return;
+	}
+
+	DialogueBubbleWidget->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+
+	if (bPlayFadeIn)
+	{
+		PlayDialogueFadeIn_UI();
+	}
+}
+
+void UMosesLobbyWidget::HideDialogueBubble_UI(bool bPlayFadeOut)
+{
+	if (!DialogueBubbleWidget)
+	{
+		return;
+	}
+
+	if (bPlayFadeOut)
+	{
+		PlayDialogueFadeOut_UI();
+	}
+
+	// Day9: 단순하게 즉시 Collapsed
+	DialogueBubbleWidget->SetVisibility(ESlateVisibility::Collapsed);
+
+	UE_LOG(LogMosesSpawn, Log, TEXT("[DOD][UI] BubbleVisible=0"));
+}
+
+void UMosesLobbyWidget::SetDialogueBubbleText_UI(const FText& Text)
+{
+	if (CachedTB_DialogueText)
+	{
+		CachedTB_DialogueText->SetText(Text);
+	}
+}
+
+void UMosesLobbyWidget::PlayDialogueFadeIn_UI()
+{
+	if (!CachedBubbleUserWidget || !CachedAnim_FadeIn)
+	{
+		return;
+	}
+
+	CachedBubbleUserWidget->StopAllAnimations();
+	CachedBubbleUserWidget->PlayAnimation(CachedAnim_FadeIn, 0.f, 1);
+}
+
+void UMosesLobbyWidget::PlayDialogueFadeOut_UI()
+{
+	if (!CachedBubbleUserWidget || !CachedAnim_FadeOut)
+	{
+		return;
+	}
+
+	CachedBubbleUserWidget->StopAllAnimations();
+	CachedBubbleUserWidget->PlayAnimation(CachedAnim_FadeOut, 0.f, 1);
+}
+
+// =====================================================
+// Public UI Mode Control
+// =====================================================
 
 void UMosesLobbyWidget::SetRulesViewMode(bool bEnable)
 {
@@ -771,11 +1054,16 @@ void UMosesLobbyWidget::SetRulesViewMode(bool bEnable)
 
 		SetVisSafe(Btn_ExitDialogue, ESlateVisibility::Visible);
 
-		// ✅ Bubble ON
-		SetVisSafe(DialogueBubbleWidget, ESlateVisibility::SelfHitTestInvisible);
+		// ✅ RulesView ON: "무조건 Visible"이 아니라
+		// ✅ 현재 NetState가 유효할 때만 Show가 되도록 Apply로 일원화
+		// (일단 보이게 켜지 말고, 아래 Apply에서 켜게 한다)
+		SetVisSafe(DialogueBubbleWidget, ESlateVisibility::Collapsed);
 
-		UE_LOG(LogMosesSpawn, Warning, TEXT("[LobbyUI] Bubble After ON Vis=%d"),
-			DialogueBubbleWidget ? (int32)DialogueBubbleWidget->GetVisibility() : -1);
+		// ✅ RulesView로 들어온 순간, 현재 전광판 상태로 즉시 복구
+		if (LobbyLPS)
+		{
+			HandleDialogueStateChanged_UI(LobbyLPS->GetLastDialogueNetState());
+		}
 	}
 	else
 	{
@@ -785,34 +1073,13 @@ void UMosesLobbyWidget::SetRulesViewMode(bool bEnable)
 
 		SetVisSafe(Btn_ExitDialogue, ESlateVisibility::Collapsed);
 
-		// ✅ Bubble OFF
+		// ✅ RulesView OFF: 항상 Collapsed
 		SetVisSafe(DialogueBubbleWidget, ESlateVisibility::Collapsed);
 
-		UE_LOG(LogMosesSpawn, Warning, TEXT("[LobbyUI] Bubble After OFF Vis=%d"),
-			DialogueBubbleWidget ? (int32)DialogueBubbleWidget->GetVisibility() : -1);
+		// (선택) 애니메이션 stop
+		if (CachedBubbleUserWidget)
+		{
+			CachedBubbleUserWidget->StopAllAnimations();
+		}
 	}
-}
-
-void UMosesLobbyWidget::OnClicked_GameRules()
-{
-	UMosesLobbyLocalPlayerSubsystem* Subsys = GetLobbySubsys();
-	if (!Subsys)
-	{
-		UE_LOG(LogMosesSpawn, Warning, TEXT("[LobbyUI] OnClicked_GameRules: Subsystem is null"));
-		return;
-	}
-
-	Subsys->EnterRulesView_UIOnly(); // 즉시 카메라 이동
-}
-
-void UMosesLobbyWidget::OnClicked_ExitDialogue()
-{
-	UMosesLobbyLocalPlayerSubsystem* Subsys = GetLobbySubsys();
-	if (!Subsys)
-	{
-		UE_LOG(LogMosesSpawn, Warning, TEXT("[LobbyUI] OnClicked_ExitDialogue: Subsystem is null"));
-		return;
-	}
-
-	Subsys->ExitRulesView_UIOnly(); // 즉시 카메라 복귀
 }

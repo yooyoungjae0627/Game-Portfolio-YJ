@@ -6,6 +6,14 @@
 
 enum class EMosesRoomJoinResult : uint8;
 
+// ✅ Dialogue net types forward
+struct FDialogueNetState;
+enum class EDialogueFlowState : uint8;
+enum class EDialogueSubState : uint8;
+
+// ---------------------------
+// Forward Decls
+// ---------------------------
 class UOverlay;
 class UButton;
 class UCheckBox;
@@ -13,6 +21,13 @@ class UListView;
 class UVerticalBox;
 class UHorizontalBox;
 class USizeBox;
+
+class UUserWidget;
+class UTextBlock;
+class UWidgetAnimation;
+
+// ✅ DataAsset
+class UMosesDialogueLineDataAsset;
 
 class UMosesDialogueBubbleWidget;
 class UMosesLobbyLocalPlayerSubsystem;
@@ -26,45 +41,30 @@ class UE5_MULTI_SHOOTER_API UMosesLobbyWidget : public UUserWidget
 	GENERATED_BODY()
 
 protected:
-	// ---------------------------
-	// Engine
-	// ---------------------------
 	virtual void NativeConstruct() override;
 	virtual void NativeDestruct() override;
 
-	// ---------------------------
-	// Setup / Bind
-	// ---------------------------
+protected:
 	void CacheLocalSubsystem();
 	void BindLobbyButtons();
 	void BindListViewEvents();
 	void BindSubsystemEvents();
 	void UnbindSubsystemEvents();
 
-	// ---------------------------
-	// Unified Refresh
-	// ---------------------------
+protected:
 	void RefreshAll_UI();
 
-	// ---------------------------
-	// Lobby UI refresh internals
-	// ---------------------------
+protected:
 	void RefreshRoomListFromGameState();
 	void RefreshPanelsByPlayerState();
 	void RefreshRightPanelControlsByRole();
 
-	// ---------------------------
-	// UI Refresh Entry (Subsystem에서 호출)
-	// ---------------------------
+protected:
 	void HandleRoomStateChanged_UI();
 	void HandlePlayerStateChanged_UI();
-
-	// RulesView 모드 변경 이벤트 핸들러 (Subsystem -> Widget)
 	void HandleRulesViewModeChanged_UI(bool bEnable);
 
-	// ---------------------------
-	// Create Room Popup
-	// ---------------------------
+protected:
 	void OpenCreateRoomPopup();
 	void CloseCreateRoomPopup();
 
@@ -73,15 +73,11 @@ protected:
 
 	void CenterPopupWidget(UUserWidget* PopupWidget) const;
 
-	// ---------------------------
-	// Start button policy
-	// ---------------------------
+protected:
 	bool CanStartGame_UIOnly() const;
 	void UpdateStartButton();
 
-	// ---------------------------
-	// UI Event handlers
-	// ---------------------------
+protected:
 	UFUNCTION()
 	void OnClicked_CreateRoom();
 
@@ -105,43 +101,30 @@ protected:
 
 	void OnRoomItemClicked(UObject* ClickedItem);
 
-	// ---------------------------
-	// Helpers
-	// ---------------------------
+protected:
 	AMosesPlayerController* GetMosesPC() const;
 	AMosesPlayerState* GetMosesPS() const;
 	UMosesLobbyLocalPlayerSubsystem* GetLobbySubsys() const;
+	bool IsLocalHost() const;
 
-	// ---------------------------
-	// Pending Enter Room (UI Only)
-	// ---------------------------
+protected:
 	void BeginPendingEnterRoom_UIOnly();
 	void EndPendingEnterRoom_UIOnly();
 
 	UFUNCTION()
 	void OnPendingEnterRoomTimeout_UIOnly();
 
-	// ---------------------------
-	// JoinRoom Result (from Subsystem)
-	// ---------------------------
+protected:
 	void HandleJoinRoomResult_UI(EMosesRoomJoinResult Result, const FGuid& RoomId);
 	FString JoinFailReasonToText(EMosesRoomJoinResult Result) const;
 
-	/** Host인지 */
-	bool IsLocalHost() const;
-
 public:
-	/**
-	 * RulesView 진입/복귀 시
-	 * - Widget 내부 패널/버튼/말풍선 가시성만 책임진다.
-	 * - 카메라 전환/상태 판단은 Subsystem
-	 */
 	void SetRulesViewMode(bool bEnable);
 
 private:
-	// ---------------------------
-	// Widgets (BindWidget)
-	// ---------------------------
+	/*====================================================
+	= Widgets (BindWidget)
+	====================================================*/
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UButton> Button_CreateRoom = nullptr;
 
@@ -181,31 +164,27 @@ private:
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UVerticalBox> CharacterSelectedButtonsBox = nullptr;
 
-	// ✅ 말풍선(대화 자막) — RulesView에서만 Visible로 켠다.
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<USizeBox> DialogueBubbleWidget = nullptr;
 
-private:
-	// ---------------------------
-	// Cached subsystem
-	// ---------------------------
+	/*====================================================
+	= Cached Subsystem
+	====================================================*/
 	UPROPERTY(Transient)
 	TObjectPtr<UMosesLobbyLocalPlayerSubsystem> LobbyLPS = nullptr;
 
-private:
-	// ---------------------------
-	// Create Room Popup assets
-	// ---------------------------
+	/*====================================================
+	= Create Room Popup Assets
+	====================================================*/
 	UPROPERTY(EditDefaultsOnly, Category = "UI|Popup")
 	TSubclassOf<UMSCreateRoomPopupWidget> CreateRoomPopupClass;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UMSCreateRoomPopupWidget> CreateRoomPopup = nullptr;
 
-private:
-	// ---------------------------
-	// Pending state (UI-only)
-	// ---------------------------
+	/*====================================================
+	= Pending State (UI Only)
+	====================================================*/
 	UPROPERTY(Transient)
 	bool bPendingEnterRoom_UIOnly = false;
 
@@ -214,6 +193,53 @@ private:
 
 	FTimerHandle PendingEnterRoomTimerHandle;
 
-	// UI 꼬임 방지용 로컬 캐시
+	/*====================================================
+	= RulesView state
+	====================================================*/
 	bool bRulesViewEnabled = false;
+
+private:
+	/*====================================================
+	= Dialogue Bubble internals (✅ NEW)
+	====================================================*/
+	void CacheDialogueBubble_InternalRefs();
+	void HandleDialogueStateChanged_UI(const FDialogueNetState& NewState);
+	void ApplyDialogueState_ToBubbleUI(const FDialogueNetState& NewState);
+
+	void ShowDialogueBubble_UI(bool bPlayFadeIn);
+	void HideDialogueBubble_UI(bool bPlayFadeOut);
+	void SetDialogueBubbleText_UI(const FText& Text);
+
+	void PlayDialogueFadeIn_UI();
+	void PlayDialogueFadeOut_UI();
+
+	FText GetSubtitleTextFromNetState(const FDialogueNetState& NetState) const;
+	bool ShouldShowBubbleInCurrentMode(const FDialogueNetState& NetState) const;
+
+	// ✅ 자막 라인 데이터(클라에서도 로드 가능한 DataAsset)
+	UPROPERTY(EditDefaultsOnly, Category = "Dialogue")
+	TObjectPtr<UMosesDialogueLineDataAsset> DialogueLineData = nullptr;
+
+	// Bubble 내부 위젯(= SizeBox Content가 UserWidget이어야 함)
+	UPROPERTY(Transient)
+	TObjectPtr<UUserWidget> CachedBubbleUserWidget = nullptr;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UTextBlock> CachedTB_DialogueText = nullptr;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UWidgetAnimation> CachedAnim_FadeIn = nullptr;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UWidgetAnimation> CachedAnim_FadeOut = nullptr;
+
+	// 중복 재생/깜빡임 방지
+	UPROPERTY(Transient)
+	int32 CachedDialogueSeq = 0;
+
+	UPROPERTY(Transient)
+	int32 CachedLineIndex = INDEX_NONE;
+
+	UPROPERTY(Transient)
+	EDialogueFlowState CachedFlowState = (EDialogueFlowState)0;
 };

@@ -5,7 +5,6 @@
 #include "UE5_Multi_Shooter/Player/MosesPlayerState.h"
 
 #include "UE5_Multi_Shooter/GameMode/GameState/MosesLobbyGameState.h"
-
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
 #include "UE5_Multi_Shooter/UI/Lobby/MosesLobbyWidget.h"
 
@@ -19,7 +18,6 @@
 #include "Kismet/GameplayStatics.h"
 #include "Blueprint/UserWidget.h"
 
-// ✅ 추가: PS NULL 재시도(타이머)용
 #include "TimerManager.h"
 
 // =========================================================
@@ -42,10 +40,12 @@ void UMosesLobbyLocalPlayerSubsystem::Initialize(FSubsystemCollectionBase& Colle
 
 void UMosesLobbyLocalPlayerSubsystem::Deinitialize()
 {
-	// - 로컬플레이어가 내려갈 때 UI도 내려준다.
 	DeactivateLobbyUI();
-
 	ExitRulesView_UIOnly();
+
+	ClearPreviewRefreshRetry();
+
+	UnbindLobbyGameStateEvents();   // ✅ 추가: 델리게이트 중복/유령 바인딩 방지
 
 	CachedLobbyPreviewActor = nullptr;
 
@@ -62,7 +62,8 @@ AMosesLobbyGameState* UMosesLobbyLocalPlayerSubsystem::GetLobbyGameState() const
 
 void UMosesLobbyLocalPlayerSubsystem::BindLobbyGameStateEvents()
 {
-	if (bBoundToGameState)
+	UWorld* World = GetWorld();
+	if (!World || bBoundToGameState)
 	{
 		return;
 	}
@@ -73,21 +74,46 @@ void UMosesLobbyLocalPlayerSubsystem::BindLobbyGameStateEvents()
 		return;
 	}
 
-	bBoundToGameState = true;
+	UnbindLobbyGameStateEvents();
 
-	// =========================================================
-	// - GameState OnRep -> Broadcast
-	// - LPS는 이벤트를 받아 "연출" 실행
-	// =========================================================
+	bBoundToGameState = true;
+	CachedLobbyGS = LGS;
+
 	LGS->OnPhaseChanged.AddUObject(this, &UMosesLobbyLocalPlayerSubsystem::HandlePhaseChanged);
-	LGS->OnDialogueStateChanged.AddUObject(this, &UMosesLobbyLocalPlayerSubsystem::HandleDialogueStateChanged);
+
+	// ✅ UFUNCTION 진입점으로 수렴
+	LGS->OnDialogueStateChanged.AddUObject(this, &UMosesLobbyLocalPlayerSubsystem::HandleGameStateDialogueChanged);
 
 	UE_LOG(LogMosesSpawn, Log, TEXT("[DOD][LPS] BindLobbyGameStateEvents OK (LateJoinRecoverReady)"));
 
-	// ✅ LateJoin / 초기 접속 직후:
-	// - 이미 복제된 현재 상태가 있을 수 있으므로 "즉시 1회 적용"
+	// ✅ LateJoin / 초기 접속 즉시 1회 적용
 	HandlePhaseChanged(LGS->GetGamePhase());
 	HandleDialogueStateChanged(LGS->GetDialogueNetState());
+}
+
+void UMosesLobbyLocalPlayerSubsystem::UnbindLobbyGameStateEvents()
+{
+	if (!bBoundToGameState)
+	{
+		return;
+	}
+
+	AMosesLobbyGameState* LGS = CachedLobbyGS.Get();
+	if (!LGS)
+	{
+		// 캐시는 죽었지만 플래그는 살아있을 수 있으니 정리
+		bBoundToGameState = false;
+		CachedLobbyGS = nullptr;
+		return;
+	}
+
+	LGS->OnPhaseChanged.RemoveAll(this);
+	LGS->OnDialogueStateChanged.RemoveAll(this);
+
+	bBoundToGameState = false;
+	CachedLobbyGS = nullptr;
+
+	UE_LOG(LogMosesSpawn, Log, TEXT("[DOD][LPS] UnbindLobbyGameStateEvents OK"));
 }
 
 // =========================================================
@@ -599,6 +625,50 @@ void UMosesLobbyLocalPlayerSubsystem::ExitRulesView_UIOnly()
 void UMosesLobbyLocalPlayerSubsystem::SetLobbyWidget(UMosesLobbyWidget* InWidget)
 {
 	LobbyWidget = InWidget;
+
+	// ✅ 위젯 재생성/재등록 시 "현재 모드" 즉시 복구
+	if (AMosesLobbyGameState* LGS = GetLobbyGameState())
+	{
+		const bool bDialogue = (LGS->GetGamePhase() == EGamePhase::LobbyDialogue);
+		if (bDialogue)
+		{
+			// Phase 기반 연출 정책 유지: Phase가 Dialogue면 RulesView 상태가 되어야 함
+			EnterRulesView_UIOnly();
+		}
+		else
+		{
+			ExitRulesView_UIOnly();
+		}
+
+		// Dialogue state도 즉시 캐시/브로드캐스트(위젯이 구독하고 있다면 바로 표시됨)
+		HandleDialogueStateChanged(LGS->GetDialogueNetState());
+	}
+}
+
+void UMosesLobbyLocalPlayerSubsystem::RequestEnterDialogueRetry_NextTick()
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	FTimerManager& TM = World->GetTimerManager();
+
+	if (TM.TimerExists(EnterDialogueRetryHandle) && (TM.IsTimerActive(EnterDialogueRetryHandle) || TM.IsTimerPending(EnterDialogueRetryHandle)))
+	{
+		return;
+	}
+
+	EnterDialogueRetryHandle = TM.SetTimerForNextTick(this, &UMosesLobbyLocalPlayerSubsystem::RequestEnterLobbyDialogue);
+}
+
+void UMosesLobbyLocalPlayerSubsystem::ClearEnterDialogueRetry()
+{
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(EnterDialogueRetryHandle);
+	}
 }
 
 // =========================================================
@@ -647,7 +717,17 @@ void UMosesLobbyLocalPlayerSubsystem::RequestEnterLobbyDialogue()
 		return;
 	}
 
-	UE_LOG(LogMosesSpawn, Log, TEXT("[DOD][UI->SV] RequestEnterLobbyDialogue"));
+	// ✅ 핵심: 초기엔 NetConnection/PlayerState가 없어서 RPC가 씹힐 수 있음
+	if (!PC->GetNetConnection() || !PC->PlayerState)
+	{
+		UE_LOG(LogMosesSpawn, Warning, TEXT("[DOD][UI->SV] EnterLobbyDialogue WAIT (Conn/PS not ready) -> retry"));
+		RequestEnterDialogueRetry_NextTick();
+		return;
+	}
+
+	ClearEnterDialogueRetry();
+
+	UE_LOG(LogMosesSpawn, Log, TEXT("[DOD][UI->SV] RequestEnterLobbyDialogue SEND"));
 	PC->Server_RequestEnterLobbyDialogue();
 }
 
@@ -694,4 +774,18 @@ void UMosesLobbyLocalPlayerSubsystem::HandleDialogueStateChanged(const FDialogue
 	// Day7 범위:
 	// - 위젯이 필요하면 여기서 Widget에 전달하거나,
 	// - Widget이 Subsystem 이벤트를 직접 구독하도록 연결해도 된다.
+}
+
+void UMosesLobbyLocalPlayerSubsystem::HandleGameStateDialogueChanged(const FDialogueNetState& NewState)
+{
+	HandleDialogueStateChanged(NewState);
+}
+
+void UMosesLobbyLocalPlayerSubsystem::NotifyDialogueStateChanged(const FDialogueNetState& NewState)
+{
+	// late join / widget 재생성 복구용 캐시
+	LastDialogueNetState = NewState;
+
+	// LobbyWidget 구독자에게 브로드캐스트
+	LobbyDialogueStateChanged.Broadcast(NewState);
 }
