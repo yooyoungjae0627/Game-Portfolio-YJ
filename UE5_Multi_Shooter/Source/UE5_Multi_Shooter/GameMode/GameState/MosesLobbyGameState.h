@@ -2,7 +2,8 @@
 
 
 #include "GameFramework/GameStateBase.h"
-#include "UE5_Multi_Shooter/MosesDialogueTypes.h"
+#include "UE5_Multi_Shooter/Dialogue/MosesDialogueTypes.h"
+#include "UE5_Multi_Shooter/UI/Lobby/MosesLobbyChatTypes.h"
 #include "Net/Serialization/FastArraySerializer.h"
 #include "MosesLobbyGameState.generated.h"
 
@@ -198,6 +199,18 @@ public:
 	// 서버 전용: Pause / Resume / 기타 Flow 전환
 	void ServerSetFlowState(EDialogueFlowState NewState);
 
+	// 서버 전용: 같은 라인 재시작(Repeat)
+	void ServerRepeatCurrentLine();
+
+	// 서버 전용: 0번부터 재시작(Restart)
+	void ServerRestartDialogue();
+
+	/** 서버 권위 채팅 추가 */
+	void Server_AddChatMessage(class AMosesPlayerState* SenderPS, const FString& Text);
+
+	/** UI 읽기용 */
+	const TArray<FLobbyChatMessage>& GetChatHistory() const { return ChatHistory; }
+
 protected:
 	virtual void Tick(float DeltaSeconds) override;
 
@@ -220,6 +233,10 @@ private:
 
 	UFUNCTION()
 	void OnRep_DialogueNetState();
+
+	UFUNCTION()
+	void OnRep_ChatHistory();
+
 
 	// ---------------------------
 	// Internal helpers
@@ -285,11 +302,18 @@ private:
 	UPROPERTY(ReplicatedUsing = OnRep_DialogueNetState)
 	FDialogueNetState DialogueNetState;
 
-	// 서버 전용 데이터 (복제 ❌)
-	UPROPERTY()
-	TObjectPtr<UMosesDialogueLineDataAsset> DialogueData;
+	// Dialogue 기본 데이터 (경로 기반 로딩용)
+	UPROPERTY(EditDefaultsOnly, Category = "Dialogue")
+	TSoftObjectPtr<UMosesDialogueLineDataAsset> DefaultLobbyDialogueDataAsset;
+
+	// 서버 전용 런타임 데이터 (복제 ❌)
+	UPROPERTY(Transient)
+	TObjectPtr<UMosesDialogueLineDataAsset> DialogueData = nullptr;
 
 	// 서버 전용: Speaking 로그 스팸 방지용 (복제 ❌)
 	UPROPERTY()
 	float DialogueSpeakingLogCooldown = 0.0f;
+
+	UPROPERTY(ReplicatedUsing = OnRep_ChatHistory)
+	TArray<FLobbyChatMessage> ChatHistory;
 };

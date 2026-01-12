@@ -1,6 +1,5 @@
 ﻿#pragma once
 
-#include "CoreMinimal.h"
 #include "Components/GameStateComponent.h"
 #include "UObject/PrimaryAssetId.h"
 

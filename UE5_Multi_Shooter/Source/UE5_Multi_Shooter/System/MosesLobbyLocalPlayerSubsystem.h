@@ -1,11 +1,13 @@
-﻿#pragma once
+﻿// MosesLobbyLocalPlayerSubsystem.h
+
+#pragma once
 
 #include "Subsystems/LocalPlayerSubsystem.h"
+
 #include "UE5_Multi_Shooter/UI/Lobby/MosesLobbyViewTypes.h"
-#include "UE5_Multi_Shooter/MosesDialogueTypes.h"
+#include "UE5_Multi_Shooter/Dialogue/MosesDialogueTypes.h"
 
 #include "MosesLobbyLocalPlayerSubsystem.generated.h"
-
 
 class UMosesLobbyWidget;
 class ALobbyPreviewActor;
@@ -31,7 +33,6 @@ DECLARE_MULTICAST_DELEGATE_OneParam(FOnLobbyDialogueStateChanged, const FDialogu
  * - 로비 화면 "보기 모드" 전환(규칙 보기 등)을 책임진다.
  * - UI는 상태만 받아서 보여주기/숨기기만 한다.
  */
-
 UCLASS()
 class UE5_MULTI_SHOOTER_API UMosesLobbyLocalPlayerSubsystem : public ULocalPlayerSubsystem
 {
@@ -46,9 +47,18 @@ protected:
 
 public:
 	// ---------------------------
+	// Dialogue Command (Input pipe)
+	// ---------------------------
+	/**
+	 * SubmitCommandText
+	 * - 디버그 텍스트 입력/향후 STT 입력을 하나의 파이프로 통합
+	 * - DetectIntent -> PC RPC(Server_SubmitDialogueCommand)
+	 */
+	void SubmitCommandText(const FString& Text);
+
+	// ---------------------------
 	// UI Only: Rules View
 	// ---------------------------
-
 	/** [게임 진행 방법] 버튼: 로컬 UI/카메라만 전환 */
 	void EnterRulesView_UIOnly();
 
@@ -58,10 +68,9 @@ public:
 	// ---------------------------
 	// LobbyWidget registration
 	// ---------------------------
-
 	/**
-	 *  LobbyWidget 인스턴스를 Subsystem에 알려줘야
-	 *  Subsystem이 UI모드 전환을 호출할 수 있다.
+	 * LobbyWidget 인스턴스를 Subsystem에 알려줘야
+	 * Subsystem이 UI모드 전환을 호출할 수 있다.
 	 */
 	void SetLobbyWidget(UMosesLobbyWidget* InWidget);
 
@@ -88,8 +97,6 @@ public:
 	// ---------------------------
 	FOnLobbyPlayerStateChanged& OnLobbyPlayerStateChanged() { return LobbyPlayerStateChangedEvent; }
 	FOnLobbyRoomStateChanged& OnLobbyRoomStateChanged() { return LobbyRoomStateChangedEvent; }
-
-	// ✅ NEW
 	FOnLobbyJoinRoomResult& OnLobbyJoinRoomResult() { return LobbyJoinRoomResultEvent; }
 
 	// ---------------------------
@@ -100,7 +107,7 @@ public:
 	ELobbyViewMode GetLobbyViewMode() const { return LobbyViewMode; }
 
 	// ---------------------------
-	//  UI -> Server Phase Request
+	// UI -> Server Phase Request
 	// ---------------------------
 	void RequestEnterLobbyDialogue();
 	void RequestExitLobbyDialogue();
@@ -119,6 +126,17 @@ public:
 
 	// GameState 이벤트 수신/브로드캐스트
 	void NotifyDialogueStateChanged(const FDialogueNetState& NewState);
+
+private:
+	// ---------------------------
+	// Lobby UI Refresh (핵심 파이프)
+	// ---------------------------
+	/** Room/Chat/PlayerState 변경 등 어떤 이유로든 로비 UI를 한 번 갱신하는 단일 진입점 */
+	void RefreshLobbyUI_FromCurrentState();
+
+	/** GameState 바인딩이 너무 이른 경우를 위한 NextTick 재시도 */
+	void RequestBindLobbyGameStateEventsRetry_NextTick();
+	void ClearBindLobbyGameStateEventsRetry();
 
 private:
 	FOnRulesViewModeChanged RulesViewModeChangedEvent;
@@ -158,7 +176,7 @@ private:
 	APlayerController* GetLocalPC() const;
 
 	// ---------------------------
-	// Retry control (중복 예약 방지)
+	// Retry control (Preview refresh)
 	// ---------------------------
 	void RequestPreviewRefreshRetry_NextTick();
 	void ClearPreviewRefreshRetry();
@@ -178,9 +196,12 @@ private:
 	UFUNCTION()
 	void HandleGameStateDialogueChanged(const FDialogueNetState& NewState);
 
-	// GameState 캐시
+private:
+	// ---------------------------
+	// Cached pointers
+	// ---------------------------
 	UPROPERTY(Transient)
-	TWeakObjectPtr<AMosesLobbyGameState> CachedLobbyGS;
+	TWeakObjectPtr<class AMosesLobbyGameState> CachedLobbyGS;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UMosesLobbyWidget> LobbyWidget = nullptr;
@@ -188,11 +209,19 @@ private:
 	UPROPERTY(Transient)
 	TObjectPtr<ALobbyPreviewActor> CachedLobbyPreviewActor = nullptr;
 
+	// ---------------------------
+	// Events
+	// ---------------------------
 	FOnLobbyPlayerStateChanged LobbyPlayerStateChangedEvent;
 	FOnLobbyRoomStateChanged LobbyRoomStateChangedEvent;
-
 	FOnLobbyJoinRoomResult LobbyJoinRoomResultEvent;
 
+	FOnLobbyDialogueStateChanged LobbyDialogueStateChanged;
+	FDialogueNetState LastDialogueNetState;
+
+	// ---------------------------
+	// State
+	// ---------------------------
 	ELobbyViewMode LobbyViewMode = ELobbyViewMode::Default;
 
 	// 개발자 주석: "프리뷰"는 로컬 연출이므로 서버/복제 없이 Local에서만 유지한다.
@@ -201,48 +230,40 @@ private:
 	// 현재 모드 (왕복 10회 꼬임 방지)
 	bool bInRulesView = false;
 
-	// 카메라 태그 (레벨 배치 Actor Tag와 동일하게 맞춰라)
+	bool bBoundToGameState = false;
+
+	/** CharPreview WAIT 로그를 1회만 찍기 위한 플래그 (스팸 방지) */
+	bool bLoggedPreviewWaitOnce = false;
+
+	/** GS Bind WAIT 로그를 1회만 찍기 위한 플래그 (스팸 방지) */
+	bool bLoggedBindWaitOnce = false;
+
+	// 클라 명령 시퀀스(서버 Gate의 Duplicate/Old 방지용)
+	uint16 NextClientCommandSeq = 1;
+
+	// ---------------------------
+	// Camera
+	// ---------------------------
 	UPROPERTY(EditDefaultsOnly, Category = "Lobby|Camera")
 	FName LobbyPreviewCameraTag = TEXT("LobbyPreviewCamera");
 
 	UPROPERTY(EditDefaultsOnly, Category = "Lobby|Camera")
 	FName DialogueCameraTag = TEXT("DialogueCamera_LobbyNPC");
 
-	// 블렌드 세팅
 	UPROPERTY(EditDefaultsOnly, Category = "Lobby|Camera")
 	float CameraBlendTime = 0.35f;
 
+	// ---------------------------
+	// Timers
+	// ---------------------------
 	FTimerHandle PreviewRefreshRetryHandle;
-
-	// ---------------------------
-	// Retry control (Enter Dialogue RPC)
-	// ---------------------------
 	FTimerHandle EnterDialogueRetryHandle;
 
-	FOnLobbyDialogueStateChanged LobbyDialogueStateChanged;
-	FDialogueNetState LastDialogueNetState;
+	FTimerHandle BindLobbyGSRetryHandle;
 
-	bool bBoundToGameState = false;
-
+	// ---------------------------
+	// Dialogue
+	// ---------------------------
+	UPROPERTY(EditDefaultsOnly, Category = "Dialogue|Command")
+	TObjectPtr<class UCommandLexiconDA> CommandLexicon = nullptr;
 };
-
-// ===============================
-// Log spam guard helpers (cpp-local)
-// ===============================
-namespace MosesLobbyLogGuard
-{
-	static FORCEINLINE bool ChangedBool(bool& InOutCached, bool NewValue)
-	{
-		if (InOutCached == NewValue) return false;
-		InOutCached = NewValue;
-		return true;
-	}
-
-	template<typename T>
-	static FORCEINLINE bool ChangedValue(T& InOutCached, const T& NewValue)
-	{
-		if (InOutCached == NewValue) return false;
-		InOutCached = NewValue;
-		return true;
-	}
-}

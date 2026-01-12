@@ -12,6 +12,8 @@
 #include "Components/CanvasPanelSlot.h"
 #include "Components/HorizontalBox.h"
 #include "Components/Overlay.h"
+#include "Components/ProgressBar.h"
+#include "Components/EditableTextBox.h"
 
 #include "Engine/Engine.h"
 #include "Engine/NetConnection.h"
@@ -29,8 +31,12 @@
 #include "UE5_Multi_Shooter/UI/Lobby/MSCreateRoomPopupWidget.h"
 #include "UE5_Multi_Shooter/UI/Lobby/MSLobbyRoomItemWidget.h"
 
-#include "UE5_Multi_Shooter/MosesDialogueTypes.h"
-#include "UE5_Multi_Shooter/Data/MosesDialogueLineDataAsset.h"
+#include "UE5_Multi_Shooter/Dialogue/MosesLobbyVoiceSubsystem.h"
+#include "UE5_Multi_Shooter/Dialogue/MosesDialogueTypes.h"
+#include "UE5_Multi_Shooter/Dialogue/MosesDialogueLineDataAsset.h"
+#include "UE5_Multi_Shooter/UI/Lobby/MosesLobbyChatTypes.h"
+#include "UE5_Multi_Shooter/UI/Lobby/MosesLobbyChatRowItem.h"
+
 
 // =====================================================
 // Engine Lifecycle
@@ -45,12 +51,16 @@ void UMosesLobbyWidget::NativeConstruct()
 		*GetNameSafe(GetOwningLocalPlayer()),
 		*GetNameSafe(GetWorld()));
 
-	// 기본: 로비 시작 시 말풍선은 무조건 숨김
+	// ✅ Bubble은 Construct에서 강제로 숨기지 않는다.
+	// - '항상 보임' 정책에서는 대화 NetState가 오면 바로 표시돼야 함
+	// - 초기에는 "보여줄 게 없으면 Apply에서 Hide"가 처리한다.
 	if (DialogueBubbleWidget)
 	{
 		UE_LOG(LogMosesSpawn, Warning, TEXT("[LobbyUI] DialogueBubbleWidget OK = %s"), *GetNameSafe(DialogueBubbleWidget));
-		DialogueBubbleWidget->SetVisibility(ESlateVisibility::Collapsed);
-		SetBubbleOpacity(0.f);
+
+		// 안전 기본값: 일단 Hidden으로만 두고(레이아웃 유지), 상태 반영에서 최종 결정
+		DialogueBubbleWidget->SetVisibility(ESlateVisibility::Hidden);
+		SetBubbleOpacity(1.f);
 	}
 	else
 	{
@@ -77,20 +87,18 @@ void UMosesLobbyWidget::NativeConstruct()
 	BindListViewEvents();
 	BindSubsystemEvents();
 
-	// ✅ Bubble 내부 위젯 레퍼런스 캐시 (LobbyWidget 내부에서 직접 찾는 방식)
 	CacheDialogueBubble_InternalRefs();
 
-	// RulesView OFF로 시작 (패널/버튼/말풍선 포함)
+	// RulesView OFF로 시작
 	SetRulesViewMode(false);
 
 	RefreshAll_UI();
 
-	// ✅ 대화 상태 “즉시 복구”(late join / 위젯 재생성)
+	// ✅ 대화 상태 즉시 복구 (late join / 위젯 재생성)
 	if (LobbyLPS)
 	{
 		HandleDialogueStateChanged_UI(LobbyLPS->GetLastDialogueNetState());
 	}
-
 }
 
 void UMosesLobbyWidget::NativeDestruct()
@@ -142,6 +150,11 @@ void UMosesLobbyWidget::NativeDestruct()
 	if (Btn_SelectedChracter)
 	{
 		Btn_SelectedChracter->OnClicked.RemoveAll(this);
+	}
+
+	if (BTN_SendChat)
+	{
+		BTN_SendChat->OnClicked.RemoveAll(this);
 	}
 
 	LobbyLPS = nullptr;
@@ -200,6 +213,21 @@ void UMosesLobbyWidget::BindLobbyButtons()
 	if (Btn_ExitDialogue)
 	{
 		Btn_ExitDialogue->OnClicked.AddDynamic(this, &UMosesLobbyWidget::OnClicked_ExitDialogue);
+	}
+
+	if (Btn_MicToggle)
+	{
+		Btn_MicToggle->OnClicked.AddDynamic(this, &UMosesLobbyWidget::OnClicked_MicToggle);
+	}
+
+	if (Btn_SubmitCommand)
+	{
+		Btn_SubmitCommand->OnClicked.AddDynamic(this, &UMosesLobbyWidget::OnClicked_SubmitCommand);
+	}
+
+	if (BTN_SendChat)
+	{
+		BTN_SendChat->OnClicked.AddDynamic(this, &UMosesLobbyWidget::OnClicked_SendChat);
 	}
 }
 
@@ -555,45 +583,37 @@ void UMosesLobbyWidget::OnClicked_CreateRoom()
 
 void UMosesLobbyWidget::OnClicked_LeaveRoom()
 {
-	AMosesPlayerController* PC = GetMosesPC();
-	if (!PC)
+	if (AMosesPlayerController* MosesPlayerController = Cast<AMosesPlayerController>(GetOwningPlayer()))
 	{
-		return;
+		MosesPlayerController->Server_LeaveRoom();
 	}
-
-	PC->Server_LeaveRoom();
 }
 
 void UMosesLobbyWidget::OnClicked_StartGame()
 {
-	AMosesPlayerController* PC = GetMosesPC();
-	if (!PC)
+	if (AMosesPlayerController* MosesPlayerController = Cast<AMosesPlayerController>(GetOwningPlayer()))
 	{
-		return;
+		MosesPlayerController->Server_RequestStartMatch();
 	}
-
-	PC->Server_RequestStartGame();
 }
 
 void UMosesLobbyWidget::OnReadyChanged(bool bIsChecked)
 {
-	if (bPendingEnterRoom_UIOnly)
+	if (AMosesPlayerController* MosesPlayerController = GetMosesPC())
 	{
-		if (CheckBox_Ready)
+		if (bPendingEnterRoom_UIOnly)
 		{
-			CheckBox_Ready->SetIsChecked(false);
+			if (CheckBox_Ready)
+			{
+				CheckBox_Ready->SetIsChecked(false);
+			}
+
+			return;
 		}
-		return;
-	}
 
-	AMosesPlayerController* PC = GetMosesPC();
-	if (!PC)
-	{
-		return;
+		MosesPlayerController->Server_SetReady(bIsChecked);
+		UpdateStartButton();
 	}
-
-	PC->Server_SetReady(bIsChecked);
-	UpdateStartButton();
 }
 
 void UMosesLobbyWidget::OnClicked_CharNext()
@@ -628,27 +648,25 @@ void UMosesLobbyWidget::OnClicked_GameRules()
 		return;
 	}
 
-	// 1) 로컬 연출은 즉시(카메라/룰뷰 UI)
+	// 1) 로컬 RulesView 연출은 즉시
 	Subsys->EnterRulesView_UIOnly();
 
-	// 2) 서버 대화 진입은 "방 안"일 때만
-	const AMosesPlayerState* PS = GetMosesPS();
-	const bool bInRoom = (PS && PS->GetRoomId().IsValid());
-	const bool bPending = bPendingEnterRoom_UIOnly;
-
-	UE_LOG(LogMosesSpawn, Warning,
-		TEXT("[BTN][GameRules] Clicked | InRoom=%d Pending=%d PS=%s RoomId=%s"),
-		bInRoom ? 1 : 0,
-		bPending ? 1 : 0,
-		*GetNameSafe(PS),
-		PS ? *PS->GetRoomId().ToString() : TEXT("None"));
-
-	if (!bInRoom || bPending)
+	// 2) ✅ 여기서 "버블을 켠다" 정책이라면, UI에서 켠 직후 최신 상태를 1회 강제 Apply
+	//    (OnRep 늦거나, 캐시가 같아서 Apply가 SKIP 되는 문제 종결)
+	if (LobbyLPS)
 	{
-		UE_LOG(LogMosesSpawn, Warning, TEXT("[BTN][GameRules] Skip Server Dialogue (NotInRoom or Pending)"));
-		return; // ✅ 여기서 끝: 로컬 규칙 설명만 보여준다
+		const FDialogueNetState& Latest = LobbyLPS->GetLastDialogueNetState();
+		ApplyDialogueState_ToBubbleUI(Latest); // ✅ 강제 1회 적용(내부에서 Force 조건 처리)
 	}
 
+	// 3) 서버 대화 시작: 방 안/밖 상관없이 허용 (Pending 중엔 금지)
+	if (bPendingEnterRoom_UIOnly)
+	{
+		UE_LOG(LogMosesSpawn, Warning, TEXT("[BTN][GameRules] Skip Server Dialogue (PendingEnterRoom)"));
+		return;
+	}
+
+	UE_LOG(LogMosesSpawn, Warning, TEXT("[BTN][GameRules] RequestEnterLobbyDialogue (Room independent)"));
 	Subsys->RequestEnterLobbyDialogue();
 }
 
@@ -660,21 +678,46 @@ void UMosesLobbyWidget::OnClicked_ExitDialogue()
 		return;
 	}
 
+	// 1) UI-only 연출 복귀
 	Subsys->ExitRulesView_UIOnly();
 
-	const AMosesPlayerState* PS = GetMosesPS();
-	const bool bInRoom = (PS && PS->GetRoomId().IsValid());
-	if (!bInRoom)
+	// 2) ✅ "Exit 누르면 버블 Visible 꺼짐" 정책 유지
+	//    단, 다음 Enter에서 텍스트가 안 바뀌는 문제를 막기 위해
+	//    여기서 캐시를 무효화(Reset) 해준다.
 	{
-		UE_LOG(LogMosesSpawn, Warning, TEXT("[BTN][ExitDialogue] Skip Server Exit (NotInRoom)"));
-		return;
+		// 버블은 즉시 내림 (원하는 정책)
+		HideDialogueBubble_UI(/*bPlayFadeOut*/false);
+		SetSubtitleVisibility(false);
+
+		// ✅ 핵심: 캐시 무효화 -> 다음에 켤 때 무조건 SetText 1회 강제
+		CachedDialogueSeq = 0;
+		CachedLineIndex = INDEX_NONE;
+		CachedFlowState = EDialogueFlowState::Ended;
+		PendingSubtitleText = FText::GetEmpty();
 	}
 
-	if (AMosesPlayerController* PC = GetMosesPC())
+	// 3) 서버 Exit 요청
+	Subsys->RequestExitLobbyDialogue();
+}
+
+void UMosesLobbyWidget::OnClicked_SendChat()
+{
+	if (AMosesPlayerController* MosesPlayerController = Cast<AMosesPlayerController>(GetOwningPlayer()))
 	{
-		PC->Server_RequestExitLobbyDialogue();
+		const FString Text = GetChatInput().TrimStartAndEnd();
+		if (!Text.IsEmpty())
+		{
+			MosesPlayerController->Server_SendLobbyChat(Text);
+
+			// UX: 전송 후 입력창 비우기
+			if (ChatEditableTextBox)
+			{
+				ChatEditableTextBox->SetText(FText::GetEmpty());
+			}
+		}
 	}
 }
+
 
 void UMosesLobbyWidget::OnRoomItemClicked(UObject* ClickedItem)
 {
@@ -972,16 +1015,20 @@ void UMosesLobbyWidget::HandleDialogueStateChanged_UI(const FDialogueNetState& N
 
 bool UMosesLobbyWidget::ShouldShowBubbleInCurrentMode(const FDialogueNetState& NetState) const
 {
-	// ✅ 정책: RulesView에서만 버블 ON
-	if (!bRulesViewEnabled)
-	{
-		return false;
-	}
+	// ✅ 정책:
+	// - UI 모드(RulesView 등)와 무관하게,
+	// - DialogueNetState가 "유효"하면 버블은 보여준다.
+	// - Ended만 완전 종료로 취급.
 
-	// ✅ NetState가 유효하고, 대화가 끝난 상태가 아니어야 함
-	return (NetState.SubState != EDialogueSubState::None)
-		&& (NetState.FlowState != EDialogueFlowState::Ended);
+	const bool bEnded = (NetState.FlowState == EDialogueFlowState::Ended);
+
+	// LineIndex는 음수면 유효하지 않은 상태로 본다(방어)
+	const bool bValidLine = (NetState.LineIndex >= 0);
+
+	// SubState는 None이어도(WaitingInput 같은) "마지막 말풍선 유지"가 목표면 보여준다.
+	return (!bEnded) && bValidLine;
 }
+
 
 FText UMosesLobbyWidget::GetSubtitleTextFromNetState(const FDialogueNetState& NetState) const
 {
@@ -1003,46 +1050,108 @@ void UMosesLobbyWidget::ApplyDialogueState_ToBubbleUI(const FDialogueNetState& N
 		return;
 	}
 
-	// ✅ 내부 캐시 없으면 재시도
+	// 내부 캐시 없으면 재시도
 	if (!CachedBubbleRoot || !CachedTB_DialogueText)
 	{
 		CacheDialogueBubble_InternalRefs();
 	}
 
-	const bool bShouldShow = ShouldShowBubbleInCurrentMode(NewState);
+	// 1) 표시 여부 판정
+	const bool bShouldShowBubble = ShouldShowBubbleInCurrentMode(NewState);
 
-	if (!bShouldShow)
-	{
-		HideDialogueBubble_UI(true);
-		return;
-	}
+	// 텍스트 미리 생성
+	const FText NewSubtitle = GetSubtitleTextFromNetState(NewState);
 
-	// --- 표시 처리 ---
+	// 2) 현재 UI 상태
+	const bool bWasBubbleHidden =
+		(DialogueBubbleWidget->GetVisibility() == ESlateVisibility::Collapsed);
+
+	const bool bSubtitleCurrentlyHidden =
+		(CachedTB_DialogueText && CachedTB_DialogueText->GetVisibility() == ESlateVisibility::Collapsed);
+
+	// 3) 변화 감지 (캐시 갱신 전에 계산)
 	const bool bSeqChanged = (CachedDialogueSeq != NewState.LastCommandSeq);
 	const bool bLineChanged = (CachedLineIndex != NewState.LineIndex);
 	const bool bFlowChanged = (CachedFlowState != NewState.FlowState);
 
+	// ✅ "세션 리셋" 감지: 서버가 Seq를 다시 1부터 시작하는 등
+	const bool bHasValidCache = (CachedLineIndex != INDEX_NONE);
+	const bool bSeqResetDetected =
+		bHasValidCache &&
+		(NewState.LastCommandSeq > 0) &&
+		(CachedDialogueSeq > 0) &&
+		(NewState.LastCommandSeq < CachedDialogueSeq);
+
+	// ✅ 캐시가 무효화 상태면(Exit에서 Reset 해둔 상태) 강제 Apply
+	const bool bCacheInvalid = (CachedLineIndex == INDEX_NONE) || (CachedDialogueSeq == 0);
+
+	// ---------------------------------------------------------
+	// 4) 버블을 보여주지 않는 상태면: UI 내리고 캐시도 무효화
+	// ---------------------------------------------------------
+	if (!bShouldShowBubble)
+	{
+		// 다음 세션에서 반드시 다시 그리도록 무효화
+		CachedDialogueSeq = 0;
+		CachedLineIndex = INDEX_NONE;
+		CachedFlowState = EDialogueFlowState::Ended;
+		PendingSubtitleText = FText::GetEmpty();
+
+		SetSubtitleVisibility(false);
+		HideDialogueBubble_UI(true);
+		return;
+	}
+
+	// ---------------------------------------------------------
+	// 5) 버블은 보여준다
+	// ---------------------------------------------------------
+	ShowDialogueBubble_UI(bWasBubbleHidden);
+
+	// 메타휴먼 강제 Collapsed 상태면 Pending만 갱신
+	if (bSubtitleForcedCollapsedByMetaHuman)
+	{
+		PendingSubtitleText = NewSubtitle;
+		return;
+	}
+
+	SetSubtitleVisibility(true);
+
+	// ---------------------------------------------------------
+	// 6) ✅ 텍스트 강제 적용 조건
+	// ---------------------------------------------------------
+	const bool bHasPending = !PendingSubtitleText.IsEmpty();
+	const bool bRecoveredFromHidden = (bWasBubbleHidden || bSubtitleCurrentlyHidden);
+
+	const bool bForceApply =
+		bRecoveredFromHidden ||
+		bHasPending ||
+		bSeqResetDetected ||
+		bCacheInvalid;
+
+	// 7) 텍스트 갱신
+	if (bForceApply || bLineChanged || bSeqChanged)
+	{
+		const FText TextToApply = bHasPending ? PendingSubtitleText : NewSubtitle;
+		PendingSubtitleText = FText::GetEmpty();
+
+		SetDialogueBubbleText_UI(TextToApply);
+
+		UE_LOG(LogMosesSpawn, Log,
+			TEXT("[DOD][UI] BubbleVisible=1 Text='%s' line=%d Flow=%d Sub=%d Seq=%d (Apply=1 Force=%d Reset=%d Invalid=%d)"),
+			*TextToApply.ToString(),
+			NewState.LineIndex,
+			(int32)NewState.FlowState,
+			(int32)NewState.SubState,
+			NewState.LastCommandSeq,
+			bForceApply ? 1 : 0,
+			bSeqResetDetected ? 1 : 0,
+			bCacheInvalid ? 1 : 0
+		);
+	}
+
+	// 8) 캐시 갱신은 마지막에
 	CachedDialogueSeq = NewState.LastCommandSeq;
 	CachedLineIndex = NewState.LineIndex;
 	CachedFlowState = NewState.FlowState;
-
-	const bool bWasHidden = (DialogueBubbleWidget->GetVisibility() == ESlateVisibility::Collapsed);
-
-	// hidden -> show면 FadeIn
-	ShowDialogueBubble_UI(bWasHidden);
-
-	// 텍스트는 라인/seq 바뀐 경우에만 갱신
-	if (bLineChanged || bSeqChanged)
-	{
-		const FText Subtitle = GetSubtitleTextFromNetState(NewState);
-		SetDialogueBubbleText_UI(Subtitle);
-
-		UE_LOG(LogMosesSpawn, Log, TEXT("[DOD][UI] BubbleVisible=1 Text='%s' line=%d Flow=%d Seq=%d"),
-			*Subtitle.ToString(),
-			NewState.LineIndex,
-			(int32)NewState.FlowState,
-			NewState.LastCommandSeq);
-	}
 
 	(void)bFlowChanged;
 }
@@ -1055,7 +1164,6 @@ void UMosesLobbyWidget::SetRulesViewMode(bool bEnable)
 {
 	if (bRulesViewEnabled == bEnable)
 	{
-		// 기존 Warning -> VeryVerbose (또는 완전 삭제)
 		UE_LOG(LogMosesSpawn, VeryVerbose, TEXT("[LobbyUI] SetRulesViewMode SKIP Already=%d"),
 			bEnable ? 1 : 0);
 		return;
@@ -1076,6 +1184,7 @@ void UMosesLobbyWidget::SetRulesViewMode(bool bEnable)
 
 	if (bEnable)
 	{
+		// ✅ RulesView ON: 패널만 숨김
 		SetVisSafe(LeftPanel, ESlateVisibility::Collapsed);
 		SetVisSafe(RightPanel, ESlateVisibility::Collapsed);
 		SetVisSafe(CharacterSelectedButtonsBox, ESlateVisibility::Collapsed);
@@ -1084,12 +1193,11 @@ void UMosesLobbyWidget::SetRulesViewMode(bool bEnable)
 
 		SetVisSafe(Btn_ExitDialogue, ESlateVisibility::Visible);
 
-		// ✅ RulesView ON: "무조건 Visible"이 아니라 Apply에서 켜게 한다
-		SetVisSafe(DialogueBubbleWidget, ESlateVisibility::Collapsed);
-		SetBubbleOpacity(0.f);
-		StopBubbleFade();
+		// ✅ Bubble은 여기서 건드리지 않는다.
+		// - 강제 Collapsed/Opacity0 제거
+		// - 대화 상태에 따라 ApplyDialogueState_ToBubbleUI가 show/hide 담당
 
-		// ✅ RulesView로 들어온 순간, 현재 전광판 상태로 즉시 복구
+		// ✅ RulesView 진입 순간: 최신 NetState로 즉시 반영(보여야 하면 바로 보임)
 		if (LobbyLPS)
 		{
 			HandleDialogueStateChanged_UI(LobbyLPS->GetLastDialogueNetState());
@@ -1097,20 +1205,47 @@ void UMosesLobbyWidget::SetRulesViewMode(bool bEnable)
 	}
 	else
 	{
+		// ✅ RulesView OFF: 로비 패널 복구
 		SetVisSafe(LeftPanel, ESlateVisibility::SelfHitTestInvisible);
 		SetVisSafe(RightPanel, ESlateVisibility::SelfHitTestInvisible);
 		SetVisSafe(CharacterSelectedButtonsBox, ESlateVisibility::SelfHitTestInvisible);
 
 		SetVisSafe(Btn_ExitDialogue, ESlateVisibility::Collapsed);
 
-		// ✅ RulesView OFF: 항상 Collapsed
-		SetVisSafe(DialogueBubbleWidget, ESlateVisibility::Collapsed);
-		SetBubbleOpacity(0.f);
-		StopBubbleFade();
+		// ✅ Bubble은 여기서도 건드리지 않는다.
+		// (대화가 진행 중이면 계속 보여야 함)
 	}
 
 	RefreshGameRulesButtonVisibility();
 }
+
+void UMosesLobbyWidget::RefreshFromState(const AMosesLobbyGameState* InMosesLobbyGameState, const AMosesPlayerState* InMosesPlayerState)
+{
+	// 내 닉 표시
+	if (TXT_MyName && InMosesPlayerState)
+	{
+		TXT_MyName->SetText(FText::FromString(InMosesPlayerState->DebugName));
+	}
+
+	// 내 방 표시
+	if (TXT_MyRoom && InMosesPlayerState)
+	{
+		const FString RoomStr = InMosesPlayerState->GetRoomId().IsValid()
+			? InMosesPlayerState->GetRoomId().ToString(EGuidFormats::DigitsWithHyphens)
+			: TEXT("None");
+		TXT_MyRoom->SetText(FText::FromString(RoomStr));
+	}
+
+	// 채팅 재구축(최소 구현: 전체 clear 후 다시 add)
+	RebuildChat(InMosesLobbyGameState);
+
+	// Start는 Host만 UX 활성(최종 검증은 서버가 한다)
+	RefreshRightPanelControlsByRole();
+		
+	// (선택) Host는 Ready 버튼 비활성 같은 UX를 원하면 여기서 처리 가능
+	// if (BTN_Ready && MyPS) { BTN_Ready->SetIsEnabled(!MyPS->IsRoomHost()); }
+}
+
 
 void UMosesLobbyWidget::RefreshGameRulesButtonVisibility()
 {
@@ -1119,45 +1254,154 @@ void UMosesLobbyWidget::RefreshGameRulesButtonVisibility()
 		return;
 	}
 
-	const AMosesPlayerState* PS = GetMosesPS();
-
-	const bool bInRoomByRep = (PS && PS->GetRoomId().IsValid());
-	const bool bInRoom_UIOnly = bInRoomByRep || bPendingEnterRoom_UIOnly;
-
-	// ✅ 요구사항: "기본 상태(방 밖)"에서만 보여라
 	const bool bShouldShow =
-		(!bInRoom_UIOnly)            // 방 밖
-		&& (!bPendingEnterRoom_UIOnly)
-		&& (!bRulesViewEnabled);     // RulesView 중엔 숨김(중복 클릭 방지)
+		(!bPendingEnterRoom_UIOnly)
+		&& (!bRulesViewEnabled);
 
 	const ESlateVisibility NewVis = bShouldShow ? ESlateVisibility::Visible : ESlateVisibility::Collapsed;
 
 	Btn_GameRules->SetVisibility(NewVis);
 	Btn_GameRules->SetIsEnabled(bShouldShow);
+}
 
-	// =========================
-	// ✅ Log spam guard:
-	// - 값이 바뀔 때만 로그
-	// =========================
-	const uint32 RoomHash = PS ? GetTypeHash(PS->GetRoomId()) : 0;
-	const int32 NewHash =
-		(int32)(bShouldShow ? 1 : 0)
-		| ((bInRoomByRep ? 1 : 0) << 1)
-		| ((bPendingEnterRoom_UIOnly ? 1 : 0) << 2)
-		| ((bRulesViewEnabled ? 1 : 0) << 3)
-		| ((int32)RoomHash << 4);
+FString UMosesLobbyWidget::GetChatInput() const
+{
+	return ChatEditableTextBox ? ChatEditableTextBox->GetText().ToString() : FString();
+}
 
-	if (CachedGameRulesLogHash != NewHash)
+void UMosesLobbyWidget::RebuildChat(const AMosesLobbyGameState* GS)
+{
+	if (!ChatListView)
 	{
-		CachedGameRulesLogHash = NewHash;
+		return;
+	}
 
-		UE_LOG(LogMosesSpawn, Verbose,
-			TEXT("[UI][GameRulesBtn] Show=%d InRoomByRep=%d Pending=%d RulesView=%d PS=%s RoomId=%s"),
-			bShouldShow ? 1 : 0,
-			bInRoomByRep ? 1 : 0,
-			bPendingEnterRoom_UIOnly ? 1 : 0,
-			bRulesViewEnabled ? 1 : 0,
-			*GetNameSafe(PS),
-			PS ? *PS->GetRoomId().ToString() : TEXT("None"));
+	ChatListView->ClearListItems();
+
+	if (!GS)
+	{
+		return;
+	}
+
+	// ✅ GS가 가진 ChatHistory를 그대로 UI 리스트로 재생성
+	for (const FLobbyChatMessage& Msg : GS->GetChatHistory())
+	{
+		const FString Line = FString::Printf(TEXT("%s: %s"), *Msg.SenderName, *Msg.Message);
+		ChatListView->AddItem(UMosesLobbyChatRowItem::Make(this, Line));
+	}
+}
+
+void UMosesLobbyWidget::SetSubtitleVisibility(bool bVisible)
+{
+	if (!CachedTB_DialogueText)
+	{
+		return;
+	}
+
+	CachedTB_DialogueText->SetVisibility(bVisible ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+}
+
+void UMosesLobbyWidget::OnEnterMetaHumanView_SubtitleOnly()
+{
+	// ✅ 메타휴먼 시점 들어갈 때: 자막 텍스트만 강제 내린다.
+	// (버블/루트 전체는 네 기존 RulesView 정책대로 두고 싶으면 건드리지 말기)
+	if (!CachedTB_DialogueText)
+	{
+		CacheDialogueBubble_InternalRefs();
+	}
+
+	if (CachedTB_DialogueText)
+	{
+		SetSubtitleVisibility(false);
+		bSubtitleForcedCollapsedByMetaHuman = true;
+	}
+}
+
+void UMosesLobbyWidget::OnExitMetaHumanView_SubtitleOnly_Reapply(const FDialogueNetState& LatestState)
+{
+	// ✅ 메타휴먼 시점에서 돌아왔을 때:
+	// - 자막 텍스트 Visible 복구
+	// - 최신 상태를 1회 강제 Apply 해서 “텍스트가 다음 줄로 안 바뀜”을 종결한다.
+	if (!CachedTB_DialogueText)
+	{
+		CacheDialogueBubble_InternalRefs();
+	}
+
+	if (bSubtitleForcedCollapsedByMetaHuman)
+	{
+		SetSubtitleVisibility(true);
+		bSubtitleForcedCollapsedByMetaHuman = false;
+	}
+
+	// 복귀 직후 1회 강제 재적용 (Pending 처리 포함)
+	ApplyDialogueState_ToBubbleUI(LatestState);
+}
+
+void UMosesLobbyWidget::BindVoiceSubsystemEvents()
+{
+	ULocalPlayer* LP = GetOwningLocalPlayer();
+	if (!LP) return;
+
+	if (UMosesLobbyVoiceSubsystem* Voice = LP->GetSubsystem<UMosesLobbyVoiceSubsystem>())
+	{
+		Voice->OnVoiceLevelChanged().RemoveAll(this);
+		Voice->OnVoiceLevelChanged().AddUObject(this, &UMosesLobbyWidget::HandleVoiceLevelChanged);
+
+		// 초기값 즉시 반영
+		HandleVoiceLevelChanged(Voice->GetVoiceLevel01());
+	}
+}
+
+void UMosesLobbyWidget::UnbindVoiceSubsystemEvents()
+{
+	ULocalPlayer* LP = GetOwningLocalPlayer();
+	if (!LP) return;
+
+	if (UMosesLobbyVoiceSubsystem* Voice = LP->GetSubsystem<UMosesLobbyVoiceSubsystem>())
+	{
+		Voice->OnVoiceLevelChanged().RemoveAll(this);
+	}
+}
+
+void UMosesLobbyWidget::OnClicked_MicToggle()
+{
+	ULocalPlayer* LP = GetOwningLocalPlayer();
+	if (!LP) return;
+
+	if (UMosesLobbyVoiceSubsystem* Voice = LP->GetSubsystem<UMosesLobbyVoiceSubsystem>())
+	{
+		const bool bNewEnable = !Voice->IsMicEnabled();
+		Voice->SetMicEnabled(bNewEnable);
+	}
+}
+
+void UMosesLobbyWidget::HandleVoiceLevelChanged(float Level01)
+{
+	if (PB_MicLevel)
+	{
+		PB_MicLevel->SetPercent(FMath::Clamp(Level01, 0.f, 1.f));
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("[UI] MicLevel=%.2f"), Level01);
+}
+
+void UMosesLobbyWidget::OnClicked_SubmitCommand()
+{
+	if (!LobbyLPS)
+	{
+		return;
+	}
+
+	const FString Text = ET_CommandInput ? ET_CommandInput->GetText().ToString() : TEXT("");
+	if (Text.IsEmpty())
+	{
+		return;
+	}
+
+	LobbyLPS->SubmitCommandText(Text);
+
+	if (ET_CommandInput)
+	{
+		ET_CommandInput->SetText(FText::GetEmpty());
 	}
 }

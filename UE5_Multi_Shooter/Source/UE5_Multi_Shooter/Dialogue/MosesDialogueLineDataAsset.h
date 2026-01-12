@@ -1,7 +1,7 @@
 #pragma once
 
 #include "Engine/DataAsset.h"
-#include "UE5_Multi_Shooter/MosesDialogueTypes.h"
+#include "UE5_Multi_Shooter/Dialogue/MosesDialogueTypes.h"
 #include "Sound/SoundBase.h"
 #include "MosesDialogueLineDataAsset.generated.h"
 

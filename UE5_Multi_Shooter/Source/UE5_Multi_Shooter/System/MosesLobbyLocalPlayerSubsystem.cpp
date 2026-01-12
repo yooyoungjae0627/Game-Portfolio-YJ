@@ -1,4 +1,6 @@
-﻿#include "UE5_Multi_Shooter/System/MosesLobbyLocalPlayerSubsystem.h"
+﻿// MosesLobbyLocalPlayerSubsystem.cpp
+
+#include "UE5_Multi_Shooter/System/MosesLobbyLocalPlayerSubsystem.h"
 #include "UE5_Multi_Shooter/System/MosesUIRegistrySubsystem.h"
 
 #include "UE5_Multi_Shooter/Player/MosesPlayerController.h"
@@ -7,6 +9,9 @@
 #include "UE5_Multi_Shooter/GameMode/GameState/MosesLobbyGameState.h"
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
 #include "UE5_Multi_Shooter/UI/Lobby/MosesLobbyWidget.h"
+
+#include "UE5_Multi_Shooter/Dialogue/MosesDialogueCommandDetector.h"
+#include "UE5_Multi_Shooter/Dialogue/CommandLexiconDA.h"
 
 #include "UE5_Multi_Shooter/Lobby/LobbyPreviewActor.h"
 
@@ -19,6 +24,26 @@
 #include "Blueprint/UserWidget.h"
 
 #include "TimerManager.h"
+
+namespace MosesLobbyLogGuard
+{
+	static FORCEINLINE bool ChangedBool(bool& InOutCached, bool NewValue)
+	{
+		if (InOutCached == NewValue) return false;
+		InOutCached = NewValue;
+		return true;
+	}
+
+	template<typename T>
+	static FORCEINLINE bool ChangedValue(T& InOutCached, const T& NewValue)
+	{
+		if (InOutCached == NewValue) return false;
+		InOutCached = NewValue;
+		return true;
+	}
+}
+
+using ThisClass = UMosesLobbyLocalPlayerSubsystem;
 
 // =========================================================
 // Engine
@@ -44,9 +69,10 @@ void UMosesLobbyLocalPlayerSubsystem::Deinitialize()
 	ExitRulesView_UIOnly();
 
 	ClearPreviewRefreshRetry();
+	ClearEnterDialogueRetry();
+	ClearBindLobbyGameStateEventsRetry();
 
-	UnbindLobbyGameStateEvents();   // ✅ 추가: 델리게이트 중복/유령 바인딩 방지
-
+	UnbindLobbyGameStateEvents();   // ✅ 델리게이트 중복/유령 바인딩 방지
 	CachedLobbyPreviewActor = nullptr;
 
 	UE_LOG(LogMosesSpawn, Log, TEXT("[UIFlow] LobbySubsys Deinitialize LP=%s"), *GetNameSafe(GetLocalPlayer()));
@@ -54,10 +80,41 @@ void UMosesLobbyLocalPlayerSubsystem::Deinitialize()
 	Super::Deinitialize();
 }
 
+// =========================================================
+// Lobby GS binding
+// =========================================================
+
 AMosesLobbyGameState* UMosesLobbyLocalPlayerSubsystem::GetLobbyGameState() const
 {
 	UWorld* World = GetWorld();
 	return World ? World->GetGameState<AMosesLobbyGameState>() : nullptr;
+}
+
+void UMosesLobbyLocalPlayerSubsystem::RequestBindLobbyGameStateEventsRetry_NextTick()
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	FTimerManager& TM = World->GetTimerManager();
+
+	if (TM.TimerExists(BindLobbyGSRetryHandle) &&
+		(TM.IsTimerActive(BindLobbyGSRetryHandle) || TM.IsTimerPending(BindLobbyGSRetryHandle)))
+	{
+		return;
+	}
+
+	BindLobbyGSRetryHandle = TM.SetTimerForNextTick(this, &ThisClass::BindLobbyGameStateEvents);
+}
+
+void UMosesLobbyLocalPlayerSubsystem::ClearBindLobbyGameStateEventsRetry()
+{
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(BindLobbyGSRetryHandle);
+	}
 }
 
 void UMosesLobbyLocalPlayerSubsystem::BindLobbyGameStateEvents()
@@ -71,9 +128,22 @@ void UMosesLobbyLocalPlayerSubsystem::BindLobbyGameStateEvents()
 	AMosesLobbyGameState* LGS = GetLobbyGameState();
 	if (!LGS)
 	{
+		// ✅ Travel 직후 / LateJoin에서 GS가 아직 없을 수 있음 → NextTick 재시도
+		if (!bLoggedBindWaitOnce)
+		{
+			bLoggedBindWaitOnce = true;
+			UE_LOG(LogMosesSpawn, Verbose, TEXT("[LPS] BindLobbyGameStateEvents WAIT (GS not ready) -> retry next tick"));
+		}
+
+		RequestBindLobbyGameStateEventsRetry_NextTick();
 		return;
 	}
 
+	// ✅ GS를 찾았으면 재시도 타이머 제거
+	ClearBindLobbyGameStateEventsRetry();
+	bLoggedBindWaitOnce = false;
+
+	// ---- 이하 기존 로직 유지 ----
 	UnbindLobbyGameStateEvents();
 
 	bBoundToGameState = true;
@@ -89,6 +159,9 @@ void UMosesLobbyLocalPlayerSubsystem::BindLobbyGameStateEvents()
 	// ✅ LateJoin / 초기 접속 즉시 1회 적용
 	HandlePhaseChanged(LGS->GetGamePhase());
 	HandleDialogueStateChanged(LGS->GetDialogueNetState());
+
+	// ✅ 추가: 바인딩 완료 시점에 UI 한 번 강제 갱신(초기 Room/Chat/Name 표시)
+	RefreshLobbyUI_FromCurrentState();
 }
 
 void UMosesLobbyLocalPlayerSubsystem::UnbindLobbyGameStateEvents()
@@ -122,7 +195,7 @@ void UMosesLobbyLocalPlayerSubsystem::UnbindLobbyGameStateEvents()
 
 void UMosesLobbyLocalPlayerSubsystem::ActivateLobbyUI()
 {
-	// ✅ 추가: 멀티 PIE에서 "이 Subsystem이 어느 LP에 붙었는지" 즉시 증명 로그
+	// ✅ 멀티 PIE에서 "이 Subsystem이 어느 LP에 붙었는지" 즉시 증명 로그
 	{
 		ULocalPlayer* LP = GetLocalPlayer();
 		UWorld* World = GetWorld();
@@ -146,7 +219,6 @@ void UMosesLobbyLocalPlayerSubsystem::ActivateLobbyUI()
 			*GetNameSafe(TestClass));
 	}
 
-	// 개발자 주석:
 	// - 중복 생성 방지
 	if (IsLobbyWidgetValid())
 	{
@@ -175,7 +247,6 @@ void UMosesLobbyLocalPlayerSubsystem::ActivateLobbyUI()
 
 	if (WidgetPath.IsNull())
 	{
-		// 개발자 주석:
 		// - GF 디버깅/임시 강제 경로
 		WidgetPath = FSoftClassPath(TEXT("/GF_Lobby/Lobby/UI/WBP_LobbyPage.WBP_LobbyPage_C"));
 
@@ -193,8 +264,6 @@ void UMosesLobbyLocalPlayerSubsystem::ActivateLobbyUI()
 
 	UE_LOG(LogMosesSpawn, Log, TEXT("[UIFlow] ActivateLobbyUI LoadedClass=%s"), *GetNameSafe(LoadedClass));
 
-	// 개발자 주석:
-	// - CreateWidget의 OwningPlayer가 없으면 GetOwningLocalPlayer가 NULL 될 수 있다.
 	// - LocalPlayerSubsystem에서 만들면 "LP의 PlayerController"를 OwningPlayer로 넣는 게 안전하다.
 	AMosesPlayerController* PC = GetMosesPC_LocalOnly();
 	if (!PC)
@@ -203,8 +272,7 @@ void UMosesLobbyLocalPlayerSubsystem::ActivateLobbyUI()
 		return;
 	}
 
-	// ✅ 추가: 멀티 PIE에서 PC0 고정/잘못된 PC를 초기에 차단
-	// - "로컬 컨트롤러"가 아니면 이 LP의 UI를 만들면 안 된다.
+	// ✅ 멀티 PIE에서 PC0 고정/잘못된 PC를 초기에 차단
 	if (!PC->IsLocalController())
 	{
 		UE_LOG(LogMosesSpawn, Error, TEXT("[UIFlow] ActivateLobbyUI FAIL (PC is not local) PC=%s"), *GetNameSafe(PC));
@@ -221,12 +289,14 @@ void UMosesLobbyLocalPlayerSubsystem::ActivateLobbyUI()
 
 	LobbyWidget->AddToViewport(0);
 
+	// ✅ 핵심: Subsystem에 Widget 등록 (재생성/복구/상태전파 기준점)
+	SetLobbyWidget(LobbyWidget);
+
 	UE_LOG(LogMosesSpawn, Log, TEXT("[UIFlow] ActivateLobbyUI OK Widget=%s InViewport=%d OwningPC=%s"),
 		*GetNameSafe(LobbyWidget),
 		LobbyWidget->IsInViewport() ? 1 : 0,
 		*GetNameSafe(PC));
 
-	// 개발자 주석:
 	// - UI가 뜨는 순간 현재 PS 상태(SelectedCharacterId)에 맞춰 프리뷰도 동기화
 	RefreshLobbyPreviewCharacter_LocalOnly();
 }
@@ -249,6 +319,39 @@ void UMosesLobbyLocalPlayerSubsystem::DeactivateLobbyUI()
 }
 
 // =========================================================
+// Lobby UI Refresh (핵심 파이프)
+// =========================================================
+
+void UMosesLobbyLocalPlayerSubsystem::RefreshLobbyUI_FromCurrentState()
+{
+	// 1) UI 없으면 만들 수 있는 상황이면 생성 시도(로비 들어왔는데 아직 UI 없을 때 대비)
+	// - 여기서 무조건 만들면 "매치에서도 UI가 뜨는" 사고 가능.
+	// - 너 프로젝트는 Phase 기반 연출이 있으니, 안전하게 "LobbyPhase일 때만" 켜는 방식 권장.
+	// (최소 구현: 여기서 ActivateLobbyUI()를 호출하지 않고 그냥 패스)
+	if (!IsLobbyWidgetValid())
+	{
+		// TODO(옵션): Phase 기반으로 안전할 때만 ActivateLobbyUI();
+	}
+
+	if (!LobbyWidget)
+	{
+		return;
+	}
+
+	AMosesLobbyGameState* GS = GetLobbyGameState();
+	AMosesPlayerState* MyPS = GetMosesPS_LocalOnly();
+
+	// 2) 아직 PS/GS 준비 안 됐으면 다음 틱에 알아서 Notify/Retry로 다시 들어올 것이므로 그냥 리턴
+	if (!GS || !MyPS)
+	{
+		return;
+	}
+
+	// 3) ✅ 여기서 “로비 UI 갱신”을 위젯에게 위임
+	LobbyWidget->RefreshFromState(GS, MyPS);
+}
+
+// =========================================================
 // Notify
 // =========================================================
 
@@ -256,19 +359,24 @@ void UMosesLobbyLocalPlayerSubsystem::NotifyPlayerStateChanged()
 {
 	UE_LOG(LogMosesSpawn, Verbose, TEXT("[UIFlow] NotifyPlayerStateChanged"));
 
-	// 개발자 주석:
-	// - 1) Widget이 UI를 갱신할 수 있도록 신호
+	// 1) Widget이 UI를 갱신할 수 있도록 신호
 	LobbyPlayerStateChangedEvent.Broadcast();
 
-	// 개발자 주석:
-	// - 2) SelectedCharacterId 변경이 오면 프리뷰도 즉시 갱신
+	// 2) SelectedCharacterId 변경이 오면 프리뷰도 즉시 갱신
 	RefreshLobbyPreviewCharacter_LocalOnly();
+
+	// ✅ 내 닉네임/Ready/RoomId 등 “PS 기반 데이터” 갱신
+	RefreshLobbyUI_FromCurrentState();
 }
 
 void UMosesLobbyLocalPlayerSubsystem::NotifyRoomStateChanged()
 {
 	UE_LOG(LogMosesSpawn, Verbose, TEXT("[UIFlow] NotifyRoomStateChanged"));
+
 	LobbyRoomStateChangedEvent.Broadcast();
+
+	// ✅ RoomList/ChatHistory 등 “GS 기반 데이터” 갱신
+	RefreshLobbyUI_FromCurrentState();
 }
 
 void UMosesLobbyLocalPlayerSubsystem::NotifyJoinRoomResult(EMosesRoomJoinResult Result, const FGuid& RoomId)
@@ -333,13 +441,14 @@ void UMosesLobbyLocalPlayerSubsystem::RefreshLobbyPreviewCharacter_LocalOnly()
 		DebugPC ? (DebugPC->IsLocalController() ? 1 : 0) : 0,
 		*GetPathNameSafe(DebugPS));
 
-	// ✅ 핵심:
-	// - Travel/Join 직후에는 PC는 있어도 PS가 몇 틱 NULL일 수 있음 (정상)
-	// - 이때 "SetTimerForNextTick 중복 예약"이 폭발하면 로그 스팸 + 흔들림이 생김
-	// - 그래서 재시도는 딱 1개만 예약한다.
+	// ✅ Travel/Join 직후 PS가 몇 틱 NULL일 수 있음 (정상) -> NextTick 재시도 1개만 예약
 	if (!DebugPC || !DebugPC->IsLocalController() || !DebugPS)
 	{
-		UE_LOG(LogMosesSpawn, Warning, TEXT("[CharPreview] WAIT (PC/PS not ready) -> retry next tick"));
+		if (!bLoggedPreviewWaitOnce)
+		{
+			bLoggedPreviewWaitOnce = true;
+			UE_LOG(LogMosesSpawn, Verbose, TEXT("[CharPreview] WAIT (PC/PS not ready) -> retry next tick"));
+		}
 		RequestPreviewRefreshRetry_NextTick();
 		return;
 	}
@@ -347,8 +456,7 @@ void UMosesLobbyLocalPlayerSubsystem::RefreshLobbyPreviewCharacter_LocalOnly()
 	// ✅ 성공했으면 재시도 타이머는 즉시 제거 (스팸 제거)
 	ClearPreviewRefreshRetry();
 
-	// - 여기부터는 기존 로직 유지
-	const AMosesPlayerState* PS = DebugPS; // GetMosesPS_LocalOnly() 재호출 대신 위에서 잡은 걸 사용
+	const AMosesPlayerState* PS = DebugPS;
 
 	int32 SelectedId = PS->GetSelectedCharacterId();
 	if (SelectedId != 1 && SelectedId != 2)
@@ -394,8 +502,7 @@ void UMosesLobbyLocalPlayerSubsystem::ApplyPreviewBySelectedId_LocalOnly(int32 S
 
 ALobbyPreviewActor* UMosesLobbyLocalPlayerSubsystem::GetOrFindLobbyPreviewActor_LocalOnly()
 {
-	// ✅ 핵심 수정:
-	// - 캐시가 있고 유효하면 그대로 반환
+	// ✅ 캐시가 있고 유효하면 그대로 반환
 	if (CachedLobbyPreviewActor && IsValid(CachedLobbyPreviewActor))
 	{
 		UE_LOG(LogMosesSpawn, Verbose, TEXT("[CharPreview] GetOrFind CACHE HIT=%s"),
@@ -442,7 +549,7 @@ AMosesPlayerController* UMosesLobbyLocalPlayerSubsystem::GetMosesPC_LocalOnly() 
 		return nullptr;
 	}
 
-	return Cast<AMosesPlayerController>(LP->GetPlayerController(World)); // ★ 이게 정석
+	return Cast<AMosesPlayerController>(LP->GetPlayerController(World)); // ★ 정석
 }
 
 AMosesPlayerState* UMosesLobbyLocalPlayerSubsystem::GetMosesPS_LocalOnly() const
@@ -516,7 +623,6 @@ void UMosesLobbyLocalPlayerSubsystem::SetViewTargetToCameraTag(const FName& Came
 	ACameraActor* TargetCam = FindCameraByTag(CameraTag);
 	if (!TargetCam)
 	{
-		// 태그가 안 달렸거나 이름이 틀리면 여기서 실패함
 		return;
 	}
 
@@ -564,7 +670,7 @@ void UMosesLobbyLocalPlayerSubsystem::ApplyRulesViewToWidget(bool bEnable)
 
 void UMosesLobbyLocalPlayerSubsystem::EnterRulesView_UIOnly()
 {
-	// 중복 진입 방지 (왕복 10회 꼬임 방지 핵심)
+	// 중복 진입 방지
 	if (bInRulesView)
 	{
 		return;
@@ -632,7 +738,6 @@ void UMosesLobbyLocalPlayerSubsystem::SetLobbyWidget(UMosesLobbyWidget* InWidget
 		const bool bDialogue = (LGS->GetGamePhase() == EGamePhase::LobbyDialogue);
 		if (bDialogue)
 		{
-			// Phase 기반 연출 정책 유지: Phase가 Dialogue면 RulesView 상태가 되어야 함
 			EnterRulesView_UIOnly();
 		}
 		else
@@ -640,9 +745,12 @@ void UMosesLobbyLocalPlayerSubsystem::SetLobbyWidget(UMosesLobbyWidget* InWidget
 			ExitRulesView_UIOnly();
 		}
 
-		// Dialogue state도 즉시 캐시/브로드캐스트(위젯이 구독하고 있다면 바로 표시됨)
+		// Dialogue state도 즉시 캐시/브로드캐스트
 		HandleDialogueStateChanged(LGS->GetDialogueNetState());
 	}
+
+	// ✅ 위젯 재생성/복구 직후 현재 상태로 바로 UI 갱신
+	RefreshLobbyUI_FromCurrentState();
 }
 
 void UMosesLobbyLocalPlayerSubsystem::RequestEnterDialogueRetry_NextTick()
@@ -655,7 +763,8 @@ void UMosesLobbyLocalPlayerSubsystem::RequestEnterDialogueRetry_NextTick()
 
 	FTimerManager& TM = World->GetTimerManager();
 
-	if (TM.TimerExists(EnterDialogueRetryHandle) && (TM.IsTimerActive(EnterDialogueRetryHandle) || TM.IsTimerPending(EnterDialogueRetryHandle)))
+	if (TM.TimerExists(EnterDialogueRetryHandle) &&
+		(TM.IsTimerActive(EnterDialogueRetryHandle) || TM.IsTimerPending(EnterDialogueRetryHandle)))
 	{
 		return;
 	}
@@ -672,7 +781,7 @@ void UMosesLobbyLocalPlayerSubsystem::ClearEnterDialogueRetry()
 }
 
 // =========================================================
-// Retry control (중복 예약 방지)
+// Retry control (Preview refresh - 중복 예약 방지)
 // =========================================================
 
 void UMosesLobbyLocalPlayerSubsystem::RequestPreviewRefreshRetry_NextTick()
@@ -686,16 +795,13 @@ void UMosesLobbyLocalPlayerSubsystem::RequestPreviewRefreshRetry_NextTick()
 	FTimerManager& TM = World->GetTimerManager();
 
 	// ✅ 이미 예약돼 있으면 또 예약하지 않음
-	if (TM.TimerExists(PreviewRefreshRetryHandle) && (TM.IsTimerActive(PreviewRefreshRetryHandle) || TM.IsTimerPending(PreviewRefreshRetryHandle)))
+	if (TM.TimerExists(PreviewRefreshRetryHandle) &&
+		(TM.IsTimerActive(PreviewRefreshRetryHandle) || TM.IsTimerPending(PreviewRefreshRetryHandle)))
 	{
 		return;
 	}
 
-	// ✅ SetTimerForNextTick은 "핸들 반환" 방식만 지원한다.
-	PreviewRefreshRetryHandle = TM.SetTimerForNextTick(
-		this,
-		&UMosesLobbyLocalPlayerSubsystem::RefreshLobbyPreviewCharacter_LocalOnly
-	);
+	PreviewRefreshRetryHandle = TM.SetTimerForNextTick(this, &UMosesLobbyLocalPlayerSubsystem::RefreshLobbyPreviewCharacter_LocalOnly);
 }
 
 void UMosesLobbyLocalPlayerSubsystem::ClearPreviewRefreshRetry()
@@ -709,6 +815,10 @@ void UMosesLobbyLocalPlayerSubsystem::ClearPreviewRefreshRetry()
 	World->GetTimerManager().ClearTimer(PreviewRefreshRetryHandle);
 }
 
+// =========================================================
+// UI -> Server Phase Request
+// =========================================================
+
 void UMosesLobbyLocalPlayerSubsystem::RequestEnterLobbyDialogue()
 {
 	AMosesPlayerController* PC = GetMosesPC_LocalOnly();
@@ -716,7 +826,7 @@ void UMosesLobbyLocalPlayerSubsystem::RequestEnterLobbyDialogue()
 
 	const bool bConnReady = (PC && PC->GetNetConnection());
 	const bool bPSReady = (PS != nullptr);
-	const bool bRoomValid = (PS && PS->GetRoomId().IsValid());
+	const bool bRoomValid = (PS && PS->GetRoomId().IsValid()); // 로그용만 유지
 
 	UE_LOG(LogMosesSpawn, Warning,
 		TEXT("[DOD][PRECHECK] PC=%s Local=%d Conn=%d PS=%s RoomValid=%d RoomId=%s"),
@@ -725,15 +835,14 @@ void UMosesLobbyLocalPlayerSubsystem::RequestEnterLobbyDialogue()
 		bConnReady ? 1 : 0,
 		*GetNameSafe(PS),
 		bRoomValid ? 1 : 0,
-		PS ? *PS->GetRoomId().ToString() : TEXT("None")
-	);
+		PS ? *PS->GetRoomId().ToString() : TEXT("None"));
 
 	if (!PC || !PC->IsLocalController())
 	{
 		return;
 	}
 
-	// ✅ 여기! "3초 반복 클릭"의 정체가 보통 여기서 걸림
+	// Conn / PS 준비 안 된 경우에만 retry
 	if (!bConnReady || !bPSReady)
 	{
 		UE_LOG(LogMosesSpawn, Warning, TEXT("[DOD][UI->SV] EnterLobbyDialogue WAIT (Conn/PS not ready) -> retry"));
@@ -741,20 +850,12 @@ void UMosesLobbyLocalPlayerSubsystem::RequestEnterLobbyDialogue()
 		return;
 	}
 
-	// ✅ 방 밖이면 애초에 보내지 말자 (사용자 체감 개선)
-	if (!bRoomValid)
-	{
-		UE_LOG(LogMosesSpawn, Warning, TEXT("[DOD][UI->SV] EnterLobbyDialogue BLOCK (NotInRoom yet)"));
-		RequestEnterDialogueRetry_NextTick(); // 또는 그냥 return (정책 선택)
-		return;
-	}
-
+	// ✅ 방 체크 제거: 로비 기본 상태(방 밖)에서도 서버 대화 진입 허용
 	ClearEnterDialogueRetry();
 
-	UE_LOG(LogMosesSpawn, Log, TEXT("[DOD][UI->SV] RequestEnterLobbyDialogue SEND"));
-	PC->Server_RequestEnterLobbyDialogue();
+	UE_LOG(LogMosesSpawn, Warning, TEXT("[DOD][UI->SV] RequestEnterLobbyDialogue SEND (Room independent)"));
+	PC->Server_RequestEnterLobbyDialogue(ELobbyDialogueEntryType::RulesView);
 }
-
 
 void UMosesLobbyLocalPlayerSubsystem::RequestExitLobbyDialogue()
 {
@@ -768,14 +869,15 @@ void UMosesLobbyLocalPlayerSubsystem::RequestExitLobbyDialogue()
 	PC->Server_RequestExitLobbyDialogue();
 }
 
+// =========================================================
+// Phase / Dialogue state handlers
+// =========================================================
+
 void UMosesLobbyLocalPlayerSubsystem::HandlePhaseChanged(EGamePhase NewPhase)
 {
 	UE_LOG(LogMosesSpawn, Log, TEXT("[DOD][LPS] HandlePhaseChanged Phase=%d"), (int32)NewPhase);
 
-	// =========================================================
 	// "연출은 Phase 기반으로만 실행"
-	// - 버튼 클릭 시점에 UI-only 전환 금지
-	// =========================================================
 	if (NewPhase == EGamePhase::LobbyDialogue)
 	{
 		EnterRulesView_UIOnly();
@@ -786,24 +888,22 @@ void UMosesLobbyLocalPlayerSubsystem::HandlePhaseChanged(EGamePhase NewPhase)
 	}
 }
 
-void UMosesLobbyLocalPlayerSubsystem::HandleDialogueStateChanged(const FDialogueNetState& NewState)
-{
-	UE_LOG(LogMosesSpawn, Verbose, TEXT("[DOD][LPS] Dialogue Line=%d Flow=%d T=%.2f Rate=%.2f Cmd=%d Seq=%d"),
-		NewState.LineIndex,
-		(int32)NewState.FlowState,
-		NewState.RemainingTime,
-		NewState.RateScale,
-		(int32)NewState.LastCommandType,
-		NewState.LastCommandSeq);
-
-	// Day7 범위:
-	// - 위젯이 필요하면 여기서 Widget에 전달하거나,
-	// - Widget이 Subsystem 이벤트를 직접 구독하도록 연결해도 된다.
-}
-
 void UMosesLobbyLocalPlayerSubsystem::HandleGameStateDialogueChanged(const FDialogueNetState& NewState)
 {
-	HandleDialogueStateChanged(NewState);
+	LastDialogueNetState = NewState;
+
+	UE_LOG(LogMosesSpawn, Warning, TEXT("[LPS] DialogueChanged Line=%d Flow=%d Sub=%d Seq=%d"),
+		NewState.LineIndex, (int32)NewState.FlowState, (int32)NewState.SubState, NewState.LastCommandSeq);
+
+	LobbyDialogueStateChanged.Broadcast(NewState);
+}
+
+void UMosesLobbyLocalPlayerSubsystem::HandleDialogueStateChanged(const FDialogueNetState& NewState)
+{
+	NotifyDialogueStateChanged(NewState);
+
+	UE_LOG(LogMosesSpawn, Warning, TEXT("[LPS->UI] DialogueState Broadcast(Alt) Line=%d Flow=%d Sub=%d Seq=%d"),
+		NewState.LineIndex, (int32)NewState.FlowState, (int32)NewState.SubState, NewState.LastCommandSeq);
 }
 
 void UMosesLobbyLocalPlayerSubsystem::NotifyDialogueStateChanged(const FDialogueNetState& NewState)
@@ -813,4 +913,37 @@ void UMosesLobbyLocalPlayerSubsystem::NotifyDialogueStateChanged(const FDialogue
 
 	// LobbyWidget 구독자에게 브로드캐스트
 	LobbyDialogueStateChanged.Broadcast(NewState);
+}
+
+// =========================================================
+// Dialogue command submit
+// =========================================================
+
+void UMosesLobbyLocalPlayerSubsystem::SubmitCommandText(const FString& Text)
+{
+	const FDialogueDetectResult R = UMosesDialogueCommandDetector::DetectIntent(Text, CommandLexicon);
+
+	UE_LOG(LogTemp, Log, TEXT("[CmdDetect] \"%s\" -> %d (norm=\"%s\" kw=\"%s\")"),
+		*Text, (int32)R.Type, *R.NormalizedText, *R.MatchedKeyword);
+
+	if (R.Type == EDialogueCommandType::None)
+	{
+		return;
+	}
+
+	AMosesPlayerController* PC = GetMosesPC_LocalOnly();
+	if (!PC)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[CmdDetect] no local PC"));
+		return;
+	}
+
+	const uint16 Seq = NextClientCommandSeq++;
+	PC->Server_SubmitDialogueCommand(R.Type, Seq);
+}
+
+void AMosesLobbyGameState::OnRep_ChatHistory()
+{
+	// 너 기존 UI 갱신 파이프 재사용(로컬플레이어 Subsystem으로 전달)
+	NotifyRoomStateChanged_LocalPlayers();
 }

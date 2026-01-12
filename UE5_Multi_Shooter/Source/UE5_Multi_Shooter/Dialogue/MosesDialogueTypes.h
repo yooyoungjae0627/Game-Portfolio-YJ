@@ -1,5 +1,6 @@
 ﻿#pragma once
 
+#include "UObject/ObjectPtr.h"
 #include "Sound/SoundBase.h"
 #include "MosesDialogueTypes.generated.h"
 
@@ -35,22 +36,55 @@ enum class EDialogueFlowState : uint8
  * EDialogueCommandType
  * - "서버가 마지막으로 반영한 명령"의 종류.
  * - 디버그/재전송/순서 보정(나중) 대비로 남긴다.
+ *
+ * - 버튼/텍스트/STT 모두 DetectIntent 후 이 타입으로 서버에 요청.
+ * - 서버는 Gate(상태검증) 통과 시에만 Accept하고 GameState를 갱신.
  */
 UENUM(BlueprintType)
 enum class EDialogueCommandType : uint8
 {
-	None			UMETA(DisplayName = "None"),
-	EnterDialogue	UMETA(DisplayName = "EnterDialogue"),
-	ExitDialogue	UMETA(DisplayName = "ExitDialogue"),
-	AdvanceLine		UMETA(DisplayName = "AdvanceLine"),
-	SetFlowState	UMETA(DisplayName = "SetFlowState"),
+	None            UMETA(DisplayName = "None"),
+
+	// ----------------------------
+	// Dialogue Mode (enter/exit)
+	// ----------------------------
+	EnterDialogue   UMETA(DisplayName = "EnterDialogue"),
+	ExitDialogue    UMETA(DisplayName = "ExitDialogue"),
+
+	// ----------------------------
+	// Line Control
+	// ----------------------------
+	AdvanceLine     UMETA(DisplayName = "AdvanceLine"),      // = Skip (다음 라인)
+	RepeatLine      UMETA(DisplayName = "RepeatLine"),       // = Repeat (현재 라인 재시작)
+	RestartDialogue UMETA(DisplayName = "RestartDialogue"),  // = Restart (0번부터)
+
+	// ----------------------------
+	// Flow Control
+	// ----------------------------
+	// Speaking <-> Paused 같은 "FlowState 변화"를 의미
+	// - Pause/Resume는 실제로는 SetFlowState의 특정 케이스지만
+	//   DetectIntent / Gate / 로그 / 스위치문이 단순해져서 enum으로 분리 추천
+	Pause           UMETA(DisplayName = "Pause"),            // FlowState = Paused
+	Resume          UMETA(DisplayName = "Resume"),           // FlowState = Speaking
+	Exit			UMETA(DisplayName = "Exit"),
+	Skip            UMETA(DisplayName = "Skip"),
+	Repeat          UMETA(DisplayName = "Repeat"),
+	Restart         UMETA(DisplayName = "Restart"),
+	
+	// (옵션) 내부/확장용: "임의 FlowState로 바꾼다"
+	// - 이미 네 코드가 SetFlowState 요청 기반이면 유지하는 게 호환에 유리
+	SetFlowState    UMETA(DisplayName = "SetFlowState"),
 };
+
 
 /**
  * EDialogueSubState
  * - 대화 모드 안에서의 "연출/카메라/UI" 분기용 세부 상태.
  * - Listening / Speaking 정도만으로도 충분히 강력하다.
  * - FlowState(머신)와 SubState(연출)는 역할이 다르다.
+ *
+ * 예)
+ * - FlowState=Paused 이더라도 SubState는 Listening(유저 입력 대기 연출)일 수 있다.
  */
 UENUM(BlueprintType)
 enum class EDialogueSubState : uint8
@@ -60,18 +94,30 @@ enum class EDialogueSubState : uint8
 	Speaking	UMETA(DisplayName = "Speaking"),
 };
 
+
+/**
+ * FMosesDialogueLine
+ * - "로컬 데이터(에셋)" 단위의 대사 라인.
+ * - LineIndex로 Resolve해서 Subtitle/Duration/VoiceSound를 가져온다.
+ *
+ * Day10:
+ * - SubtitleText 라인과 동일한 VoiceSound를 재생한다.
+ */
 USTRUCT(BlueprintType)
 struct FMosesDialogueLine
 {
 	GENERATED_BODY()
 
 public:
+	/** 말풍선 자막(라인 텍스트) */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly)
 	FText SubtitleText;
 
+	/** 라인 기본 재생 시간(서버 타이머 기준). 0 이상 */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, meta = (ClampMin = "0.0"))
 	float Duration = 2.0f;
 
+	/** 라인별 보이스 사운드(없을 수 있음). Day10 MVP 핵심 */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly)
 	TObjectPtr<USoundBase> VoiceSound = nullptr;
 };
@@ -102,7 +148,7 @@ public:
 
 	/** 서버 머신 상태 (Speaking일 때만 RemainingTime 감소) */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly)
-	EDialogueFlowState FlowState = EDialogueFlowState::Paused;
+	EDialogueFlowState FlowState = EDialogueFlowState::WaitingInput;
 
 	/** 현재 대사 줄 번호(인덱스). 서버가 다음 줄을 결정한다. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly)
