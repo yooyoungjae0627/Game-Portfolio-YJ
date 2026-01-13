@@ -8,6 +8,30 @@ AMosesStartGameMode::AMosesStartGameMode()
 	DefaultPawnClass = ASpectatorPawn::StaticClass();
 
 	PlayerControllerClass = AMosesPlayerController::StaticClass();
-	// 원하면 아예 스폰 안 하게 막고 싶으면 Spectator 대신 아래 정책으로 갈 수도 있음.
-	// bStartPlayersAsSpectators = true;
+
+	// ✅ Start -> Lobby 이동도 Seamless로 강제
+	bUseSeamlessTravel = true;
+}
+
+void AMosesStartGameMode::ServerTravelToLobby()
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	const bool bIsDedicated = (World->GetNetMode() == NM_DedicatedServer);
+
+	// ✅ 핵심: game= 을 로비 게임모드로 명시해서 StartGameMode가 딸려가지 않게 함
+	const TCHAR* BaseURL = bIsDedicated
+		? TEXT("/Game/Map/LobbyLevel?game=/Script/UE5_Multi_Shooter.MosesLobbyGameMode?Experience=Exp_Lobby")
+		: TEXT("/Game/Map/LobbyLevel?listen?game=/Script/UE5_Multi_Shooter.MosesLobbyGameMode?Experience=Exp_Lobby");
+
+	World->ServerTravel(BaseURL, /*bAbsolute*/ true);
 }

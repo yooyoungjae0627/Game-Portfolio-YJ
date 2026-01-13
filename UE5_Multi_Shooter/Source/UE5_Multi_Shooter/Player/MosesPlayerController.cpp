@@ -1,6 +1,7 @@
 ﻿#include "UE5_Multi_Shooter/Player/MosesPlayerController.h"
 
 #include "UE5_Multi_Shooter/Camera/MosesPlayerCameraManager.h"
+#include "UE5_Multi_Shooter/GameMode/GameMode/MosesStartGameMode.h"
 #include "UE5_Multi_Shooter/GameMode/GameMode/MosesLobbyGameMode.h"
 #include "UE5_Multi_Shooter/GameMode/GameMode/MosesMatchGameMode.h"
 #include "UE5_Multi_Shooter/GameMode/GameState/MosesLobbyGameState.h"
@@ -83,6 +84,27 @@ void AMosesPlayerController::TravelToLobby_Exec()
 // Lifecycle (Local UI / Camera)
 // =========================================================
 
+void AMosesPlayerController::SetPendingLobbyNickname_Local(const FString& Nick)
+{
+	if (!IsLocalController())
+	{
+		return;
+	}
+
+	PendingLobbyNickname_Local = Nick.TrimStartAndEnd();
+
+	if (PendingLobbyNickname_Local.IsEmpty())
+	{
+		bPendingLobbyNicknameSend_Local = false;
+		return;
+	}
+
+	bPendingLobbyNicknameSend_Local = true;
+
+	// 이미 조건이 만족되면 즉시 전송 시도
+	TrySendPendingLobbyNickname_Local();
+}
+
 void AMosesPlayerController::BeginPlay()
 {
 	Super::BeginPlay();
@@ -140,16 +162,12 @@ void AMosesPlayerController::OnRep_PlayerState()
 {
 	Super::OnRep_PlayerState();
 
-	// UI 갱신은 LocalPlayerSubsystem이 담당
-	ULocalPlayer* LP = GetLocalPlayer();
-	if (!LP)
+	if (ULocalPlayer* LP = GetLocalPlayer())
 	{
-		return;
-	}
-
-	if (UMosesLobbyLocalPlayerSubsystem* LobbySubsys = LP->GetSubsystem<UMosesLobbyLocalPlayerSubsystem>())
-	{
-		LobbySubsys->NotifyPlayerStateChanged();
+		if (UMosesLobbyLocalPlayerSubsystem* Subsys = LP->GetSubsystem<UMosesLobbyLocalPlayerSubsystem>())
+		{
+			Subsys->NotifyPlayerStateChanged();
+		}
 	}
 }
 
@@ -312,6 +330,7 @@ void AMosesPlayerController::Server_SetLobbyNickname_Implementation(const FStrin
 	AMosesPlayerState* PS = GetMosesPlayerStateChecked_Log(TEXT("Server_SetLobbyNickname"));
 	if (!PS)
 	{
+		// ✅ PS가 아직 없을 수 있음 (정상). Pending 재전송이 해결한다.
 		return;
 	}
 
@@ -321,12 +340,14 @@ void AMosesPlayerController::Server_SetLobbyNickname_Implementation(const FStrin
 		return;
 	}
 
-	PS->DebugName = Clean;
+	PS->ServerSetPlayerNickName(Clean);
 	PS->ServerSetLoggedIn(true);
-	PS->ForceNetUpdate();
 
-	UE_LOG(LogMosesSpawn, Log, TEXT("[LobbyRPC][SV] SetLobbyNickname OK Name=%s PC=%s"),
-		*Clean, *GetNameSafe(this));
+	UE_LOG(LogMosesSpawn, Warning, TEXT("[NickSV] PC=%s PS=%s Nick=%s"),
+		*GetNameSafe(this),
+		*GetNameSafe(GetPlayerState<AMosesPlayerState>()),
+		*Nick);
+
 }
 
 void AMosesPlayerController::Server_SendLobbyChat_Implementation(const FString& Text)
@@ -504,6 +525,43 @@ void AMosesPlayerController::Server_TravelToLobby_Implementation()
 	}
 
 	DoServerTravelToLobby();
+}
+
+void AMosesPlayerController::TrySendPendingLobbyNickname_Local()
+{
+	if (!IsLocalController())
+	{
+		return;
+	}
+
+	if (!bPendingLobbyNicknameSend_Local)
+	{
+		return;
+	}
+
+	// 커넥션 준비 전이면 대기 (Travel 직후 등)
+	if (!GetNetConnection())
+	{
+		return;
+	}
+
+	// PS 준비 전이면 대기
+	if (!PlayerState)
+	{
+		return;
+	}
+
+	if (PendingLobbyNickname_Local.IsEmpty())
+	{
+		bPendingLobbyNicknameSend_Local = false;
+		return;
+	}
+
+	// ✅ PS 준비 완료 시점에서만 서버 RPC 전송
+	Server_SetLobbyNickname(PendingLobbyNickname_Local);
+
+	// 1회 전송 완료
+	bPendingLobbyNicknameSend_Local = false;
 }
 
 void AMosesPlayerController::DoServerTravelToMatch()
@@ -707,9 +765,24 @@ AMosesPlayerState* AMosesPlayerController::GetMosesPlayerStateChecked_Log(const 
 	return PS;
 }
 
-void AMosesPlayerController::ClientTravelToLobbyLevel_Implementation()
+void AMosesPlayerController::Server_RequestEnterLobby_Implementation(const FString& Nickname)
 {
-	// 로비 GM이 InitGame에서 ?Experience=Exp_Lobby를 강제하므로
-	// 여기서는 단순히 맵만 이동해도 안전함.
-	ClientTravel(TEXT("/Game/Map/LobbyLevel"), ETravelType::TRAVEL_Absolute);
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	// ✅ 여기서 Nick 세팅 금지!
+	// - PS가 NULL일 수 있음
+	// - SeamlessTravel 중 타이밍 이슈로 값이 유실될 수 있음
+	// - 로비에서 Server_SetLobbyNickname으로 “로그인 확정”을 통일한다.
+
+	AMosesStartGameMode* GM = GetWorld() ? GetWorld()->GetAuthGameMode<AMosesStartGameMode>() : nullptr;
+	if (!GM)
+	{
+		UE_LOG(LogMosesSpawn, Warning, TEXT("[EnterLobby][SV] REJECT (NoStartGM) PC=%s"), *GetNameSafe(this));
+		return;
+	}
+
+	GM->ServerTravelToLobby();
 }

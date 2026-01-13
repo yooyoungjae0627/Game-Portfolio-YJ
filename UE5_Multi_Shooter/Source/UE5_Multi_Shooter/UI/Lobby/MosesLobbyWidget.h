@@ -27,6 +27,18 @@ class UMosesLobbyLocalPlayerSubsystem;
 class AMosesPlayerController;
 class UMSCreateRoomPopupWidget;
 
+static const TCHAR* NetModeToString(ENetMode Mode)
+{
+	switch (Mode)
+	{
+	case NM_Standalone:      return TEXT("Standalone");
+	case NM_DedicatedServer: return TEXT("DedicatedServer");
+	case NM_ListenServer:    return TEXT("ListenServer");
+	case NM_Client:          return TEXT("Client");
+	default:                 return TEXT("Unknown");
+	}
+}
+
 UCLASS()
 class UE5_MULTI_SHOOTER_API UMosesLobbyWidget : public UUserWidget
 {
@@ -262,9 +274,11 @@ private:
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UVerticalBox> CharacterSelectedButtonsBox = nullptr;
 
-	// ✅ Bubble 컨테이너(너는 SizeBox 안에 BubbleRoot/TB를 직접 넣는다고 했음)
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<USizeBox> DialogueBubbleWidget = nullptr;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UTextBlock> NickNameText = nullptr;
 
 
 	UPROPERTY(meta = (BindWidgetOptional)) 
@@ -294,9 +308,6 @@ private:
 	
 	UPROPERTY(meta = (BindWidgetOptional)) 
 	TObjectPtr<UButton> BTN_SendChat = nullptr;
-
-	UPROPERTY(meta = (BindWidgetOptional)) 
-	TObjectPtr<UTextBlock> TXT_MyName = nullptr;
 
 	UPROPERTY(meta = (BindWidgetOptional)) 
 	TObjectPtr<UTextBlock> TXT_MyRoom = nullptr;

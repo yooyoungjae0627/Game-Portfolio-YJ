@@ -359,15 +359,47 @@ void UMosesLobbyLocalPlayerSubsystem::NotifyPlayerStateChanged()
 {
 	UE_LOG(LogMosesSpawn, Verbose, TEXT("[UIFlow] NotifyPlayerStateChanged"));
 
-	// 1) Widget이 UI를 갱신할 수 있도록 신호
+	// ✅ 로그인 의사가 없는 클라는 AutoNick을 만들지도, 보내지도 않는다.
+	if (!bLoginSubmitted_Local)
+	{
+		RefreshLobbyUI_FromCurrentState();
+		return;
+	}
+
+	// ✅ 로그인 의사가 있을 때만 AutoNick fallback 허용
+	{
+		AMosesPlayerController* PC = GetMosesPC_LocalOnly();
+		AMosesPlayerState* MyPS = GetMosesPS_LocalOnly();
+
+		if (PC && PC->IsLocalController() && MyPS)
+		{
+			const FString CurrentNick = MyPS->GetPlayerNickName().TrimStartAndEnd();
+			if (CurrentNick.IsEmpty() && PendingLobbyNickname_Local.TrimStartAndEnd().IsEmpty())
+			{
+				FString AutoNick = MyPS->GetPlayerName().TrimStartAndEnd();
+
+				if (AutoNick.IsEmpty())
+				{
+					ULocalPlayer* LP = GetLocalPlayer();
+					const int32 LocalIdx = LP ? LP->GetControllerId() : 0;
+					AutoNick = FString::Printf(TEXT("Guest_%d"), LocalIdx);
+				}
+
+				PendingLobbyNickname_Local = AutoNick;
+				bPendingLobbyNicknameSend_Local = true;
+
+				UE_LOG(LogMosesSpawn, Warning, TEXT("[Nick][Auto] Set PendingLobbyNickname_Local='%s' PS=%s"),
+					*PendingLobbyNickname_Local, *GetNameSafe(MyPS));
+			}
+		}
+	}
+
+	TrySendPendingLobbyNickname_Local();
 	LobbyPlayerStateChangedEvent.Broadcast();
-
-	// 2) SelectedCharacterId 변경이 오면 프리뷰도 즉시 갱신
 	RefreshLobbyPreviewCharacter_LocalOnly();
-
-	// ✅ 내 닉네임/Ready/RoomId 등 “PS 기반 데이터” 갱신
 	RefreshLobbyUI_FromCurrentState();
 }
+
 
 void UMosesLobbyLocalPlayerSubsystem::NotifyRoomStateChanged()
 {
@@ -906,6 +938,70 @@ void UMosesLobbyLocalPlayerSubsystem::HandleDialogueStateChanged(const FDialogue
 		NewState.LineIndex, (int32)NewState.FlowState, (int32)NewState.SubState, NewState.LastCommandSeq);
 }
 
+void UMosesLobbyLocalPlayerSubsystem::TrySendPendingLobbyNickname_Local()
+{
+	if (!bPendingLobbyNicknameSend_Local)
+	{
+		return;
+	}
+
+	AMosesPlayerController* PC = GetMosesPC_LocalOnly();
+	if (!PC || !PC->IsLocalController())
+	{
+		return;
+	}
+
+	AMosesPlayerState* PS = PC->GetPlayerState<AMosesPlayerState>();
+	if (!PS)
+	{
+		// ✅ PS 준비 전이면 다음 틱 재시도
+		if (UWorld* World = GetWorld())
+		{
+			World->GetTimerManager().SetTimerForNextTick(this, &UMosesLobbyLocalPlayerSubsystem::TrySendPendingLobbyNickname_Local);
+		}
+		return;
+	}
+
+	if (PendingLobbyNickname_Local.IsEmpty())
+	{
+		bPendingLobbyNicknameSend_Local = false;
+		return;
+	}
+
+	// ✅ Standalone/ListenServer(권한 있음) => 서버 RPC 말고 직접 세팅
+	if (PC->HasAuthority())
+	{
+		PS->ServerSetPlayerNickName(PendingLobbyNickname_Local);
+		PS->ServerSetLoggedIn(true);
+
+		bPendingLobbyNicknameSend_Local = false;
+
+		UE_LOG(LogMosesSpawn, Log, TEXT("[Nick][LPS] Applied locally (Authority) Nick='%s' PS=%s"),
+			*PendingLobbyNickname_Local, *GetNameSafe(PS));
+
+		// ✅ 핵심: PS에 값 쓴 직후 UI 리프레시 한번 강제
+		RefreshLobbyUI_FromCurrentState();
+		return;
+	}
+
+	// ✅ 진짜 클라이언트(서버에 붙어있는 상태)일 때만 RPC
+	if (!PC->GetNetConnection())
+	{
+		// 커넥션 아직 없으면 다음 틱 재시도
+		if (UWorld* World = GetWorld())
+		{
+			World->GetTimerManager().SetTimerForNextTick(this, &UMosesLobbyLocalPlayerSubsystem::TrySendPendingLobbyNickname_Local);
+		}
+		return;
+	}
+
+	PC->Server_SetLobbyNickname(PendingLobbyNickname_Local);
+	bPendingLobbyNicknameSend_Local = false;
+
+	UE_LOG(LogMosesSpawn, Log, TEXT("[Nick][LPS] Sent Server_SetLobbyNickname '%s' PC=%s PS=%s"),
+		*PendingLobbyNickname_Local, *GetNameSafe(PC), *GetNameSafe(PS));
+}
+
 void UMosesLobbyLocalPlayerSubsystem::NotifyDialogueStateChanged(const FDialogueNetState& NewState)
 {
 	// late join / widget 재생성 복구용 캐시
@@ -914,6 +1010,34 @@ void UMosesLobbyLocalPlayerSubsystem::NotifyDialogueStateChanged(const FDialogue
 	// LobbyWidget 구독자에게 브로드캐스트
 	LobbyDialogueStateChanged.Broadcast(NewState);
 }
+
+void UMosesLobbyLocalPlayerSubsystem::RequestSetLobbyNickname_LocalOnly(const FString& Nick)
+{
+	AMosesPlayerController* PC = GetMosesPC_LocalOnly();
+	if (!PC || !PC->IsLocalController())
+	{
+		return;
+	}
+
+	// ✅ “로그인 버튼을 눌렀다”는 의도 플래그
+	bLoginSubmitted_Local = true;
+
+	PendingLobbyNickname_Local = Nick.TrimStartAndEnd();
+
+	if (PendingLobbyNickname_Local.IsEmpty())
+	{
+		bPendingLobbyNicknameSend_Local = false;
+		return;
+	}
+
+	bPendingLobbyNicknameSend_Local = true;
+
+	TrySendPendingLobbyNickname_Local();
+
+	UE_LOG(LogMosesSpawn, Log, TEXT("[Nick][LPS] Pending Nick set='%s' PC=%s"),
+		*PendingLobbyNickname_Local, *GetNameSafe(PC));
+}
+
 
 // =========================================================
 // Dialogue command submit

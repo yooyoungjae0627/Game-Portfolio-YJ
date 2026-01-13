@@ -59,6 +59,8 @@ public:
 
 	int32 GetSelectedCharacterId() const { return SelectedCharacterId; }
 
+	FString GetPlayerNickName() const { return PlayerNickName; }
+
 	// ---------------------------
 	// PawnData access (Lyra-style 호출 호환)
 	// ---------------------------
@@ -77,12 +79,6 @@ public:
 	void DOD_PS_Log(const UObject* Caller, const TCHAR* Phase) const;
 
 	// ---------------------------
-	// Debug display name (UI/로그 용)
-	// ---------------------------
-	UPROPERTY(Replicated)
-	FString DebugName;
-
-	// ---------------------------
 	// Server-only
 	// ---------------------------
 	/** 서버에서 PersistentId가 없으면 생성해서 세팅한다. (PostLogin에서 호출) */
@@ -91,6 +87,11 @@ public:
 
 	/** 서버 전용: 자동 로그인 처리 */
 	void SetLoggedIn_Server(bool bInLoggedIn);
+
+	void ServerSetPlayerNickName(const FString& InNickName);
+
+	UFUNCTION()
+	void OnRep_PlayerNickName();
 
 private:
 	// ---------------------------
@@ -140,6 +141,12 @@ private:
 	bool bIsRoomHost = false;
 
 private:
+	// ---------------------------
+	// Debug display name (UI/로그 용)
+	// ---------------------------
+	UPROPERTY(ReplicatedUsing = OnRep_PlayerNickName)
+	FString PlayerNickName;
+
 	UPROPERTY()
 	TObjectPtr<const UObject> PawnData = nullptr;
 };

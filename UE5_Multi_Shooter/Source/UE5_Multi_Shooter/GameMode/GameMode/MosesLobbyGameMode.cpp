@@ -85,14 +85,15 @@ void AMosesLobbyGameMode::PostLogin(APlayerController* NewPlayer)
 	// 1) 서버 고유 식별자 보장
 	PS->EnsurePersistentId_Server();
 
-	// 2) 자동 로그인 확정 (Phase0 임시 정책)
-	PS->SetLoggedIn_Server(true);
+	// 2) ✅ 개별 로그인 정책: 여기서 자동 로그인 처리 금지
+	PS->SetLoggedIn_Server(false);
 
 	UE_LOG(LogMosesSpawn, Log, TEXT("[LobbyGM] PostLogin OK PC=%s Pid=%s LoggedIn=%d"),
 		*GetNameSafe(MPC),
-		*PS->GetPersistentId().ToString(EGuidFormats::DigitsWithHyphens),
-		PS->IsLoggedIn() ? 1 : 0
-	);
+		*PS->GetPersistentId().ToString(), // 너 함수명에 맞춰
+		PS->IsLoggedIn() ? 1 : 0);
+
+	HandleStartMatchRequest(PS);
 }
 
 // =========================================================

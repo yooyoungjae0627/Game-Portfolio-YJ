@@ -127,6 +127,10 @@ public:
 	// GameState 이벤트 수신/브로드캐스트
 	void NotifyDialogueStateChanged(const FDialogueNetState& NewState);
 
+	// ✅ StartGame/Lobby 어디서든 호출 가능: 닉네임 Pending 저장 + 전송 보장
+	void RequestSetLobbyNickname_LocalOnly(const FString& Nick);
+
+
 private:
 	// ---------------------------
 	// Lobby UI Refresh (핵심 파이프)
@@ -192,7 +196,8 @@ private:
 	void HandlePhaseChanged(EGamePhase NewPhase);
 	void HandleDialogueStateChanged(const FDialogueNetState& NewState);
 
-private:
+	void TrySendPendingLobbyNickname_Local();
+
 	UFUNCTION()
 	void HandleGameStateDialogueChanged(const FDialogueNetState& NewState);
 
@@ -266,4 +271,11 @@ private:
 	// ---------------------------
 	UPROPERTY(EditDefaultsOnly, Category = "Dialogue|Command")
 	TObjectPtr<class UCommandLexiconDA> CommandLexicon = nullptr;
+
+	// Pending Nick (Local only)
+	FString PendingLobbyNickname_Local;
+	bool bPendingLobbyNicknameSend_Local = false;
+
+	// ✅ 로그인 버튼을 실제로 눌렀는지 (의도)
+	bool bLoginSubmitted_Local = false;
 };

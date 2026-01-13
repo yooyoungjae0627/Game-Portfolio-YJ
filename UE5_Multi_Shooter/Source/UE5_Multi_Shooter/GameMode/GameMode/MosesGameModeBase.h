@@ -69,6 +69,8 @@ protected:
 	virtual void FinishRestartPlayer(AController* NewPlayer, const FRotator& StartRotation) override;
 
 public:
+	virtual void ServerTravelToLobby();
+
 	/** PawnData 결정(PS 우선, 없으면 Experience DefaultPawnData) */
 	const UMosesPawnData* GetPawnDataForController(const AController* InController) const;
 
@@ -101,8 +103,6 @@ private:
 protected:
 	/** DoD: Experience READY 이후(=안전 시점)에 파생 GM이 ROOM/PHASE를 확정하도록 훅 제공 */
 	virtual void HandleDoD_AfterExperienceReady(const UMosesExperienceDefinition* CurrentExperience);
-
-
 
 private:
 	/** READY 전 접속한 플레이어들을 임시로 보관(스폰 대기열) */

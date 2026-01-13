@@ -16,4 +16,6 @@ class UE5_MULTI_SHOOTER_API AMosesStartGameMode : public AMosesGameModeBase
 
 public:
 	AMosesStartGameMode();
+	virtual void ServerTravelToLobby() override;
+
 };

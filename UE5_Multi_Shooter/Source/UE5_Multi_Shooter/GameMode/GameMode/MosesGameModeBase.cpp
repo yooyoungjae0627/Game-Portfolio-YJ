@@ -634,6 +634,10 @@ void AMosesGameModeBase::HandleDoD_AfterExperienceReady(const UMosesExperienceDe
 	// Lobby/Match 등 모드별로 override해서 사용.
 }
 
+void AMosesGameModeBase::ServerTravelToLobby()
+{
+}
+
 FString AMosesGameModeBase::GetConnAddr(APlayerController* PC)
 {
 	if (!PC) return TEXT("PC=None");

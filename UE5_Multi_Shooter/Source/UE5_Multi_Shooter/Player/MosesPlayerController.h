@@ -79,8 +79,6 @@ public:
 	UFUNCTION(Server, Reliable)
 	void Server_SetLobbyNickname(const FString& Nick);
 
-	UFUNCTION(Client, Reliable) 
-	void ClientTravelToLobbyLevel();
 
 	UFUNCTION(Server, Reliable)
 	void Server_SendLobbyChat(const FString& Text);
@@ -121,6 +119,11 @@ public:
 	UFUNCTION(Server, Reliable)
 	void Server_TravelToLobby();
 
+	UFUNCTION(Server, Reliable)
+	void Server_RequestEnterLobby(const FString& Nickname);
+
+	void SetPendingLobbyNickname_Local(const FString& Nick);
+
 protected:
 	// ---------------------------
 	// Lifecycle (Local UI / Camera)
@@ -131,6 +134,7 @@ protected:
 	virtual void OnRep_PlayerState() override;
 
 private:
+	void TrySendPendingLobbyNickname_Local();
 
 	void DoServerTravelToMatch();
 	void DoServerTravelToLobby();
@@ -167,4 +171,7 @@ private:
 	float LobbyPreviewCameraDelay = 0.2f;
 
 	FTimerHandle LobbyPreviewCameraTimerHandle;
+
+	FString PendingLobbyNickname_Local;
+	bool bPendingLobbyNicknameSend_Local = false;
 };

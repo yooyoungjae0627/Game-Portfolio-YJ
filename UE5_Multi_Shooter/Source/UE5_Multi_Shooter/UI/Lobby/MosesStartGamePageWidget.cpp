@@ -3,6 +3,7 @@
 #include "Components/EditableText.h"
 #include "Components/Button.h"
 #include "UE5_Multi_Shooter/Player/MosesPlayerController.h"
+#include "UE5_Multi_Shooter/System/MosesLobbyLocalPlayerSubsystem.h"
 
 void UMosesStartGamePageWidget::NativeConstruct()
 {
@@ -16,25 +17,27 @@ void UMosesStartGamePageWidget::NativeConstruct()
 
 void UMosesStartGamePageWidget::OnClicked_Enter()
 {
-	AMosesPlayerController* MosesPlayerController = GetMosesPC();
-	if (!MosesPlayerController)
+	// 버튼 클릭 시
+	if (ET_Nickname == nullptr)
 	{
 		return;
 	}
 
-	const FString Nick = GetNicknameText();
-	if (Nick.IsEmpty())
+	const FString Nick = ET_Nickname->GetText().ToString();
+
+	if (ULocalPlayer* LP = GetOwningLocalPlayer())
 	{
-		return;
+		if (UMosesLobbyLocalPlayerSubsystem* LPS = LP->GetSubsystem<UMosesLobbyLocalPlayerSubsystem>())
+		{
+			LPS->RequestSetLobbyNickname_LocalOnly(Nick);
+		}
 	}
 
-	// 1) 서버 권위로 닉네임 저장(PS DebugName) + LoggedIn 처리
-	MosesPlayerController->Server_SetLobbyNickname(Nick);
-
-	// 2) LobbyLevel로 이동
-	//    - 여기서 Experience를 굳이 옵션으로 붙이지 않아도
-	//      LobbyGM/GMBase가 맵명 fallback 또는 InitGame에서 강제 가능.
-	MosesPlayerController->ClientTravelToLobbyLevel();
+	AMosesPlayerController* PC = GetOwningPlayer<AMosesPlayerController>();
+	if (PC)
+	{
+		PC->Server_RequestEnterLobby(Nick); // Travel 요청만 수행
+	}
 }
 
 FString UMosesStartGamePageWidget::GetNicknameText() const

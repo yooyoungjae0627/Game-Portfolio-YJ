@@ -89,6 +89,8 @@ void UMosesLobbyWidget::NativeConstruct()
 
 	CacheDialogueBubble_InternalRefs();
 
+	HideDialogueBubble_UI(true);
+
 	// RulesView OFF로 시작
 	SetRulesViewMode(false);
 
@@ -350,6 +352,18 @@ void UMosesLobbyWidget::RefreshRoomListFromGameState()
 		Item->Init(Room.RoomId, Room.RoomTitle, Room.MaxPlayers, Room.MemberPids.Num(), EMSLobbyRoomItemWidgetType::LeftPanel);
 		RoomListView->AddItem(Item);
 	}
+
+	const APlayerController* PC = GetOwningPlayer();
+	const int32 bAuth = (PC && PC->HasAuthority()) ? 1 : 0;
+
+	const UWorld* World = GetWorld();
+
+	UE_LOG(LogTemp, Warning, TEXT("[RoomUI] World=%s NetMode=%s PCAuth=%d Rooms=%d"),
+		*GetNameSafe(World),
+		World ? NetModeToString(World->GetNetMode()) : TEXT("None"),
+		(PC && PC->HasAuthority()) ? 1 : 0,
+		LGS ? LGS->GetRooms().Num() : -1);
+
 }
 
 void UMosesLobbyWidget::RefreshPanelsByPlayerState()
@@ -1104,7 +1118,10 @@ void UMosesLobbyWidget::ApplyDialogueState_ToBubbleUI(const FDialogueNetState& N
 	// ---------------------------------------------------------
 	// 5) 버블은 보여준다
 	// ---------------------------------------------------------
-	ShowDialogueBubble_UI(bWasBubbleHidden);
+	if (NewState.SubState != EDialogueSubState::None)
+	{
+		ShowDialogueBubble_UI(bWasBubbleHidden);
+	}
 
 	// 메타휴먼 강제 Collapsed 상태면 Pending만 갱신
 	if (bSubtitleForcedCollapsedByMetaHuman)
@@ -1222,9 +1239,23 @@ void UMosesLobbyWidget::SetRulesViewMode(bool bEnable)
 void UMosesLobbyWidget::RefreshFromState(const AMosesLobbyGameState* InMosesLobbyGameState, const AMosesPlayerState* InMosesPlayerState)
 {
 	// 내 닉 표시
-	if (TXT_MyName && InMosesPlayerState)
+	if (NickNameText && InMosesPlayerState)
 	{
-		TXT_MyName->SetText(FText::FromString(InMosesPlayerState->DebugName));
+		FString NickName = InMosesPlayerState->GetPlayerNickName();
+
+		// ✅ fallback: 아직 Nick이 복제되기 전이면 PlayerName이라도 표시
+		if (NickName.IsEmpty())
+		{
+			NickName = InMosesPlayerState->GetPlayerName().TrimStartAndEnd();
+		}
+
+		if (NickName.IsEmpty())
+		{
+			NickName = TEXT("Guest");
+		}
+
+		NickNameText->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+		NickNameText->SetText(FText::FromString(NickName));
 	}
 
 	// 내 방 표시

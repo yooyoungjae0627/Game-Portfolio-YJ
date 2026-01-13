@@ -1155,7 +1155,7 @@ void AMosesLobbyGameState::Server_AddChatMessage(AMosesPlayerState* SenderPS, co
 
 	FLobbyChatMessage Msg;
 	Msg.SenderPid = SenderPS->GetPersistentId();
-	Msg.SenderName = SenderPS->DebugName.IsEmpty() ? SenderPS->GetName() : SenderPS->DebugName;
+	Msg.SenderName = SenderPS->GetPlayerNickName().IsEmpty() ? SenderPS->GetName() : SenderPS->GetPlayerNickName();
 	Msg.Message = FinalText;
 	Msg.ServerUnixTimeMs = NowUnixMs();
 

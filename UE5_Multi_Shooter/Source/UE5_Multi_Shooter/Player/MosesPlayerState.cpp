@@ -29,7 +29,7 @@ void AMosesPlayerState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& Ou
 {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 
-	DOREPLIFETIME(AMosesPlayerState, DebugName);
+	DOREPLIFETIME(AMosesPlayerState, PlayerNickName);
 
 	DOREPLIFETIME(AMosesPlayerState, PersistentId);
 	DOREPLIFETIME(AMosesPlayerState, bLoggedIn);
@@ -49,7 +49,7 @@ void AMosesPlayerState::CopyProperties(APlayerState* NewPlayerState)
 
 	// SeamlessTravel 유지 대상 복사
 	NewPS->PersistentId = PersistentId;
-	NewPS->DebugName = DebugName;
+	NewPS->PlayerNickName = PlayerNickName;
 
 	NewPS->bLoggedIn = bLoggedIn;
 	NewPS->bReady = bReady;
@@ -68,7 +68,7 @@ void AMosesPlayerState::OverrideWith(APlayerState* OldPlayerState)
 
 	// 클라에서도 값이 덮어씌워져 UI가 유지되는 것을 관찰 가능
 	PersistentId = OldPS->PersistentId;
-	DebugName = OldPS->DebugName;
+	PlayerNickName = OldPS->PlayerNickName;
 
 	bLoggedIn = OldPS->bLoggedIn;
 	bReady = OldPS->bReady;
@@ -89,6 +89,7 @@ void AMosesPlayerState::ServerSetLoggedIn(bool bInLoggedIn)
 
 	// 서버 단일진실
 	bLoggedIn = bInLoggedIn;
+	ForceNetUpdate();
 }
 
 void AMosesPlayerState::ServerSetReady(bool bInReady)
@@ -249,12 +250,44 @@ void AMosesPlayerState::EnsurePersistentId_Server()
 
 void AMosesPlayerState::SetLoggedIn_Server(bool bInLoggedIn)
 {
-	// 개발자 주석:
 	// - 서버에서만 상태를 확정한다.
 	check(HasAuthority());
 
+	if (bLoggedIn == bInLoggedIn)
+	{
+		return;
+	}
+
 	bLoggedIn = bInLoggedIn;
 
-	// 서버도 동일하게 후처리를 하고 싶으면 여기서 OnRep 호출(선택)
-	OnRep_LoggedIn();
+	ForceNetUpdate();
 }
+
+void AMosesPlayerState::ServerSetPlayerNickName(const FString& InNickName)
+{
+	check(HasAuthority());
+
+	const FString Clean = InNickName.TrimStartAndEnd().Left(16);
+	if (Clean.IsEmpty())
+	{
+		return;
+	}
+
+	if (PlayerNickName == Clean)
+	{
+		return;
+	}
+
+	PlayerNickName = Clean;
+	ForceNetUpdate();
+
+	UE_LOG(LogMosesPlayer, Log, TEXT("[Nick][SV][PS] Set Nick=%s Pid=%s"),
+		*PlayerNickName,
+		*PersistentId.ToString(EGuidFormats::DigitsWithHyphens));
+}
+
+void AMosesPlayerState::OnRep_PlayerNickName()
+{
+	NotifyOwningLocalPlayer_PSChanged(this);
+}
+
