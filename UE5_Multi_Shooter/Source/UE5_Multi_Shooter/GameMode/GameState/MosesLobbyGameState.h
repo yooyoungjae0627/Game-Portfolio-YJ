@@ -1,7 +1,7 @@
 ﻿#pragma once
 
 
-#include "GameFramework/GameStateBase.h"
+#include "UE5_Multi_Shooter/GameMode/GameState/MosesGameState.h" 
 #include "UE5_Multi_Shooter/Dialogue/MosesDialogueTypes.h"
 #include "UE5_Multi_Shooter/UI/Lobby/MosesLobbyChatTypes.h"
 #include "Net/Serialization/FastArraySerializer.h"
@@ -118,12 +118,12 @@ DECLARE_MULTICAST_DELEGATE_OneParam(FOnMosesDialogueStateChanged, const FDialogu
  * - 클라는 RoomList 복제값을 받아 UI만 갱신
  */
 UCLASS()
-class UE5_MULTI_SHOOTER_API AMosesLobbyGameState : public AGameStateBase
+class UE5_MULTI_SHOOTER_API AMosesLobbyGameState : public AMosesGameState
 {
 	GENERATED_BODY()
 
 public:
-	AMosesLobbyGameState();
+	AMosesLobbyGameState(const FObjectInitializer& ObjectInitializer);
 
 	// ---------------------------
 	// Engine

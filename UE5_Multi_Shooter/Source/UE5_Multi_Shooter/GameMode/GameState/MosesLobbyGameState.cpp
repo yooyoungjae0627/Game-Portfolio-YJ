@@ -52,7 +52,8 @@ FORCEINLINE const TCHAR* MosesNetModeToStr_UObject(const UObject* Obj)
 // AMosesLobbyGameState
 // =========================================================
 
-AMosesLobbyGameState::AMosesLobbyGameState()
+AMosesLobbyGameState::AMosesLobbyGameState(const FObjectInitializer& ObjectInitializer)
+	: Super(ObjectInitializer)
 {
 	// - GameState는 기본적으로 복제되지만,
 	//   명시적으로 bReplicates=true 해두면 의도를 분명히 한다.

@@ -19,6 +19,7 @@
 AMosesGameModeBase::AMosesGameModeBase()
 {
 	// 서버 기본 클래스 셋업(프로젝트 규칙의 베이스)
+	GameStateClass = AMosesGameState::StaticClass();
 }
 
 void AMosesGameModeBase::InitGame(const FString& MapName, const FString& Options, FString& ErrorMessage)
@@ -332,24 +333,36 @@ void AMosesGameModeBase::HandleMatchAssignmentIfNotExpectingOne()
 		}
 	}
 
-	// 2) 옵션이 없으면 맵 이름으로 로비/매치 판단해서 기본값 선택
+	// 2) 옵션이 없으면 맵 이름으로 Start/Lobby/Match 판단해서 기본값 선택
 	if (ExperienceId.IsValid() == false)
 	{
-		const FString LowerMap = MapName.ToLower();
-		const bool bIsLobbyLike = LowerMap.Contains(TEXT("lobby"));
-		const FName DefaultExpName = bIsLobbyLike ? FName(TEXT("Exp_Lobby")) : FName(TEXT("Exp_Match"));
+		// PIE/경로 오염 방지: MapName을 "짧은 이름"으로 정규화해서 판정한다.
+		const FString FullMapName = GetWorld() ? GetWorld()->GetMapName() : FString();
+		FString Normalized = FPackageName::GetShortName(FullMapName).ToLower();
+
+		// PIE Prefix 제거(여러 인덱스 대응)
+		Normalized.RemoveFromStart(TEXT("uedpie_0_"));
+		Normalized.RemoveFromStart(TEXT("uedpie_1_"));
+		Normalized.RemoveFromStart(TEXT("uedpie_2_"));
+
+		const bool bIsStartLike = Normalized.Contains(TEXT("start"));
+		const bool bIsLobbyLike = Normalized.Contains(TEXT("lobby"));
+
+		const FName DefaultExpName =
+			bIsStartLike ? FName(TEXT("Exp_Start")) :
+			bIsLobbyLike ? FName(TEXT("Exp_Lobby")) :
+			FName(TEXT("Exp_Match"));
 
 		ExperienceId = FPrimaryAssetId(ExperienceType, DefaultExpName);
 
-		UE_LOG(LogMosesExp, Warning, TEXT("[EXP][Pick] Fallback Experience=%s (Map=%s)"),
-			*ExperienceId.ToString(), *MapName);
+		UE_LOG(LogMosesExp, Warning, TEXT("[EXP][Pick] Fallback Experience=%s (FullMap=%s Normalized=%s)"),
+			*ExperienceId.ToString(), *FullMapName, *Normalized);
 
-		// (3) Fallback으로 골랐다는 걸 화면으로 확인
 		if (GEngine)
 		{
 			GEngine->AddOnScreenDebugMessage(
 				-1, 8.f, FColor::Yellow,
-				FString::Printf(TEXT("[EXP][Pick] Fallback -> %s"), *ExperienceId.ToString())
+				FString::Printf(TEXT("[EXP][Pick] Fallback -> %s (Norm=%s)"), *ExperienceId.ToString(), *Normalized)
 			);
 		}
 	}

@@ -1,6 +1,6 @@
 #include "MosesStartGamePageWidget.h"
 
-#include "Components/EditableTextBox.h"
+#include "Components/EditableText.h"
 #include "Components/Button.h"
 #include "UE5_Multi_Shooter/Player/MosesPlayerController.h"
 

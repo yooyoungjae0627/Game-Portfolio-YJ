@@ -4,6 +4,8 @@
 #include "Subsystems/LocalPlayerSubsystem.h"
 #include "MosesStartFlowSubsystem.generated.h"
 
+class UMosesExperienceDefinition;
+class UMosesExperienceManagerComponent;
 class UMosesUserSessionSubsystem;
 class UUserWidget;
 
@@ -20,14 +22,16 @@ public:
 	UFUNCTION(BlueprintCallable, Category="Moses|StartFlow")
 	void SubmitNicknameAndEnterLobby(const FString& Nickname);
 
-protected:
-	void TryShowStartUI();
-
-	// BP에서 Start 위젯 클래스를 지정해라
-	UPROPERTY(EditAnywhere, Category="Moses|StartFlow")
-	TSoftClassPtr<UUserWidget> StartWidgetClass;
-
 private:
-	UPROPERTY()
+	void HandlePostLoadMap(UWorld* LoadedWorld);
+	void TryBindExperienceReady();
+	void HandleExperienceReady(const UMosesExperienceDefinition* Experience);
+	void ShowStartUIFromExperience(const UMosesExperienceDefinition* Experience);
+
+	UMosesExperienceManagerComponent* FindExperienceManager() const;
+
+	UPROPERTY(Transient)
 	TObjectPtr<UUserWidget> StartWidget;
+
+	FTimerHandle BindRetryTimerHandle;
 };

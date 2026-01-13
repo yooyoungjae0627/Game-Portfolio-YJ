@@ -87,6 +87,9 @@ private:
 	UPROPERTY(Transient)
 	TObjectPtr<const UMosesExperienceDefinition> CurrentExperience = nullptr;
 
+	UPROPERTY(Transient)
+	FString LastGFFailReason;
+
 	EMosesExperienceLoadState LoadState = EMosesExperienceLoadState::Unloaded;
 	bool bNotifiedReadyOnce = false;
 

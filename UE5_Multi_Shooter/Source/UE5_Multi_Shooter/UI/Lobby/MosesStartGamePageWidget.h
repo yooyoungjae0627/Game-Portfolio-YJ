@@ -3,7 +3,7 @@
 #include "Blueprint/UserWidget.h"
 #include "MosesStartGamePageWidget.generated.h"
 
-class UEditableTextBox;
+class UEditableText;
 class UButton;
 class AMosesPlayerController;
 
@@ -34,7 +34,7 @@ private:
 
 private:
 	UPROPERTY(meta=(BindWidgetOptional))
-	TObjectPtr<UEditableTextBox> ET_Nickname = nullptr;
+	TObjectPtr<UEditableText> ET_Nickname = nullptr;
 
 	UPROPERTY(meta=(BindWidgetOptional))
 	TObjectPtr<UButton> BTN_Enter = nullptr;

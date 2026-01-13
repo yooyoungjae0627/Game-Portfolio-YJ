@@ -4,10 +4,11 @@
 #include "UE5_Multi_Shooter/System/MosesAssetManager.h"
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
 
+#include "GameFeaturePluginOperationResult.h" 
 #include "Net/UnrealNetwork.h"
 #include "Engine/AssetManager.h"
 #include "Engine/StreamableManager.h"
-#include "Engine/Engine.h" // GEngine
+#include "Engine/Engine.h" 
 
 // Plugin path 만들기
 #include "Interfaces/IPluginManager.h"
@@ -395,46 +396,49 @@ void UMosesExperienceManagerComponent::StartLoadGameFeatures()
 // GameFeature 플러그인 하나의 활성화가 끝났을 때 호출되는 콜백
 // ---------------------------------------------
 void UMosesExperienceManagerComponent::OnOneGameFeatureActivated(
-	const UE::GameFeatures::FResult& /*Result*/,
+	const UE::GameFeatures::FResult& Result,
 	FString PluginName
 )
 {
-	// 비동기 요청 1건 완료
-	// (성공/실패 여부와 상관없이 "끝났다"는 사실 자체를 카운트)
 	CompletedGFCount++;
 
-	UE_LOG(LogMosesExp, Warning,
-		TEXT("[GF] Activate Completed Callback: %s (%d/%d)"),
-		*PluginName, CompletedGFCount, PendingGFCount
-	);
+	if (Result.HasError())
+	{
+		bAnyGFFailed = true;
+		LastGFFailReason = Result.GetError();
 
-	ScreenMsg(FColor::Cyan,
-		FString::Printf(TEXT("[EXP-MGR][GF] Done %s (%d/%d)"),
-			*PluginName, CompletedGFCount, PendingGFCount)
-	);
+		UE_LOG(LogMosesExp, Error, TEXT("[GF] Failed: %s Error=%s"),
+			*PluginName, *LastGFFailReason);
 
-	// 모든 GameFeature 활성화 요청의 콜백이 도착했는지 확인
-	// >= 로 비교하는 이유:
-	// - 예외적인 중복 콜백 상황에서도 READY로 넘어가기 위한 방어 코드
+		ScreenMsg(FColor::Red,
+			FString::Printf(TEXT("[EXP-MGR][GF] FAIL %s"), *PluginName));
+	}
+	else
+	{
+		UE_LOG(LogMosesExp, Log, TEXT("[GF] Activated: %s (%d/%d)"),
+			*PluginName, CompletedGFCount, PendingGFCount);
+
+		ScreenMsg(FColor::Cyan,
+			FString::Printf(TEXT("[EXP-MGR][GF] Done %s (%d/%d)"),
+				*PluginName, CompletedGFCount, PendingGFCount));
+	}
+
 	if (CompletedGFCount >= PendingGFCount)
 	{
-		// 하나라도 GF 로딩/활성화가 실패한 적이 있다면
-		// Experience 전체를 실패 상태로 처리
 		if (bAnyGFFailed)
 		{
-			FailExperienceLoad(TEXT("One or more GameFeatures had invalid URL"));
+			const FString Reason = FString::Printf(
+				TEXT("One or more GameFeatures failed. LastError=%s"),
+				*LastGFFailReason
+			);
+
+			FailExperienceLoad(Reason);
 			return;
 		}
 
-		// 모든 GameFeature가 정상적으로 활성화됨
-		UE_LOG(LogMosesExp, Warning, TEXT("[GF] Callbacks all arrived -> READY"));
-		ScreenMsg(FColor::Green, TEXT("[EXP-MGR][GF] All callbacks -> READY"));
-
-		// Experience 로딩 파이프라인 최종 완료 단계로 진입
 		OnExperienceFullLoadCompleted();
 	}
 }
-
 
 // ---------------------------------------------
 // Experience READY (최종 로딩 완료 지점)

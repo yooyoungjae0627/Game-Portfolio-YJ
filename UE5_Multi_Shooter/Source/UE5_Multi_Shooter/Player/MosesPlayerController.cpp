@@ -711,5 +711,5 @@ void AMosesPlayerController::ClientTravelToLobbyLevel_Implementation()
 {
 	// 로비 GM이 InitGame에서 ?Experience=Exp_Lobby를 강제하므로
 	// 여기서는 단순히 맵만 이동해도 안전함.
-	ClientTravel(TEXT("/Game/Maps/LobbyLevel"), ETravelType::TRAVEL_Absolute);
+	ClientTravel(TEXT("/Game/Map/LobbyLevel"), ETravelType::TRAVEL_Absolute);
 }
