@@ -14,12 +14,6 @@ void UGameFeatureAction_MosesLobbyUI::OnGameFeatureActivating(FGameFeatureActiva
 {
 	UE_LOG(LogTemp, Log, TEXT("[GF_LobbyUI] Activating Path=%s"), *LobbyWidgetClassPath.ToString());
 
-	if (!GEngine)
-	{
-		UE_LOG(LogTemp, Warning, TEXT("[GF_LobbyUI] Activating FAIL (No GEngine)"));
-		return;
-	}
-
 	int32 RegisteredCount = 0;
 
 	for (const FWorldContext& WC : GEngine->GetWorldContexts())

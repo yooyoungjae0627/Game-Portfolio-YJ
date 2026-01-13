@@ -411,8 +411,15 @@ void UMosesLobbyWidget::RefreshRightPanelControlsByRole()
 	if (CheckBox_Ready)
 	{
 		const bool bShowReady = (bAllowRoleSpecificUI && !bIsHost);
+
 		CheckBox_Ready->SetVisibility(bShowReady ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
 		CheckBox_Ready->SetIsEnabled(bShowReady);
+
+		// ✅ 방 밖/전환중/호스트면 체크는 항상 false로
+		if (!bShowReady)
+		{
+			CheckBox_Ready->SetIsChecked(false);
+		}
 	}
 
 	if (Button_LeaveRoom)
@@ -445,9 +452,22 @@ void UMosesLobbyWidget::HandleRoomStateChanged_UI()
 
 void UMosesLobbyWidget::HandlePlayerStateChanged_UI()
 {
-	// - PS.RoomId 복제 도착이 "방 입장 확정" 타이밍이다.
-	// - 이때만 Pending을 해제한다 (Ok 수신 시점에는 절대 해제 금지)
 	const AMosesPlayerState* PS = GetMosesPS();
+
+	if (bPendingJoinAfterLogin && PS && PS->IsLoggedIn() && PendingJoinRoomId.IsValid())
+	{
+		bPendingJoinAfterLogin = false;
+
+		if (AMosesPlayerController* PC = GetMosesPC())
+		{
+			BeginPendingEnterRoom_UIOnly();
+			PC->Server_JoinRoom(PendingJoinRoomId);
+			UE_LOG(LogTemp, Warning, TEXT("[LobbyUI] Auto-Join after login. Room=%s"), *PendingJoinRoomId.ToString());
+		}
+		return;
+	}
+
+	// 기존 로직 유지
 	if (PS && PS->GetRoomId().IsValid() && bPendingEnterRoom_UIOnly)
 	{
 		EndPendingEnterRoom_UIOnly();
@@ -573,6 +593,12 @@ bool UMosesLobbyWidget::CanStartGame_UIOnly() const
 		return false;
 	}
 
+	// ✅ 정원 체크: MaxPlayers == 현재 인원
+	if (Room->MaxPlayers > 0 && Room->MemberPids.Num() != Room->MaxPlayers)
+	{
+		return false;
+	}
+
 	return Room->IsAllReady();
 }
 
@@ -597,6 +623,11 @@ void UMosesLobbyWidget::OnClicked_CreateRoom()
 
 void UMosesLobbyWidget::OnClicked_LeaveRoom()
 {
+	if (CheckBox_Ready)
+	{
+		CheckBox_Ready->SetIsChecked(false);
+	}
+
 	if (AMosesPlayerController* MosesPlayerController = Cast<AMosesPlayerController>(GetOwningPlayer()))
 	{
 		MosesPlayerController->Server_LeaveRoom();
@@ -662,26 +693,18 @@ void UMosesLobbyWidget::OnClicked_GameRules()
 		return;
 	}
 
-	// 1) 로컬 RulesView 연출은 즉시
+	// 1) 로컬 RulesView 연출만
 	Subsys->EnterRulesView_UIOnly();
 
-	// 2) ✅ 여기서 "버블을 켠다" 정책이라면, UI에서 켠 직후 최신 상태를 1회 강제 Apply
-	//    (OnRep 늦거나, 캐시가 같아서 Apply가 SKIP 되는 문제 종결)
-	if (LobbyLPS)
-	{
-		const FDialogueNetState& Latest = LobbyLPS->GetLastDialogueNetState();
-		ApplyDialogueState_ToBubbleUI(Latest); // ✅ 강제 1회 적용(내부에서 Force 조건 처리)
-	}
+	// 2) (선택) UIOnly면 NetState 기반 강제 Apply도 끄는게 안전
+	// if (LobbyLPS)
+	// {
+	//     const FDialogueNetState& Latest = LobbyLPS->GetLastDialogueNetState();
+	//     ApplyDialogueState_ToBubbleUI(Latest);
+	// }
 
-	// 3) 서버 대화 시작: 방 안/밖 상관없이 허용 (Pending 중엔 금지)
-	if (bPendingEnterRoom_UIOnly)
-	{
-		UE_LOG(LogMosesSpawn, Warning, TEXT("[BTN][GameRules] Skip Server Dialogue (PendingEnterRoom)"));
-		return;
-	}
-
-	UE_LOG(LogMosesSpawn, Warning, TEXT("[BTN][GameRules] RequestEnterLobbyDialogue (Room independent)"));
-	Subsys->RequestEnterLobbyDialogue();
+	// 3) ❌ Day2(UIOnly)에서는 서버 진입 금지
+	// Subsys->RequestEnterLobbyDialogue();
 }
 
 void UMosesLobbyWidget::OnClicked_ExitDialogue()
@@ -692,26 +715,16 @@ void UMosesLobbyWidget::OnClicked_ExitDialogue()
 		return;
 	}
 
-	// 1) UI-only 연출 복귀
 	Subsys->ExitRulesView_UIOnly();
 
-	// 2) ✅ "Exit 누르면 버블 Visible 꺼짐" 정책 유지
-	//    단, 다음 Enter에서 텍스트가 안 바뀌는 문제를 막기 위해
-	//    여기서 캐시를 무효화(Reset) 해준다.
-	{
-		// 버블은 즉시 내림 (원하는 정책)
-		HideDialogueBubble_UI(/*bPlayFadeOut*/false);
-		SetSubtitleVisibility(false);
+	HideDialogueBubble_UI(false);
+	SetSubtitleVisibility(false);
+	CachedDialogueSeq = 0;
+	CachedLineIndex = INDEX_NONE;
+	CachedFlowState = EDialogueFlowState::Ended;
+	PendingSubtitleText = FText::GetEmpty();
 
-		// ✅ 핵심: 캐시 무효화 -> 다음에 켤 때 무조건 SetText 1회 강제
-		CachedDialogueSeq = 0;
-		CachedLineIndex = INDEX_NONE;
-		CachedFlowState = EDialogueFlowState::Ended;
-		PendingSubtitleText = FText::GetEmpty();
-	}
-
-	// 3) 서버 Exit 요청
-	Subsys->RequestExitLobbyDialogue();
+	return; // ✅ 여기서 끝 (UIOnly)
 }
 
 void UMosesLobbyWidget::OnClicked_SendChat()
@@ -732,30 +745,30 @@ void UMosesLobbyWidget::OnClicked_SendChat()
 	}
 }
 
-
 void UMosesLobbyWidget::OnRoomItemClicked(UObject* ClickedItem)
 {
 	const UMSLobbyRoomListItemData* Item = Cast<UMSLobbyRoomListItemData>(ClickedItem);
-	if (!Item)
-	{
-		return;
-	}
-
-	const AMosesLobbyGameState* LGS = GetWorld() ? GetWorld()->GetGameState<AMosesLobbyGameState>() : nullptr;
-	if (LGS)
-	{
-		const FMosesLobbyRoomItem* Room = LGS->FindRoom(Item->GetRoomId());
-		if (Room && Room->IsFull())
-		{
-			UE_LOG(LogTemp, Warning, TEXT("[LobbyUI] JoinRoom REJECT (ClientPrecheck: RoomFull) Room=%s"),
-				*Item->GetRoomId().ToString());
-			return;
-		}
-	}
+	if (!Item) return;
 
 	AMosesPlayerController* PC = GetMosesPC();
-	if (!PC)
+	AMosesPlayerState* PS = GetMosesPS();
+	if (!PC || !PS) return;
+
+	// ✅ 로그인 안됐으면: Join 보내지 말고 로그인 유도 + "조인 예약"
+	if (!PS->IsLoggedIn())
 	{
+		PendingJoinRoomId = Item->GetRoomId();
+		bPendingJoinAfterLogin = true;
+
+		if (LobbyLPS)
+		{
+			const FString AutoNick = FString::Printf(TEXT("Guest_%d"),
+				GetOwningLocalPlayer() ? GetOwningLocalPlayer()->GetControllerId() : 0);
+
+			LobbyLPS->RequestSetLobbyNickname_LocalOnly(AutoNick);
+		}
+
+		UE_LOG(LogTemp, Warning, TEXT("[LobbyUI] Join deferred until login. Room=%s"), *PendingJoinRoomId.ToString());
 		return;
 	}
 
@@ -1210,6 +1223,11 @@ void UMosesLobbyWidget::SetRulesViewMode(bool bEnable)
 
 		SetVisSafe(Btn_ExitDialogue, ESlateVisibility::Visible);
 
+		// ✅ 하단 UI(내 발화/마이크 상태) 표시
+		// - 기본은 Collapsed로 두고 RulesView에서만 노출
+		SetVisSafe(TB_MySpeech, ESlateVisibility::Visible);
+		SetVisSafe(TB_MicState, ESlateVisibility::Visible);
+
 		// ✅ Bubble은 여기서 건드리지 않는다.
 		// - 강제 Collapsed/Opacity0 제거
 		// - 대화 상태에 따라 ApplyDialogueState_ToBubbleUI가 show/hide 담당
@@ -1218,6 +1236,17 @@ void UMosesLobbyWidget::SetRulesViewMode(bool bEnable)
 		if (LobbyLPS)
 		{
 			HandleDialogueStateChanged_UI(LobbyLPS->GetLastDialogueNetState());
+
+			// ✅ Day2: 세션(하단 텍스트/마이크 상태)도 즉시 반영
+			// (함수명이 다르면 네 위젯/서브시스템에 맞춰 연결)
+			SetMySpeechText_UI(LobbyLPS->GetCachedMySpeechText());   // 없으면 아래 주석 방식으로
+			SetMicState_UI(static_cast<int32>(LobbyLPS->GetMicState()));
+		}
+		else
+		{
+			// LobbyLPS가 아직 없을 수도 있으니 기본 값 표시
+			SetMySpeechText_UI(FText::GetEmpty());
+			SetMicState_UI(/*Off*/0);
 		}
 	}
 	else
@@ -1229,12 +1258,17 @@ void UMosesLobbyWidget::SetRulesViewMode(bool bEnable)
 
 		SetVisSafe(Btn_ExitDialogue, ESlateVisibility::Collapsed);
 
+		// ✅ 하단 UI 숨김
+		SetVisSafe(TB_MySpeech, ESlateVisibility::Collapsed);
+		SetVisSafe(TB_MicState, ESlateVisibility::Collapsed);
+
 		// ✅ Bubble은 여기서도 건드리지 않는다.
 		// (대화가 진행 중이면 계속 보여야 함)
 	}
 
 	RefreshGameRulesButtonVisibility();
 }
+
 
 void UMosesLobbyWidget::RefreshFromState(const AMosesLobbyGameState* InMosesLobbyGameState, const AMosesPlayerState* InMosesPlayerState)
 {
@@ -1434,5 +1468,31 @@ void UMosesLobbyWidget::OnClicked_SubmitCommand()
 	if (ET_CommandInput)
 	{
 		ET_CommandInput->SetText(FText::GetEmpty());
+	}
+}
+
+void UMosesLobbyWidget::SetMySpeechText_UI(const FText& InText)
+{
+	if (TB_MySpeech)
+	{
+		TB_MySpeech->SetText(InText);
+	}
+}
+
+void UMosesLobbyWidget::SetMicState_UI(int32 InMicState)
+{
+	if (!TB_MicState)
+	{
+		return;
+	}
+
+	// Day2: 단순 표시
+	switch ((EMosesMicState)InMicState)
+	{
+	case EMosesMicState::Off:        TB_MicState->SetText(FText::FromString(TEXT("Mic: Off"))); break;
+	case EMosesMicState::Listening:  TB_MicState->SetText(FText::FromString(TEXT("Mic: Listening"))); break;
+	case EMosesMicState::Processing: TB_MicState->SetText(FText::FromString(TEXT("Mic: Processing"))); break;
+	case EMosesMicState::Error:      TB_MicState->SetText(FText::FromString(TEXT("Mic: Error"))); break;
+	default:                         TB_MicState->SetText(FText::FromString(TEXT("Mic: Unknown"))); break;
 	}
 }

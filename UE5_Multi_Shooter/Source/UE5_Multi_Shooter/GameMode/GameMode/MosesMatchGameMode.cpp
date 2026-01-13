@@ -9,12 +9,21 @@
 #include "GameFramework/GameStateBase.h"
 #include "GameFramework/PlayerState.h"
 #include "GameFramework/PlayerController.h"
+#include "GameFramework/PlayerStart.h"
+
+// =========================================================
+// AMosesMatchGameMode
+// =========================================================
 
 AMosesMatchGameMode::AMosesMatchGameMode()
 {
 	// 왕복 Travel + PS/PC 유지 검증을 위해 권장
 	bUseSeamlessTravel = true;
 }
+
+// =========================================================
+// Engine
+// =========================================================
 
 void AMosesMatchGameMode::InitGame(const FString& MapName, const FString& Options, FString& ErrorMessage)
 {
@@ -37,9 +46,9 @@ void AMosesMatchGameMode::BeginPlay()
 
 	// ✅ F2(2) 필수: MatchGM BeginPlay Dump
 	DumpAllDODPlayerStates(TEXT("MatchGM:BeginPlay"));
-
-	// 기존 덤프 유지(원하면 제거)
 	DumpPlayerStates(TEXT("[MatchGM][BeginPlay]"));
+
+	UE_LOG(LogMosesSpawn, Warning, TEXT("[TEST] MatchGM BeginPlay World=%s"), *GetNameSafe(GetWorld()));
 
 	// (선택) 자동 복귀
 	if (AutoReturnToLobbySeconds > 0.f && HasAuthority())
@@ -68,6 +77,111 @@ void AMosesMatchGameMode::PostLogin(APlayerController* NewPlayer)
 		*GetNameSafe(PS),
 		PS ? PS->GetPlayerId() : -1,
 		PS ? *PS->GetPlayerName() : TEXT("None"));
+}
+
+void AMosesMatchGameMode::Logout(AController* Exiting)
+{
+	// ✅ 나갈 때 예약 해제 (중복 방지)
+	ReleaseReservedStart(Exiting);
+
+	Super::Logout(Exiting);
+}
+
+// =========================================================
+// Spawning (duplicate prevention)
+// =========================================================
+
+AActor* AMosesMatchGameMode::ChoosePlayerStart_Implementation(AController* Player)
+{
+	if (!HasAuthority() || !Player)
+	{
+		return Super::ChoosePlayerStart_Implementation(Player);
+	}
+
+	// 0) 이미 배정된 Start가 있다면 그대로 유지(원하면 정책 변경 가능)
+	if (const TWeakObjectPtr<APlayerStart>* Assigned = AssignedStartByController.Find(Player))
+	{
+		if (Assigned->IsValid())
+		{
+			APlayerStart* Start = Assigned->Get();
+			UE_LOG(LogMosesSpawn, Warning, TEXT("[StartPick][Reuse] PC=%s Start=%s Loc=%s Rot=%s"),
+				*GetNameSafe(Player),
+				*GetNameSafe(Start),
+				*Start->GetActorLocation().ToString(),
+				*Start->GetActorRotation().ToString());
+
+			return Start;
+		}
+	}
+
+	// 1) MatchStart 수집(Tag=Match)
+	TArray<APlayerStart*> AllStarts;
+	CollectMatchPlayerStarts(AllStarts);
+
+	// 2) 점유되지 않은 Start만 필터
+	TArray<APlayerStart*> FreeStarts;
+	FilterFreeStarts(AllStarts, FreeStarts);
+
+	UE_LOG(LogMosesSpawn, Warning, TEXT("[StartPick] PC=%s All=%d Free=%d Reserved=%d"),
+		*GetNameSafe(Player),
+		AllStarts.Num(),
+		FreeStarts.Num(),
+		ReservedPlayerStarts.Num());
+
+	// 3) 후보가 없다면 fallback
+	if (FreeStarts.Num() <= 0)
+	{
+		UE_LOG(LogMosesSpawn, Warning, TEXT("[StartPick][Fallback] No free Match PlayerStart. Use Super. PC=%s"),
+			*GetNameSafe(Player));
+
+		return Super::ChoosePlayerStart_Implementation(Player);
+	}
+
+	// 4) 랜덤 선택 + 예약
+	const int32 Index = FMath::RandRange(0, FreeStarts.Num() - 1);
+	APlayerStart* Chosen = FreeStarts[Index];
+
+	ReserveStartForController(Player, Chosen);
+
+	UE_LOG(LogMosesSpawn, Warning, TEXT("[StartPick][Chosen] PC=%s Start=%s Loc=%s Rot=%s (Reserved=%d)"),
+		*GetNameSafe(Player),
+		*GetNameSafe(Chosen),
+		*Chosen->GetActorLocation().ToString(),
+		*Chosen->GetActorRotation().ToString(),
+		ReservedPlayerStarts.Num());
+
+	return Chosen;
+}
+
+// =========================================================
+// Travel
+// =========================================================
+
+void AMosesMatchGameMode::TravelToLobby()
+{
+	if (!CanDoServerTravel())
+	{
+		UE_LOG(LogMosesSpawn, Warning, TEXT("[MatchGM] TravelToLobby BLOCKED"));
+		return;
+	}
+
+	// ✅ 복귀 직전 DoD Dump
+	DumpAllDODPlayerStates(TEXT("Match:BeforeTravelToLobby"));
+	DumpPlayerStates(TEXT("[MatchGM][BeforeTravelToLobby]"));
+
+	// 예약 상태도 확인(디버깅)
+	DumpReservedStarts(TEXT("BeforeTravelToLobby"));
+
+	const FString URL = GetLobbyMapURL();
+	UE_LOG(LogMosesSpawn, Warning, TEXT("[MatchGM] ServerTravel -> %s"), *URL);
+
+	GetWorld()->ServerTravel(URL, /*bAbsolute*/ false);
+}
+
+void AMosesMatchGameMode::HandleAutoReturn()
+{
+	UE_LOG(LogMosesSpawn, Warning, TEXT("[MatchGM] HandleAutoReturn -> TravelToLobby"));
+	TravelToLobby();
 }
 
 bool AMosesMatchGameMode::CanDoServerTravel() const
@@ -102,6 +216,37 @@ FString AMosesMatchGameMode::GetLobbyMapURL() const
 {
 	return TEXT("/Game/Map/L_Lobby");
 }
+
+// =========================================================
+// Seamless Travel logs
+// =========================================================
+
+void AMosesMatchGameMode::GetSeamlessTravelActorList(bool bToTransition, TArray<AActor*>& ActorList)
+{
+	Super::GetSeamlessTravelActorList(bToTransition, ActorList);
+
+	UE_LOG(LogMosesSpawn, Warning,
+		TEXT("[MatchGM] GetSeamlessTravelActorList bToTransition=%d ActorListNum=%d"),
+		bToTransition, ActorList.Num());
+}
+
+void AMosesMatchGameMode::HandleSeamlessTravelPlayer(AController*& C)
+{
+	Super::HandleSeamlessTravelPlayer(C);
+
+	APlayerController* PC = Cast<APlayerController>(C);
+	if (PC)
+	{
+		if (AMosesPlayerState* PS = PC->GetPlayerState<AMosesPlayerState>())
+		{
+			PS->DOD_PS_Log(this, TEXT("GM:HandleSeamlessTravelPlayer"));
+		}
+	}
+}
+
+// =========================================================
+// Debug dumps
+// =========================================================
 
 void AMosesMatchGameMode::DumpPlayerStates(const TCHAR* Prefix) const
 {
@@ -148,51 +293,113 @@ void AMosesMatchGameMode::DumpAllDODPlayerStates(const TCHAR* Where) const
 	UE_LOG(LogMosesSpawn, Warning, TEXT("[DOD][PS][DS][%s] ---- DumpAllPS End ----"), Where);
 }
 
-void AMosesMatchGameMode::TravelToLobby()
+// =========================================================
+// PlayerStart helper functions
+// =========================================================
+
+void AMosesMatchGameMode::CollectMatchPlayerStarts(TArray<APlayerStart*>& OutStarts) const
 {
-	if (!CanDoServerTravel())
+	OutStarts.Reset();
+
+	TArray<AActor*> Found;
+	UGameplayStatics::GetAllActorsOfClass(this, APlayerStart::StaticClass(), Found);
+
+	OutStarts.Reserve(Found.Num());
+
+	for (AActor* A : Found)
 	{
-		UE_LOG(LogMosesSpawn, Warning, TEXT("[MatchGM] TravelToLobby BLOCKED"));
+		if (APlayerStart* PS = Cast<APlayerStart>(A))
+		{
+			OutStarts.Add(PS); // ✅ Tag 조건 제거
+		}
+	}
+
+	UE_LOG(LogMosesSpawn, Warning, TEXT("[StartPick] Collect AllPlayerStarts=%d"), OutStarts.Num());
+}
+
+
+void AMosesMatchGameMode::FilterFreeStarts(const TArray<APlayerStart*>& InAll, TArray<APlayerStart*>& OutFree) const
+{
+	OutFree.Reset();
+	OutFree.Reserve(InAll.Num());
+
+	for (APlayerStart* PS : InAll)
+	{
+		if (!PS)
+		{
+			continue;
+		}
+
+		if (ReservedPlayerStarts.Contains(PS))
+		{
+			continue;
+		}
+
+		OutFree.Add(PS);
+	}
+}
+
+void AMosesMatchGameMode::ReserveStartForController(AController* Player, APlayerStart* Start)
+{
+	if (!Player || !Start)
+	{
 		return;
 	}
 
-	// ✅ G1 + F: 복귀 직전 DoD Dump
-	DumpAllDODPlayerStates(TEXT("Match:BeforeTravelToLobby"));
-
-	// 기존 덤프 유지(원하면 제거)
-	DumpPlayerStates(TEXT("[MatchGM][BeforeTravelToLobby]"));
-
-	const FString URL = GetLobbyMapURL();
-	UE_LOG(LogMosesSpawn, Warning, TEXT("[MatchGM] ServerTravel -> %s"), *URL);
-
-	GetWorld()->ServerTravel(URL, /*bAbsolute*/ false);
+	ReservedPlayerStarts.Add(Start);
+	AssignedStartByController.Add(Player, Start);
 }
 
-void AMosesMatchGameMode::HandleAutoReturn()
+void AMosesMatchGameMode::ReleaseReservedStart(AController* Player)
 {
-	UE_LOG(LogMosesSpawn, Warning, TEXT("[MatchGM] HandleAutoReturn -> TravelToLobby"));
-	TravelToLobby();
-}
-
-void AMosesMatchGameMode::GetSeamlessTravelActorList(bool bToTransition, TArray<AActor*>& ActorList)
-{
-	Super::GetSeamlessTravelActorList(bToTransition, ActorList);
-
-	UE_LOG(LogMosesSpawn, Warning,
-		TEXT("[MatchGM] GetSeamlessTravelActorList bToTransition=%d ActorListNum=%d"),
-		bToTransition, ActorList.Num());
-}
-
-void AMosesMatchGameMode::HandleSeamlessTravelPlayer(AController*& C)
-{
-	Super::HandleSeamlessTravelPlayer(C);
-
-	APlayerController* PC = Cast<APlayerController>(C);
-	if (PC)
+	if (!Player)
 	{
-		if (AMosesPlayerState* PS = PC->GetPlayerState<AMosesPlayerState>())
+		return;
+	}
+
+	TWeakObjectPtr<APlayerStart>* FoundStart = AssignedStartByController.Find(Player);
+	if (!FoundStart)
+	{
+		return;
+	}
+
+	if (FoundStart->IsValid())
+	{
+		ReservedPlayerStarts.Remove(*FoundStart);
+	}
+
+	AssignedStartByController.Remove(Player);
+
+	UE_LOG(LogMosesSpawn, Warning, TEXT("[StartPick][Release] PC=%s Reserved=%d"),
+		*GetNameSafe(Player),
+		ReservedPlayerStarts.Num());
+}
+
+void AMosesMatchGameMode::DumpReservedStarts(const TCHAR* Where) const
+{
+	int32 ValidCount = 0;
+	for (const TWeakObjectPtr<APlayerStart>& It : ReservedPlayerStarts)
+	{
+		if (It.IsValid())
 		{
-			PS->DOD_PS_Log(this, TEXT("GM:HandleSeamlessTravelPlayer"));
+			ValidCount++;
 		}
+	}
+
+	UE_LOG(LogMosesSpawn, Warning, TEXT("[StartPick][Dump][%s] Reserved=%d Valid=%d Assigned=%d"),
+		Where,
+		ReservedPlayerStarts.Num(),
+		ValidCount,
+		AssignedStartByController.Num());
+
+	for (const TPair<TWeakObjectPtr<AController>, TWeakObjectPtr<APlayerStart>>& Pair : AssignedStartByController)
+	{
+		AController* PC = Pair.Key.Get();
+		APlayerStart* PS = Pair.Value.Get();
+
+		UE_LOG(LogMosesSpawn, Warning, TEXT("[StartPick][Dump][%s] PC=%s -> Start=%s"),
+			Where,
+			*GetNameSafe(PC),
+			*GetNameSafe(PS));
 	}
 }

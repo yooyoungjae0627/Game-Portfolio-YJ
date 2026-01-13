@@ -249,8 +249,18 @@ bool FMosesLobbyRoomItem::SetReadyByPid(const FGuid& Pid, bool bInReady)
 FGuid AMosesLobbyGameState::GetPidChecked(const AMosesPlayerState* PS)
 {
 	check(PS);
-	check(PS->GetPersistentId().IsValid());
-	return PS->GetPersistentId();
+
+	const FGuid Pid = PS->GetPersistentId();
+	if (!Pid.IsValid())
+	{
+		UE_LOG(LogMosesRoom, Error, TEXT("[PID] Invalid! PS=%s Owner=%s"),
+			*GetNameSafe(PS),
+			*GetNameSafe(PS->GetOwner()));
+
+		check(false);
+	}
+
+	return Pid;
 }
 
 FMosesLobbyRoomItem* AMosesLobbyGameState::FindRoomMutable(const FGuid& RoomId)
@@ -699,6 +709,12 @@ void AMosesLobbyGameState::Server_SyncReadyFromPlayerState(AMosesPlayerState* PS
 	if (Room->SetReadyByPid(Pid, PS->IsReady()))
 	{
 		MarkRoomDirty(*Room);
+
+		// ✅ 핵심: 서버(특히 ListenServer)도 즉시 UI 갱신되게 Notify
+		NotifyRoomStateChanged_LocalPlayers();
+
+		// 선택: 복제 빨리 밀기
+		ForceNetUpdate();
 	}
 }
 
@@ -739,11 +755,12 @@ bool AMosesLobbyGameState::Server_CanStartMatch(const FGuid& RoomId, FString& Ou
 		return false;
 	}
 
-	// 개발자 주석:
-	// - 정책(최종):
-	//   ✅ "호스트 제외" 모든 멤버 Ready면 Start 가능
-	//   ✅ 방 정원(MaxPlayers)과 무관 (원하면 여기서 Full 정책을 다시 넣으면 됨)
-	//   ✅ Host만 있는 방은 Start 불가 (RoomItem::IsAllReady에서 이미 차단)
+	// ✅ 정원 == 현재 인원
+	if (Room->MaxPlayers > 0 && Room->MemberPids.Num() != Room->MaxPlayers)
+	{
+		OutReason = TEXT("NotFull");
+		return false;
+	}
 
 	if (!Room->IsAllReady())
 	{
@@ -770,10 +787,8 @@ void FMosesLobbyRoomItem::PostReplicatedAdd(const FMosesLobbyRoomList& InArraySe
 		MemberPids.Num(),
 		MaxPlayers);
 
-	// 개발자 주석:
-	// - 클라가 델타를 수신한 "바로 그 순간" UI 갱신 신호를 때린다.
-	// - 방 목록은 "모두에게" 보여야 하므로 OwnerOnly 같은 조건이 없다.
-	if (GS && NM == NM_Client)
+	// ✅ Client 뿐 아니라 ListenServer도 UI 갱신
+	if (GS && (NM == NM_Client || NM == NM_ListenServer))
 	{
 		GS->NotifyRoomStateChanged_LocalPlayers();
 	}
@@ -791,11 +806,12 @@ void FMosesLobbyRoomItem::PostReplicatedChange(const FMosesLobbyRoomList& InArra
 		MaxPlayers,
 		*HostPid.ToString(EGuidFormats::DigitsWithHyphens));
 
-	if (GS && NM == NM_Client)
+	if (GS && (NM == NM_Client || NM == NM_ListenServer))
 	{
 		GS->NotifyRoomStateChanged_LocalPlayers();
 	}
 }
+
 
 void FMosesLobbyRoomItem::PreReplicatedRemove(const FMosesLobbyRoomList& InArraySerializer)
 {
@@ -806,11 +822,12 @@ void FMosesLobbyRoomItem::PreReplicatedRemove(const FMosesLobbyRoomList& InArray
 		MosesNetModeToStr(NM),
 		*RoomId.ToString(EGuidFormats::DigitsWithHyphens));
 
-	if (GS && NM == NM_Client)
+	if (GS && (NM == NM_Client || NM == NM_ListenServer))
 	{
 		GS->NotifyRoomStateChanged_LocalPlayers();
 	}
 }
+
 
 // =========================================================
 // Server-only mutators

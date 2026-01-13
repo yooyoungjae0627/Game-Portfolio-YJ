@@ -429,6 +429,16 @@ void UMosesLobbyLocalPlayerSubsystem::RequestNextCharacterPreview_LocalOnly()
 
 	LocalPreviewSelectedId = (LocalPreviewSelectedId >= 2) ? 1 : 2;
 
+	// ✅ 서버(PlayerState)에도 선택값을 저장(방 생성/입장 등으로 Refresh가 돌 때 되돌아가는 현상 방지)
+	if (AMosesPlayerController* PC = GetMosesPC_LocalOnly())
+	{
+		bPendingSelectedIdServerAck = true;
+		PendingSelectedIdServerAck = LocalPreviewSelectedId;
+
+		// ✅ 아래 RPC는 4) PlayerController 코드 추가가 필요
+		PC->Server_SetSelectedCharacterId(LocalPreviewSelectedId);
+	}
+
 	UE_LOG(LogMosesSpawn, Warning, TEXT("[CharNext] Local -> %d"), LocalPreviewSelectedId);
 
 	ApplyPreviewBySelectedId_LocalOnly(LocalPreviewSelectedId);
@@ -491,6 +501,22 @@ void UMosesLobbyLocalPlayerSubsystem::RefreshLobbyPreviewCharacter_LocalOnly()
 	const AMosesPlayerState* PS = DebugPS;
 
 	int32 SelectedId = PS->GetSelectedCharacterId();
+	
+	// ✅ 로컬에서 먼저 바뀐 선택값이 서버에 아직 반영되기 전이면,
+	//    PS 기반 Refresh가 "기본값"으로 되돌리는 문제를 막기 위해 로컬 Pending 값을 우선 적용한다.
+	if (bPendingSelectedIdServerAck && PendingSelectedIdServerAck != INDEX_NONE)
+	{
+		if (SelectedId != PendingSelectedIdServerAck)
+		{
+			SelectedId = PendingSelectedIdServerAck;
+		}
+		else
+		{
+			bPendingSelectedIdServerAck = false;
+			PendingSelectedIdServerAck = INDEX_NONE;
+		}
+	}
+
 	if (SelectedId != 1 && SelectedId != 2)
 	{
 		UE_LOG(LogMosesSpawn, Warning, TEXT("[CharPreview] SelectedId invalid (%d) -> clamp to 1"), SelectedId);
@@ -499,7 +525,7 @@ void UMosesLobbyLocalPlayerSubsystem::RefreshLobbyPreviewCharacter_LocalOnly()
 
 	UE_LOG(LogMosesSpawn, Warning, TEXT("[CharPreview] Refresh -> Apply SelectedId=%d"), SelectedId);
 
-	// - 처음 UI 켤 때만 PS 기반으로 로컬값 초기화(디폴트=1)
+	// - PS 값이 유효하면 로컬값도 동기화
 	const int32 PSId = PS->GetSelectedCharacterId();
 	if (PSId == 1 || PSId == 2)
 	{
@@ -702,15 +728,39 @@ void UMosesLobbyLocalPlayerSubsystem::ApplyRulesViewToWidget(bool bEnable)
 
 void UMosesLobbyLocalPlayerSubsystem::EnterRulesView_UIOnly()
 {
-	// 중복 진입 방지
+	// ✅ 사용자 트리거 진입: Greeting 포함
+	EnterOrRecoverRulesView_UIOnly(true, /*bPlayGreeting*/true);
+}
+
+void UMosesLobbyLocalPlayerSubsystem::RecoverRulesView_UIOnly(bool bEnable)
+{
+	// ✅ 복구: Greeting 없이 상태만 맞춘다
+	EnterOrRecoverRulesView_UIOnly(bEnable, /*bPlayGreeting*/false);
+}
+
+void UMosesLobbyLocalPlayerSubsystem::EnterOrRecoverRulesView_UIOnly(bool bEnable, bool bPlayGreeting)
+{
+	// ---- OFF 복구는 Exit 로직으로 수렴 ----
+	if (!bEnable)
+	{
+		ExitRulesView_UIOnly();
+		return;
+	}
+
+	// ✅ 중복 진입 방지
 	if (bInRulesView)
 	{
+		// 이미 RulesView면, 복구 목적이면 세션만 한 번 반영해도 됨
+		if (!bPlayGreeting)
+		{
+			ApplySessionToWidget();
+		}
 		return;
 	}
 
 	bInRulesView = true;
 
-	UE_LOG(LogMosesSpawn, Log, TEXT("[RulesView] Enter"));
+	UE_LOG(LogMosesSpawn, Log, TEXT("[RulesView] EnterOrRecover ENTER Greeting=%d"), bPlayGreeting ? 1 : 0);
 
 	// 1) 카메라 전환
 	ACameraActor* DialogueCam = FindCameraByTag(DialogueCameraTag);
@@ -723,14 +773,58 @@ void UMosesLobbyLocalPlayerSubsystem::EnterRulesView_UIOnly()
 		SwitchToCamera(DialogueCam, TEXT("[Camera] LobbyPreview -> DialogueCamera"));
 	}
 
-	// 2) UI 전환은 위젯이 한다: 이벤트만 쏜다
-	UE_LOG(LogMosesSpawn, Log, TEXT("[RulesView] Broadcast UI Mode: ON"));
+	// 2) UI 원복은 위젯이 한다: 이벤트만 쏜다
 	RulesViewModeChangedEvent.Broadcast(true);
+
+	// 3) UI 전환 직후(다음 틱) 세션/필요 시 Greeting 적용
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().SetTimerForNextTick([this, bPlayGreeting]()
+			{
+				ApplySessionToWidget();
+
+				if (bPlayGreeting)
+				{
+					ApplyGreetingIfNeeded();
+				}
+			});
+	}
+}
+
+
+void UMosesLobbyLocalPlayerSubsystem::ApplyGreetingIfNeeded()
+{
+	if (bGreetingShownThisEntry)
+	{
+		return;
+	}
+	bGreetingShownThisEntry = true;
+
+	if (LobbyWidget)
+	{
+		LobbyWidget->ShowDialogueBubble_UI(/*bPlayFadeIn*/false);
+		LobbyWidget->SetSubtitleVisibility(true);
+		LobbyWidget->SetDialogueBubbleText_UI(GreetingText);
+	}
+
+	UE_LOG(LogMosesSpawn, Log, TEXT("[Day2][Greeting] Shown"));
+}
+
+void UMosesLobbyLocalPlayerSubsystem::ApplySessionToWidget()
+{
+	if (!LobbyWidget)
+	{
+		return;
+	}
+
+	// Day2: 하단 내 발화 / 마이크 상태는 “표시만”
+	LobbyWidget->SetMySpeechText_UI(CachedMySpeechText);
+	LobbyWidget->SetMicState_UI((int32)MicState);
 }
 
 void UMosesLobbyLocalPlayerSubsystem::ExitRulesView_UIOnly()
 {
-	// 중복 종료 방지
+	// ✅ 중복 종료 방지
 	if (!bInRulesView)
 	{
 		return;
@@ -751,9 +845,32 @@ void UMosesLobbyLocalPlayerSubsystem::ExitRulesView_UIOnly()
 		SwitchToCamera(LobbyCam, TEXT("[Camera] DialogueCamera -> LobbyPreview"));
 	}
 
-	// 2) UI 원복은 위젯이 한다: 이벤트만 쏜다
-	UE_LOG(LogMosesSpawn, Log, TEXT("[RulesView] Broadcast UI Mode: OFF"));
+	// ✅ Exit 시 로컬 세션 상태 초기화 (Day2: 다음 진입에서 다시 Greeting)
+	bGreetingShownThisEntry = false;
+	CachedMySpeechText = FText::GetEmpty();
+	MicState = EMosesMicState::Off;
+
+	// ✅ 중앙 자막 Clear (Exit DoD)
+	ClearDialogueUITexts();
+
+	// ✅ UI 모드 OFF 브로드캐스트
 	RulesViewModeChangedEvent.Broadcast(false);
+
+	// ✅ 하단 UI 기본값 반영(혹시 RulesView가 다시 켜졌을 때 대비)
+	ApplySessionToWidget();
+
+	UE_LOG(LogMosesSpawn, Log, TEXT("[Day2] ExitRulesView -> Clear UI"));
+}
+
+void UMosesLobbyLocalPlayerSubsystem::ClearDialogueUITexts()
+{
+	if (!LobbyWidget)
+	{
+		return;
+	}
+
+	LobbyWidget->SetDialogueBubbleText_UI(FText::GetEmpty());
+	LobbyWidget->HideDialogueBubble_UI(/*bPlayFadeOut*/false);
 }
 
 // =========================================================
@@ -764,26 +881,29 @@ void UMosesLobbyLocalPlayerSubsystem::SetLobbyWidget(UMosesLobbyWidget* InWidget
 {
 	LobbyWidget = InWidget;
 
-	// ✅ 위젯 재생성/재등록 시 "현재 모드" 즉시 복구
+	// ✅ 위젯 재생성/재등록 시 "현재 모드" 즉시 복구 (Greeting 금지)
 	if (AMosesLobbyGameState* LGS = GetLobbyGameState())
 	{
 		const bool bDialogue = (LGS->GetGamePhase() == EGamePhase::LobbyDialogue);
-		if (bDialogue)
-		{
-			EnterRulesView_UIOnly();
-		}
-		else
-		{
-			ExitRulesView_UIOnly();
-		}
+
+		// ✅ Recover는 Greeting 없이 상태만 맞춤
+		RecoverRulesView_UIOnly(bDialogue);
 
 		// Dialogue state도 즉시 캐시/브로드캐스트
 		HandleDialogueStateChanged(LGS->GetDialogueNetState());
 	}
+	else
+	{
+		// GS 없으면 일단 OFF 복구
+		RecoverRulesView_UIOnly(false);
+	}
 
-	// ✅ 위젯 재생성/복구 직후 현재 상태로 바로 UI 갱신
 	RefreshLobbyUI_FromCurrentState();
+
+	// ✅ 위젯이 붙는 순간 하단 UI도 현재값으로 1회 반영
+	ApplySessionToWidget();
 }
+
 
 void UMosesLobbyLocalPlayerSubsystem::RequestEnterDialogueRetry_NextTick()
 {
@@ -900,6 +1020,7 @@ void UMosesLobbyLocalPlayerSubsystem::RequestExitLobbyDialogue()
 	UE_LOG(LogMosesSpawn, Log, TEXT("[DOD][UI->SV] RequestExitLobbyDialogue"));
 	PC->Server_RequestExitLobbyDialogue();
 }
+
 
 // =========================================================
 // Phase / Dialogue state handlers

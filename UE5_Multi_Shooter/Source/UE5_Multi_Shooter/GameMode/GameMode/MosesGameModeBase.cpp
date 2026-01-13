@@ -13,8 +13,10 @@
 #include "UE5_Multi_Shooter/Character/Components/MosesPawnExtensionComponent.h"
 #include "UE5_Multi_Shooter/Character/Data/MosesPawnData.h"
 
+#include "GameFramework/PlayerStart.h"
 #include "Engine/NetConnection.h"
 #include "Kismet/GameplayStatics.h"
+#include "EngineUtils.h"               
 
 AMosesGameModeBase::AMosesGameModeBase()
 {
@@ -305,15 +307,6 @@ void AMosesGameModeBase::HandleMatchAssignmentIfNotExpectingOne()
 	FPrimaryAssetId ExperienceId;
 	const FString MapName = GetWorld() ? GetWorld()->GetMapName() : TEXT("WorldNone");
 
-	// (1) 함수에 들어왔는지부터 화면으로 확인
-	if (GEngine)
-	{
-		GEngine->AddOnScreenDebugMessage(
-			-1, 8.f, FColor::Yellow,
-			FString::Printf(TEXT("[EXP][Pick] Enter Map=%s Options=%s"), *MapName, *OptionsString)
-		);
-	}
-
 	// 1) 옵션으로 Experience 지정 가능: ?Experience=Exp_Lobby (또는 Exp_Match)
 	if (UGameplayStatics::HasOption(OptionsString, TEXT("Experience")))
 	{
@@ -322,15 +315,6 @@ void AMosesGameModeBase::HandleMatchAssignmentIfNotExpectingOne()
 
 		UE_LOG(LogMosesExp, Warning, TEXT("[EXP][Pick] FromOptions Experience=%s (Map=%s)"),
 			*ExperienceId.ToString(), *MapName);
-
-		// (2) 옵션에서 뽑았다는 걸 화면으로 확인
-		if (GEngine)
-		{
-			GEngine->AddOnScreenDebugMessage(
-				-1, 8.f, FColor::Yellow,
-				FString::Printf(TEXT("[EXP][Pick] FromOptions -> %s"), *ExperienceId.ToString())
-			);
-		}
 	}
 
 	// 2) 옵션이 없으면 맵 이름으로 Start/Lobby/Match 판단해서 기본값 선택
@@ -357,35 +341,9 @@ void AMosesGameModeBase::HandleMatchAssignmentIfNotExpectingOne()
 
 		UE_LOG(LogMosesExp, Warning, TEXT("[EXP][Pick] Fallback Experience=%s (FullMap=%s Normalized=%s)"),
 			*ExperienceId.ToString(), *FullMapName, *Normalized);
-
-		if (GEngine)
-		{
-			GEngine->AddOnScreenDebugMessage(
-				-1, 8.f, FColor::Yellow,
-				FString::Printf(TEXT("[EXP][Pick] Fallback -> %s (Norm=%s)"), *ExperienceId.ToString(), *Normalized)
-			);
-		}
-	}
-
-	// (4) 최종 선택 결과 화면 확인
-	if (GEngine)
-	{
-		GEngine->AddOnScreenDebugMessage(
-			-1, 8.f, FColor::Yellow,
-			FString::Printf(TEXT("[EXP][Pick] Chosen=%s (Valid=%d)"), *ExperienceId.ToString(), ExperienceId.IsValid() ? 1 : 0)
-		);
 	}
 
 	check(ExperienceId.IsValid());
-
-	// (5) Assign으로 넘기기 직전 화면 확인(여기까지 오면 Pick은 통과)
-	if (GEngine)
-	{
-		GEngine->AddOnScreenDebugMessage(
-			-1, 8.f, FColor::Orange,
-			FString::Printf(TEXT("[EXP][Assign] Call -> %s"), *ExperienceId.ToString())
-		);
-	}
 
 	OnMatchAssignmentGiven(ExperienceId);
 }
@@ -405,16 +363,6 @@ bool AMosesGameModeBase::IsExperienceLoaded() const
 
 void AMosesGameModeBase::OnExperienceLoaded(const UMosesExperienceDefinition* CurrentExperience)
 {
-	//if (GEngine)
-	//{
-	//	GEngine->AddOnScreenDebugMessage(
-	//		-1,
-	//		8.f,
-	//		FColor::Green,
-	//		FString::Printf(TEXT("[EXP][READY] %s"), *GetNameSafe(CurrentExperience))
-	//	);
-	//}
-
 	UE_LOG(LogMosesExp, Warning, TEXT("[EXP][READY] Loaded Exp=%s"), *GetNameSafe(CurrentExperience));
 
 	// ✅ 핵심: READY 이후에만 Lobby/Phase를 확정하게 한다.
@@ -427,15 +375,6 @@ void AMosesGameModeBase::OnExperienceLoaded(const UMosesExperienceDefinition* Cu
 
 void AMosesGameModeBase::OnMatchAssignmentGiven(FPrimaryAssetId ExperienceId)
 {
-	// 화면 디버그: 서버가 어떤 Experience를 선택했는지 보여주기
-	//if (GEngine)
-	//{
-	//	GEngine->AddOnScreenDebugMessage(
-	//		-1, 8.f, FColor::Orange,
-	//		FString::Printf(TEXT("[EXP][Assign] %s"), *ExperienceId.ToString())
-	//	);
-	//}
-
 	// DoD: Experience Selected는 "서버가 최종 확정"한 순간에 1회만 로그 고정
 	// - ServerSetCurrentExperience 중복 방지 로직이 컴포넌트에도 있지만,
 	//   DoD 라인은 여기서 1회만 찍어주는 게 가장 명확함.
@@ -498,14 +437,40 @@ void AMosesGameModeBase::Logout(AController* Exiting)
 
 AActor* AMosesGameModeBase::ChoosePlayerStart_Implementation(AController* Player)
 {
-	AActor* Start = Super::ChoosePlayerStart_Implementation(Player);
+	TArray<APlayerStart*> MatchStarts;
+	MatchStarts.Reserve(8);
 
-	UE_LOG(LogTemp, Warning, TEXT("[SPAWN] ChoosePlayerStart PC=%s -> Start=%s Loc=%s"),
+	for (TActorIterator<APlayerStart> It(GetWorld()); It; ++It)
+	{
+		APlayerStart* PS = *It;
+		if (!PS)
+		{
+			continue;
+		}
+
+		// MatchLevel에 배치한 PlayerStart에 Tag "Match" 붙인 경우만 사용
+		if (PS->ActorHasTag(TEXT("Match")))
+		{
+			MatchStarts.Add(PS);
+		}
+	}
+
+	if (MatchStarts.Num() <= 0)
+	{
+		return Super::ChoosePlayerStart_Implementation(Player);
+	}
+
+	const int32 Index = FMath::RandRange(0, MatchStarts.Num() - 1);
+
+	AActor* Chosen = Super::ChoosePlayerStart_Implementation(Player);
+
+	UE_LOG(LogTemp, Warning, TEXT("[TEST][StartPick] PC=%s Start=%s Loc=%s Rot=%s"),
 		*GetNameSafe(Player),
-		*GetNameSafe(Start),
-		Start ? *Start->GetActorLocation().ToString() : TEXT("NONE"));
+		*GetNameSafe(Chosen),
+		Chosen ? *Chosen->GetActorLocation().ToString() : TEXT("None"),
+		Chosen ? *Chosen->GetActorRotation().ToString() : TEXT("None"));
 
-	return Start;
+	return MatchStarts[Index]; // APlayerStart* -> AActor* (업캐스트)
 }
 
 void AMosesGameModeBase::FinishRestartPlayer(AController* NewPlayer, const FRotator& StartRotation)

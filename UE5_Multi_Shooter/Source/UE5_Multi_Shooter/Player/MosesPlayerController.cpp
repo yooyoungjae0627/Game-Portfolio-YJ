@@ -156,6 +156,13 @@ void AMosesPlayerController::OnPossess(APawn* InPawn)
 		ApplyLobbyPreviewCamera();
 		ApplyLobbyInputMode_LocalOnly();
 	}
+
+	UE_LOG(LogTemp, Warning, TEXT("[TEST][Cam] PC=%s Pawn=%s ViewTarget=%s AutoManage=%d"),
+		*GetNameSafe(this),
+		*GetNameSafe(InPawn),
+		*GetNameSafe(GetViewTarget()),
+		bAutoManageActiveCameraTarget ? 1 : 0);
+
 }
 
 void AMosesPlayerController::OnRep_PlayerState()
@@ -189,6 +196,8 @@ void AMosesPlayerController::Server_CreateRoom_Implementation(const FString& Roo
 		return;
 	}
 
+	PS->EnsurePersistentId_Server();
+
 	const int32 SafeMaxPlayers = FMath::Clamp(MaxPlayers, Lobby_MinRoomMaxPlayers, Lobby_MaxRoomMaxPlayers);
 
 	// 서버 최종 방어선: Trim + 길이 제한 + 빈 제목 보호
@@ -207,7 +216,6 @@ void AMosesPlayerController::Server_CreateRoom_Implementation(const FString& Roo
 		SafeMaxPlayers,
 		*GetNameSafe(this));
 }
-
 void AMosesPlayerController::Server_JoinRoom_Implementation(const FGuid& RoomId)
 {
 	if (!HasAuthority())
@@ -229,16 +237,51 @@ void AMosesPlayerController::Server_JoinRoom_Implementation(const FGuid& RoomId)
 		return;
 	}
 
+	// =====================================================
+	// 1) PID는 Join 이전에 반드시 보장
+	// =====================================================
+	PS->EnsurePersistentId_Server();
+
+	// =====================================================
+	// 2) ✅ NotLoggedIn 레이스 흡수 (가장 중요)
+	// - Join이 Nick RPC보다 먼저 도착하면 서버에서 NotLoggedIn으로 튕김
+	// - 정책: Join 시점에 LoggedIn이 아니면 "Guest"로 자동 로그인 확정 후 진행
+	// =====================================================
+	if (!PS->IsLoggedIn())
+	{
+		// 닉이 없으면 Guest 닉 생성
+		FString AutoNick = PS->GetPlayerNickName().TrimStartAndEnd();
+		if (AutoNick.IsEmpty())
+		{
+			const FString Pid4 = PS->GetPersistentId().ToString(EGuidFormats::Digits).Left(4);
+			AutoNick = FString::Printf(TEXT("Guest_%s"), *Pid4);
+		}
+
+		PS->ServerSetPlayerNickName(AutoNick);
+		PS->ServerSetLoggedIn(true);
+
+		UE_LOG(LogMosesSpawn, Warning,
+			TEXT("[LobbyRPC][SV] AutoLoginBeforeJoin Nick=%s Pid=%s PC=%s"),
+			*AutoNick,
+			*PS->GetPersistentId().ToString(),
+			*GetNameSafe(this));
+	}
+
+	// =====================================================
+	// 3) Join 수행
+	// =====================================================
 	EMosesRoomJoinResult Result = EMosesRoomJoinResult::Ok;
 	const bool bOk = LGS->Server_JoinRoomWithResult(PS, RoomId, Result);
 
-	UE_LOG(LogMosesSpawn, Log, TEXT("[LobbyRPC][SV] JoinRoom %s Room=%s Result=%d PC=%s"),
+	UE_LOG(LogMosesSpawn, Log, TEXT("[LobbyRPC][SV] JoinRoom %s Room=%s Result=%d PC=%s Pid=%s LoggedIn=%d"),
 		bOk ? TEXT("OK") : TEXT("FAIL"),
 		*RoomId.ToString(),
 		(int32)Result,
-		*GetNameSafe(this));
+		*GetNameSafe(this),
+		*PS->GetPersistentId().ToString(),
+		PS->IsLoggedIn() ? 1 : 0);
 
-	// 결과를 해당 클라에게 즉시 통보 (UI는 Subsystem이 처리)
+	// 결과를 해당 클라에게 즉시 통보
 	Client_JoinRoomResult(Result, RoomId);
 }
 
@@ -330,9 +373,11 @@ void AMosesPlayerController::Server_SetLobbyNickname_Implementation(const FStrin
 	AMosesPlayerState* PS = GetMosesPlayerStateChecked_Log(TEXT("Server_SetLobbyNickname"));
 	if (!PS)
 	{
-		// ✅ PS가 아직 없을 수 있음 (정상). Pending 재전송이 해결한다.
 		return;
 	}
+
+	// ✅ 핵심: 로그인 확정 전에 PID부터 보장
+	PS->EnsurePersistentId_Server();
 
 	const FString Clean = Nick.TrimStartAndEnd();
 	if (Clean.IsEmpty())
@@ -341,13 +386,15 @@ void AMosesPlayerController::Server_SetLobbyNickname_Implementation(const FStrin
 	}
 
 	PS->ServerSetPlayerNickName(Clean);
+
+	// ✅ 정책: LoggedIn=true 라면 PID는 반드시 유효해야 한다.
 	PS->ServerSetLoggedIn(true);
 
-	UE_LOG(LogMosesSpawn, Warning, TEXT("[NickSV] PC=%s PS=%s Nick=%s"),
+	UE_LOG(LogMosesSpawn, Warning, TEXT("[NickSV] PC=%s PS=%s Nick=%s Pid=%s"),
 		*GetNameSafe(this),
-		*GetNameSafe(GetPlayerState<AMosesPlayerState>()),
-		*Nick);
-
+		*GetNameSafe(PS),
+		*Clean,
+		*PS->GetPersistentId().ToString());
 }
 
 void AMosesPlayerController::Server_SendLobbyChat_Implementation(const FString& Text)
@@ -785,4 +832,26 @@ void AMosesPlayerController::Server_RequestEnterLobby_Implementation(const FStri
 	}
 
 	GM->ServerTravelToLobby();
+}
+
+void AMosesPlayerController::Server_SetSelectedCharacterId_Implementation(int32 SelectedId)
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	AMosesPlayerState* PS = GetMosesPlayerStateChecked_Log(TEXT("Server_SetSelectedCharacterId"));
+	if (!PS)
+	{
+		return;
+	}
+
+	// 정책: 캐릭터 2개(1/2)만 허용
+	const int32 SafeId = (SelectedId == 2) ? 2 : 1;
+
+	PS->ServerSetSelectedCharacterId(SafeId);
+
+	UE_LOG(LogMosesSpawn, Log, TEXT("[CharSel][SV] SetSelectedCharacterId=%d PC=%s PS=%s"),
+		SafeId, *GetNameSafe(this), *GetNameSafe(PS));
 }

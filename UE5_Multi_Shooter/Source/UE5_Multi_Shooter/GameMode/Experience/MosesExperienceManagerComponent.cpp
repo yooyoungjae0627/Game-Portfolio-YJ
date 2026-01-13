@@ -19,10 +19,7 @@
 // ------------------------------
 static void ScreenMsg(const FColor& Color, const FString& Msg, float Time = 8.f)
 {
-	if (GEngine)
-	{
-		GEngine->AddOnScreenDebugMessage(-1, Time, Color, Msg);
-	}
+
 }
 
 UMosesExperienceManagerComponent::UMosesExperienceManagerComponent(const FObjectInitializer& ObjectInitializer)

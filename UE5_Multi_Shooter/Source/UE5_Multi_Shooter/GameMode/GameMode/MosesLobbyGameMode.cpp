@@ -119,6 +119,10 @@ void AMosesLobbyGameMode::HandleStartGameRequest(AMosesPlayerController* Request
 
 void AMosesLobbyGameMode::HandleStartMatchRequest(AMosesPlayerState* HostPS)
 {
+	UE_LOG(LogMosesSpawn, Warning,
+		TEXT("[TEST] StartMatchRequest Host=%s"),
+		*GetNameSafe(HostPS));
+
 	if (!HasAuthority() || !HostPS)
 	{
 		return;
@@ -130,22 +134,22 @@ void AMosesLobbyGameMode::HandleStartMatchRequest(AMosesPlayerState* HostPS)
 		return;
 	}
 
-	// ✅ 서버 최종 검증: Host인지 + AllReady인지 등
+	// ✅ 2명(정원) 다 찼고 + (호스트 제외) 전원 Ready인지 서버에서 최종 검증
 	FString FailReason;
 	if (!LGS->Server_CanStartGame(HostPS, FailReason))
 	{
-		UE_LOG(LogMosesSpawn, Warning, TEXT("[LobbyGM] StartMatch REJECT Reason=%s HostPid=%s"),
-			*FailReason,
-			*HostPS->GetPersistentId().ToString()
-		);
+		UE_LOG(LogMosesSpawn, Warning, TEXT("[LobbyGM] StartMatch REJECT Reason=%s"), *FailReason);
 		return;
 	}
 
-	UE_LOG(LogMosesSpawn, Warning, TEXT("[LobbyGM] StartMatch ACCEPT HostPid=%s -> Travel"),
-		*HostPS->GetPersistentId().ToString()
-	);
+	// ✅ 매치맵으로 이동
+	const FString MapPath = TEXT("/Game/Map/MatchLevel?listen");
+	// - listen: ListenServer일 때 필요 (DedicatedServer면 없어도 됨)
+	// - Experience 옵션 등 필요하면 "?Experience=Exp_Match" 같이 붙이면 됨
 
-	ServerTravelToMatch();
+	UE_LOG(LogMosesSpawn, Warning, TEXT("[LobbyGM] ServerTravel -> %s"), *MapPath);
+
+	GetWorld()->ServerTravel(MapPath, /*bAbsolute*/ true);
 }
 
 void AMosesLobbyGameMode::TravelToMatch()

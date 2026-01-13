@@ -56,8 +56,8 @@ public:
 	void TravelToLobby_Exec();
 
 	// ---------------------------
-// Client ¡æ Server RPC (Lobby)
-// ---------------------------
+	// Client ¡æ Server RPC (Lobby)
+	// ---------------------------
 
 	UFUNCTION(Server, Reliable)
 	void Server_CreateRoom(const FString& RoomTitle, int32 MaxPlayers);
@@ -121,6 +121,10 @@ public:
 
 	UFUNCTION(Server, Reliable)
 	void Server_RequestEnterLobby(const FString& Nickname);
+
+	UFUNCTION(Server, Reliable)
+	void Server_SetSelectedCharacterId(int32 SelectedId);
+
 
 	void SetPendingLobbyNickname_Local(const FString& Nick);
 

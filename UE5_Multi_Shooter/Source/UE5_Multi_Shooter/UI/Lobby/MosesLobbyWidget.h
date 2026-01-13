@@ -163,8 +163,14 @@ public:
 	====================================================*/
 	void SetRulesViewMode(bool bEnable);
 
-
 	void RefreshFromState(const AMosesLobbyGameState* InMosesLobbyGameState, const AMosesPlayerState* InMosesPlayerState);
+
+	void SetMySpeechText_UI(const FText& InText);
+	void SetMicState_UI(int32 InMicState);
+	void ShowDialogueBubble_UI(bool bPlayFadeIn);
+	void HideDialogueBubble_UI(bool bPlayFadeOut);
+	void SetDialogueBubbleText_UI(const FText& Text);
+	void SetSubtitleVisibility(bool bVisible);
 
 private:
 	/*====================================================
@@ -184,10 +190,6 @@ private:
 	// - 최신 상태를 1회 강제 재적용(숨김/복귀에서 텍스트 안 바뀌는 문제 종결)
 	void OnExitMetaHumanView_SubtitleOnly_Reapply(const FDialogueNetState& LatestState);
 
-	void ShowDialogueBubble_UI(bool bPlayFadeIn);
-	void HideDialogueBubble_UI(bool bPlayFadeOut);
-	void SetDialogueBubbleText_UI(const FText& Text);
-
 	bool ShouldShowBubbleInCurrentMode(const FDialogueNetState& NetState) const;
 	FText GetSubtitleTextFromNetState(const FDialogueNetState& NetState) const;
 
@@ -196,9 +198,6 @@ private:
 	void TickBubbleFade();
 	void StopBubbleFade();
 	void SetBubbleOpacity(float Opacity);
-
-
-	void SetSubtitleVisibility(bool bVisible);
 
 	UFUNCTION()
 	void OnClicked_MicToggle();
@@ -293,12 +292,6 @@ private:
 	UPROPERTY(meta = (BindWidgetOptional)) 
 	UButton* Button_SubmitCommand = nullptr;
 
-	UPROPERTY(meta = (BindWidgetOptional)) 
-	UTextBlock* Text_DialogueBubble = nullptr;   // TB_DialogueText 같은 것
-	
-	UPROPERTY(meta = (BindWidgetOptional)) 
-	UTextBlock* Text_DialogueStatus = nullptr;  // "Paused" 등 표시용(옵션)
-
 
 	UPROPERTY(meta = (BindWidgetOptional)) 
 	TObjectPtr<UListView> ChatListView = nullptr;
@@ -312,6 +305,12 @@ private:
 	UPROPERTY(meta = (BindWidgetOptional)) 
 	TObjectPtr<UTextBlock> TXT_MyRoom = nullptr;
 
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UTextBlock> TB_MySpeech = nullptr;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UTextBlock> TB_MicState = nullptr;
 
 	// ---------------------------
 	// Mic UI
@@ -379,4 +378,7 @@ private:
 	// ✅ 메타휴먼 모드에서 자막을 강제로 내렸는지 추적 (복귀 시만 올리려고)
 	bool bSubtitleForcedCollapsedByMetaHuman = false;
 
+
+	FGuid PendingJoinRoomId;
+	bool bPendingJoinAfterLogin = false;
 };
