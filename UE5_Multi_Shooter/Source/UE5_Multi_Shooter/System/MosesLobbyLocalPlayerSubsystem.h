@@ -14,6 +14,7 @@ class ALobbyPreviewActor;
 class ACameraActor;
 class AMosesPlayerController;
 class AMosesPlayerState;
+class UMoseseGestureDeckComponent;
 
 struct FDialogueNetState;
 
@@ -123,9 +124,16 @@ public:
 
 	void RequestSetLobbyNickname_LocalOnly(const FString& Nick);
 
-	// ✅ Day2: Widget이 즉시 갱신할 수 있게 Getter 제공(옵션)
+	// ✅ Widget이 즉시 갱신할 수 있게 Getter 제공(옵션)
 	const FText& GetCachedMySpeechText() const { return CachedMySpeechText; }
 	EMosesMicState GetMicState() const { return MicState; }
+
+	// =========================================================
+	// Answer Trigger API (테스트 & Day5 확장용)
+	// - 테스트 설명서의 "답변 시작 시 제스처 1회"를 강제로 확인할 수 있게 함
+	// - Day5에서 Q/A 트리 붙이면 이 함수를 통해 UI+제스처만 일관되게 처리
+	// =========================================================
+	void SetAnswer(int32 AnswerIndex, const FText& AnswerText);
 
 private:
 	// ---------------------------
@@ -193,6 +201,16 @@ private:
 	UFUNCTION()
 	void HandleGameStateDialogueChanged(const FDialogueNetState& NewState);
 
+	// =========================================================
+	// MetaHuman Gesture (Local Only)
+	// - 로컬 화면에서만 메타휴먼 제스처를 재생한다.
+	// - 다른 플레이어에게 영향이 없도록 "레벨에 배치된 NPC"를 Tag로 찾는다.
+	// =========================================================
+	AActor* GetOrFindRulesMetaHumanActor_LocalOnly();
+	void PlayRulesMetaHumanGesture_LocalOnly();
+	void StopRulesMetaHumanGesture_LocalOnly();
+
+
 private:
 	FOnRulesViewModeChanged RulesViewModeChangedEvent;
 
@@ -256,4 +274,15 @@ private:
 	// ✅ 하단 내 발화 / 마이크 상태 (표시만)
 	FText CachedMySpeechText = FText::GetEmpty();
 	EMosesMicState MicState = EMosesMicState::Off;
+
+	// 레벨 배치된 Rules NPC 식별 Tag (에디터에서 Actor Tag로 설정)
+	UPROPERTY(EditDefaultsOnly, Category = "RulesView|MetaHuman")
+	FName RulesMetaHumanActorTag = TEXT("RulesMetaHuman");
+
+	// 캐시(매번 GetAllActorsWithTag 비용 줄이기)
+	UPROPERTY(Transient)
+	TWeakObjectPtr<AActor> CachedRulesMetaHumanActor;
+
+	// 답변 시작 감지용(LineIndex 변화 감시)
+	int32 CachedLastGestureLineIndex = INDEX_NONE;
 };

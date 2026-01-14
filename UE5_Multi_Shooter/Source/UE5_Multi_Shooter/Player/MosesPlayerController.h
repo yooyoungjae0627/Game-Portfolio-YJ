@@ -128,6 +128,23 @@ public:
 
 	void SetPendingLobbyNickname_Local(const FString& Nick);
 
+
+	UFUNCTION(Exec)
+	void Moses_TestEnterRulesView();
+
+	UFUNCTION(Exec)
+	void Moses_TestExitRulesView();
+
+	// Count만큼 "답변 시작"을 강제로 트리거(SetAnswer 호출)
+	// => GestureDeck back-to-back, 재셔플 등을 빠르게 검증 가능
+	UFUNCTION(Exec)
+	void Moses_TestGesture(int32 Count = 1);
+
+	// 임의의 텍스트를 중앙 자막에 표시 + 제스처 1회
+	UFUNCTION(Exec)
+	void Moses_TestSetAnswer(int32 AnswerIndex = 0, const FString& Text = TEXT("테스트 답변입니다."));
+
+
 protected:
 	// ---------------------------
 	// Lifecycle (Local UI / Camera)

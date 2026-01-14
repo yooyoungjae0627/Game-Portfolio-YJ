@@ -15,12 +15,15 @@
 
 #include "UE5_Multi_Shooter/Lobby/LobbyPreviewActor.h"
 
+#include "UE5_Multi_Shooter/Dialogue/Components/MosesGestureDeckComponent.h"
+
 #include "Camera/CameraActor.h"
 
 #include "Engine/World.h"
 #include "Engine/LocalPlayer.h"
 #include "Engine/GameInstance.h"
 #include "Kismet/GameplayStatics.h"
+
 #include "Blueprint/UserWidget.h"
 
 #include "TimerManager.h"
@@ -807,6 +810,8 @@ void UMosesLobbyLocalPlayerSubsystem::ApplyGreetingIfNeeded()
 		LobbyWidget->SetDialogueBubbleText_UI(GreetingText);
 	}
 
+	PlayRulesMetaHumanGesture_LocalOnly();
+
 	UE_LOG(LogMosesSpawn, Log, TEXT("[Day2][Greeting] Shown"));
 }
 
@@ -849,6 +854,15 @@ void UMosesLobbyLocalPlayerSubsystem::ExitRulesView_UIOnly()
 	bGreetingShownThisEntry = false;
 	CachedMySpeechText = FText::GetEmpty();
 	MicState = EMosesMicState::Off;
+
+	// Exit 시 제스처 정지(테스트 설명서: Exit 안정성)
+	StopRulesMetaHumanGesture_LocalOnly();
+
+	// 다음 진입 때 LineIndex 트리거 재시작
+	CachedLastGestureLineIndex = INDEX_NONE;
+
+	// 캐시 리셋은 선택(레벨에 NPC가 바뀔 수 있으면 Reset 권장)
+	// CachedRulesMetaHumanActor.Reset();
 
 	// ✅ 중앙 자막 Clear (Exit DoD)
 	ClearDialogueUITexts();
@@ -1125,6 +1139,20 @@ void UMosesLobbyLocalPlayerSubsystem::TrySendPendingLobbyNickname_Local()
 
 void UMosesLobbyLocalPlayerSubsystem::NotifyDialogueStateChanged(const FDialogueNetState& NewState)
 {
+	// =========================================================
+	// "답변 시작" 트리거(임시 규칙)
+	// - RulesView 중 LineIndex가 바뀌면 새로운 답변 라인이 시작된 것으로 간주
+	// - 그 시점에 제스처를 1회 재생
+	// =========================================================
+	if (bInRulesView)
+	{
+		if (CachedLastGestureLineIndex != NewState.LineIndex)
+		{
+			CachedLastGestureLineIndex = NewState.LineIndex;
+			PlayRulesMetaHumanGesture_LocalOnly();
+		}
+	}
+
 	// late join / widget 재생성 복구용 캐시
 	LastDialogueNetState = NewState;
 
@@ -1191,4 +1219,92 @@ void AMosesLobbyGameState::OnRep_ChatHistory()
 {
 	// 너 기존 UI 갱신 파이프 재사용(로컬플레이어 Subsystem으로 전달)
 	NotifyRoomStateChanged_LocalPlayers();
+}
+
+void UMosesLobbyLocalPlayerSubsystem::SetAnswer(int32 AnswerIndex, const FText& AnswerText)
+{
+	// =========================================================
+	// 테스트 & Day5 확장용 단일 진실 함수
+	// - 중앙 자막(UI) 업데이트 + 제스처 1회 트리거
+	// - AnswerIndex는 지금은 로깅/추후 확장용
+	// =========================================================
+	if (LobbyWidget)
+	{
+		LobbyWidget->ShowDialogueBubble_UI(/*bPlayFadeIn*/true);
+		LobbyWidget->SetSubtitleVisibility(true);
+		LobbyWidget->SetDialogueBubbleText_UI(AnswerText);
+	}
+
+	UE_LOG(LogMosesSpawn, Log, TEXT("[Day3][SetAnswer] Index=%d Text='%s'"),
+		AnswerIndex, *AnswerText.ToString());
+
+	PlayRulesMetaHumanGesture_LocalOnly();
+}
+
+AActor* UMosesLobbyLocalPlayerSubsystem::GetOrFindRulesMetaHumanActor_LocalOnly()
+{
+	if (CachedRulesMetaHumanActor.IsValid())
+	{
+		return CachedRulesMetaHumanActor.Get();
+	}
+
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return nullptr;
+	}
+
+	TArray<AActor*> Found;
+	UGameplayStatics::GetAllActorsWithTag(World, RulesMetaHumanActorTag, Found);
+
+	if (Found.Num() > 0)
+	{
+		CachedRulesMetaHumanActor = Found[0];
+
+		UE_LOG(LogMosesSpawn, Log, TEXT("[Day3][RulesMetaHuman] Found Actor=%s Tag=%s"),
+			*GetNameSafe(CachedRulesMetaHumanActor.Get()),
+			*RulesMetaHumanActorTag.ToString());
+
+		return CachedRulesMetaHumanActor.Get();
+	}
+
+	UE_LOG(LogMosesSpawn, Warning, TEXT("[Day3][RulesMetaHuman] Not found. Tag=%s (Place actor in level and set ActorTag)"),
+		*RulesMetaHumanActorTag.ToString());
+
+	return nullptr;
+}
+
+void UMosesLobbyLocalPlayerSubsystem::PlayRulesMetaHumanGesture_LocalOnly()
+{
+	AActor* Actor = GetOrFindRulesMetaHumanActor_LocalOnly();
+	if (!Actor)
+	{
+		return;
+	}
+
+	UMosesGestureDeckComponent* Deck = Actor->FindComponentByClass<UMosesGestureDeckComponent>();
+	if (!Deck)
+	{
+		UE_LOG(LogMosesSpawn, Warning, TEXT("[Day3][RulesMetaHuman] GestureDeckComponent missing on Actor=%s"), *GetNameSafe(Actor));
+		return;
+	}
+
+	Deck->PlayNextGesture();
+}
+
+void UMosesLobbyLocalPlayerSubsystem::StopRulesMetaHumanGesture_LocalOnly()
+{
+	AActor* Actor = CachedRulesMetaHumanActor.Get();
+	if (!Actor)
+	{
+		return;
+	}
+
+	UMosesGestureDeckComponent* Deck = Actor->FindComponentByClass<UMosesGestureDeckComponent>();
+	if (!Deck)
+	{
+		return;
+	}
+
+	Deck->StopGesture(0.2f);
 }

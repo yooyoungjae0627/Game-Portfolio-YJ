@@ -855,3 +855,76 @@ void AMosesPlayerController::Server_SetSelectedCharacterId_Implementation(int32 
 	UE_LOG(LogMosesSpawn, Log, TEXT("[CharSel][SV] SetSelectedCharacterId=%d PC=%s PS=%s"),
 		SafeId, *GetNameSafe(this), *GetNameSafe(PS));
 }
+
+void AMosesPlayerController::Moses_TestEnterRulesView()
+{
+	// 로컬만(멀티 PIE에서도 다른 플레이어에 영향 X)
+	if (!IsLocalController())
+	{
+		return;
+	}
+
+	if (ULocalPlayer* LP = GetLocalPlayer())
+	{
+		if (UMosesLobbyLocalPlayerSubsystem* Subsys = LP->GetSubsystem<UMosesLobbyLocalPlayerSubsystem>())
+		{
+			Subsys->EnterRulesView_UIOnly();
+		}
+	}
+}
+
+void AMosesPlayerController::Moses_TestExitRulesView()
+{
+	if (!IsLocalController())
+	{
+		return;
+	}
+
+	if (ULocalPlayer* LP = GetLocalPlayer())
+	{
+		if (UMosesLobbyLocalPlayerSubsystem* Subsys = LP->GetSubsystem<UMosesLobbyLocalPlayerSubsystem>())
+		{
+			Subsys->ExitRulesView_UIOnly();
+		}
+	}
+}
+
+void AMosesPlayerController::Moses_TestGesture(int32 Count)
+{
+	if (!IsLocalController())
+	{
+		return;
+	}
+
+	Count = FMath::Clamp(Count, 1, 50);
+
+	if (ULocalPlayer* LP = GetLocalPlayer())
+	{
+		if (UMosesLobbyLocalPlayerSubsystem* Subsys = LP->GetSubsystem<UMosesLobbyLocalPlayerSubsystem>())
+		{
+			// Count회 SetAnswer 호출로 "답변 시작"을 연속 발생시켜
+			// 덱 셔플/재셔플/Back-to-Back 방지를 빠르게 검증한다.
+			for (int32 i = 0; i < Count; ++i)
+			{
+				Subsys->SetAnswer(i, FText::FromString(TEXT("Gesture Test Trigger")));
+			}
+		}
+	}
+}
+
+void AMosesPlayerController::Moses_TestSetAnswer(int32 AnswerIndex, const FString& Text)
+{
+	if (!IsLocalController())
+	{
+		return;
+	}
+
+	if (ULocalPlayer* LP = GetLocalPlayer())
+	{
+		if (UMosesLobbyLocalPlayerSubsystem* Subsys = LP->GetSubsystem<UMosesLobbyLocalPlayerSubsystem>())
+		{
+			Subsys->SetAnswer(AnswerIndex, FText::FromString(Text));
+		}
+	}
+}
+
