@@ -1,130 +1,45 @@
-// Fill out your copyright notice in the Description page of Project Settings.
+ï»¿#pragma once
 
-#pragma once
-
+#include "CoreMinimal.h"
 #include "Components/PawnComponent.h"
-#include "Components/GameFrameworkInitStateInterface.h"
 #include "MosesPawnExtensionComponent.generated.h"
 
 class UMosesPawnData;
 
 /**
- * UYJPawnExtensionComponent
- *
- * - Pawn(Ä³¸¯ÅÍ)ÀÇ ¡°È®Àå Á¤º¸¡±¸¦ ´ã´çÇÏ´Â ÄÄÆ÷³ÍÆ®
- *   (ÀÌ ÇÁ·ÎÁ§Æ®¿¡¼­´Â PawnData, InitState °ü¸®ÀÇ Áß½É ¿ªÇÒ)
- *
- * - ÇÏ´Â ÀÏ:
- *   1) ÀÌ PawnÀÌ ¾î¶² PawnData(UYJPawnData)¸¦ ¾µÁö µé°í ÀÖÀ½
- *      (¹«±â ¼¼Æ®, Ä«¸Ş¶ó, ÀÔ·Â ¼³Á¤, ¿òÁ÷ÀÓ ¼³Á¤ µî)
- *   2) InitState (Spawned, DataAvailable, DataInitialized, GameplayReady) Ã¼ÀÎÀ» ÅëÇØ
- *      "ÀÌ PawnÀÌ Áö±İ ¾î´À Á¤µµ±îÁö ÁØºñµÇ¾ú´ÂÁö"¸¦ GameFrameworkComponentManager ¿¡ º¸°í
- *   3) ´Ù¸¥ Feature(HeroComponent, CameraComponent, AbilitySystemComponent µî)°¡
- *      "PawnExtensionÀÌ DataInitialized±îÁö ¿Ô´ÂÁö"¸¦ º¸°í ÀÚ±â ÃÊ±âÈ­¸¦ ÁøÇàÇÒ ¼ö ÀÖ°Ô ÇØÁØ´Ù.
+ * UMosesPawnExtensionComponent (Simple)
+ * - PawnData ë³´ê´€/ì œê³µë§Œ ë‹´ë‹¹ (Lyra InitState ì²´ì¸ ì œê±° ë²„ì „)
+ * - ë„¤íŠ¸ì›Œí¬/SeamlessTravel/PIEì—ì„œ â€œì•ˆ í„°ì§€ëŠ”â€ ì•ˆì • ë£¨íŠ¸ ìš°ì„ 
  */
-
-UCLASS()
-class UE5_MULTI_SHOOTER_API UMosesPawnExtensionComponent : public UPawnComponent, public IGameFrameworkInitStateInterface
+UCLASS(ClassGroup = (Moses), meta = (BlueprintSpawnableComponent))
+class UE5_MULTI_SHOOTER_API UMosesPawnExtensionComponent : public UPawnComponent
 {
 	GENERATED_BODY()
-	
+
 public:
 	UMosesPawnExtensionComponent(const FObjectInitializer& ObjectInitializer = FObjectInitializer::Get());
 
-	/** GameFrameworkComponentManager ¿¡ µî·ÏÇÒ Feature ÀÌ¸§ ("PawnExtension") */
-	static const FName NAME_ActorFeatureName;
+	/** Actorì—ì„œ PawnExt ì°¾ê¸° */
+	static UMosesPawnExtensionComponent* FindPawnExtensionComponent(const AActor* Actor);
 
-	// ¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡
-	// ÇïÆÛ / À¯Æ¿ ÇÔ¼ö
-	// ¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡
-
-	/** Pawn(¶Ç´Â Actor) ¿¡¼­ UYJPawnExtensionComponent ¸¦ Ã£¾ÆÁÖ´Â Á¤Àû ÇÔ¼ö */
-	static UMosesPawnExtensionComponent* FindPawnExtensionComponent(const AActor* Actor)
-	{
-		return (Actor ? Actor->FindComponentByClass<UMosesPawnExtensionComponent>() : nullptr);
-	}
-
-	/**
-	 * PawnData ¸¦ ¿øÇÏ´Â Å¸ÀÔÀ¸·Î ²¨³»´Â ÅÛÇÃ¸´ ÇÔ¼ö
-	 *
-	 * »ç¿ë ¿¹:
-	 *   const UYJPawnData* Data = PawnExt->GetPawnData<UYJPawnData>();
-	 */
+	/** PawnData getter (templated) */
 	template <class T>
 	const T* GetPawnData() const { return Cast<T>(PawnData); }
 
-	/**
-	 * PawnData ¸¦ ¼¼ÆÃÇÏ´Â ÇÔ¼ö
-	 *
-	 * - ¼­¹ö ±ÇÇÑ(Authority) ¿¡¼­¸¸ ¼¼ÆÃ °¡´É
-	 * - ÇÑ¹ø ¼¼ÆÃµÈ µÚ¿¡´Â ´Ù½Ã ¼³Á¤µÇÁö ¾Êµµ·Ï ¹æ¾î ·ÎÁ÷ Æ÷ÇÔ
-	 */
+	/** PawnDataê°€ ìœ íš¨í•œì§€ */
+	bool HasPawnData() const { return PawnData != nullptr; }
+
 	void SetPawnData(const UMosesPawnData* InPawnData);
 
-	/**
-	 * Ä³¸¯ÅÍÀÇ SetupPlayerInputComponent() ¿¡¼­ È£ÃâÇØÁÖ´Â ÁøÀÔÁ¡
-	 *
-	 * - ³»ºÎÀûÀ¸·Î InitState Ã¼ÀÎÀ» °Ë»ç/ÁøÇà(CheckDefaultInitialization)ÇØ¼­
-	 *   "ÀÔ·ÂÀ» ¹ŞÀ» ÁØºñ°¡ µÇ¾ú´ÂÁö" °Ë»çÇÏ°í, ÇÊ¿äÇÑ °æ¿ì ´ÙÀ½ »óÅÂ·Î ¿Ã¸®°Ô µÈ´Ù.
-	 * - ½ÇÁ¦ ÀÔ·Â ¹ÙÀÎµùÀº HeroComponent::InitializePlayerInput ¿¡¼­ ¼öÇà.
-	 */
-	void SetupPlayerInputComponent();
-
-	// ¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡
-	// UPawnComponent interface
-	// ¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡
-	virtual void OnRegister() final;                                  // ÄÄÆ÷³ÍÆ®°¡ Actor¿¡ AttachµÉ ¶§
-	virtual void BeginPlay() final;                                   // °ÔÀÓ ½ÃÀÛ ½Ã
-	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) final; // Á¾·á ½Ã
-
-	// ¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡
-	// IGameFrameworkInitStateInterface ±¸ÇöºÎ
-	// ¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡
-
-	/** ÀÌ ÄÄÆ÷³ÍÆ®ÀÇ Feature ÀÌ¸§À» ¹İÈ¯ (PawnExtension) */
-	virtual FName GetFeatureName() const final { return NAME_ActorFeatureName; }
-
-	/**
-	 * ´Ù¸¥ Feature(¶Ç´Â ÀÚ±â ÀÚ½Å)ÀÇ InitState °¡ ¹Ù²ğ ¶§ È£Ãâ
-	 * - ¿©±â¼­´Â "´Ù¸¥ Feature°¡ DataAvailable ÀÌ µÇ¾ú´ÂÁö" °üÂûÇÏ°í
-	 *   ±×¿¡ µû¶ó ÀÚ±â InitState ¸¦ ´õ ¿Ã¸± ¼ö ÀÖ´ÂÁö Ã¼Å©ÇÑ´Ù.
-	 */
-	virtual void OnActorInitStateChanged(const FActorInitStateChangedParams& Params) final;
-
-	/**
-	 * InitState ÀüÈ¯ °¡´É ¿©ºÎ¸¦ È®ÀÎÇÏ´Â ÇÔ¼ö
-	 *
-	 * ¿¹:
-	 *  - (¾øÀ½) ¡æ Spawned : Pawn ÀÌ ½ÇÁ¦·Î Á¸ÀçÇÏ´ÂÁö
-	 *  - Spawned ¡æ DataAvailable : PawnData, Controller(·ÎÄÃ) µî ÁØºñµÇ¾ú´ÂÁö
-	 *  - DataAvailable ¡æ DataInitialized : ÀüÃ¼ Feature °¡ ÃÖ¼Ò DataAvailable ¿¡ µµ´ŞÇß´ÂÁö
-	 *  - DataInitialized ¡æ GameplayReady : Ãß°¡ Á¶°Ç ¾øÀÌ true
-	 */
-	virtual bool CanChangeInitState(UGameFrameworkComponentManager* Manager,
-		FGameplayTag CurrentState, FGameplayTag DesiredState) const final;
-
-	/**
-	 * ±âº» InitState Ã¼ÀÎ(Spawned ¡æ DataAvailable ¡æ DataInitialized ¡æ GameplayReady)À»
-	 * ¼ø¼­´ë·Î Ã¼Å©ÇÏ¸é¼­ °¡´ÉÇÑ ¸¸Å­ ¿Ã·ÁÁÖ´Â ÇÔ¼ö
-	 */
-	virtual void CheckDefaultInitialization() final;
+protected:
+	virtual void BeginPlay() override;
 
 public:
 	/**
-	 * ÀÌ Pawn ÀÌ »ç¿ëÇÒ °¢Á¾ ¼³Á¤ÀÌ µé¾îÀÖ´Â DataAsset
-	 *
-	 * - ¿¹¸¦ µé¾î:
-	 *   - DefaultCameraMode
-	 *   - InputConfig
-	 *   - AbilitySet
-	 *   - MovementSettings
-	 *   µîµîÀÌ UYJPawnData ¾È¿¡ Á¤ÀÇµÇ¾î ÀÖÀ» °ÍÀ¸·Î ¿¹»ó.
-	 *
-	 * - EditInstanceOnly:
-	 *   °¢ ·¹º§¿¡ ¹èÄ¡µÈ Pawn(Ä³¸¯ÅÍ)¸¶´Ù ´Ù¸¥ PawnData ¸¦ ÁÙ ¼ö ÀÖ´Ù.
+	 * Pawnì´ ì‚¬ìš©í•  DataAsset
+	 * - âœ… ê¶Œì¥: BP Defaults(EditDefaultsOnly)ë¡œ ì„¸íŒ…í•´ì„œ ì„œë²„/í´ë¼ ëª¨ë‘ ë™ì¼í•˜ê²Œ ë³´ìœ 
 	 */
-	UPROPERTY(EditInstanceOnly, Category = "Moses|Pawn")
-	TObjectPtr<const UMosesPawnData> PawnData;
-	
-	
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Moses|Pawn")
+	TObjectPtr<const UMosesPawnData> PawnData = nullptr;
+
 };

@@ -49,6 +49,11 @@ public:
 	UPROPERTY()
 	TObjectPtr<UMosesCameraModeStack> CameraModeStack;
 
+
+	UPROPERTY(EditDefaultsOnly, Category = "Moses|Camera")
+	TSubclassOf<UMosesCameraMode> DefaultCameraModeClass;
+
+
 	/** 현재 CameraMode를 가져오는 Delegate */
 	FMosesCameraModeDelegate DetermineCameraModeDelegate;
 	

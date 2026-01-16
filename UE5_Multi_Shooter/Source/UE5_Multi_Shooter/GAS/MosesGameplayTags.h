@@ -5,22 +5,21 @@
 class UGameplayTagsManager;
 
 /**
- * FYJGameplayTags
- * - 프로젝트에서 사용하는 모든 네이티브 GameplayTag 집합
- * - 엔진 부팅 시 한 번만 등록됨
+ * Native GameplayTags Singleton
+ * - 프로젝트 전역에서 사용할 네이티브 GameplayTag를 "엔진 초기화 초반"에 1회 등록한다.
  */
 struct FMosesGameplayTags
 {
-	/** 전역 접근 함수 */
+	/** 싱글톤 접근자 */
 	static const FMosesGameplayTags& Get() { return GameplayTags; }
 
-	/** 네이티브 GameplayTag 등록 진입점 */
+	/** 엔진 부팅 초기에 1회 호출되어 네이티브 태그 등록 */
 	static void InitializeNativeTags();
 
-	/** 단일 태그 등록 헬퍼 */
-	void AddTag(FGameplayTag& OutTag, const ANSICHAR* TagName, const ANSICHAR* TagComment);
+	/** 단일 태그 등록 헬퍼 (Manager 기반으로만 등록한다) */
+	void AddTag(UGameplayTagsManager& Manager, FGameplayTag& OutTag, const ANSICHAR* TagName, const ANSICHAR* TagComment);
 
-	/** 이 프로젝트에서 사용하는 모든 태그 정의 */
+	/** 단일 태그 등록 헬퍼 (Manager 기반으로만 등록한다) */
 	void AddAllTags(UGameplayTagsManager& Manager);
 
 	/* ---------- Init State Tags ---------- */
@@ -33,7 +32,14 @@ struct FMosesGameplayTags
 	FGameplayTag InputTag_Move;
 	FGameplayTag InputTag_Look_Mouse;
 
+	/* ---------- Combat State Tags ---------- */
+	FGameplayTag State_Phase_Combat;
+	FGameplayTag State_Dead;
+
 private:
 	/** 전역 싱글톤 인스턴스 */
 	static FMosesGameplayTags GameplayTags;
+
+	/** 중복 호출 방지 가드 */
+	static bool bInitialized;
 };

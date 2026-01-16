@@ -45,6 +45,9 @@ public:
 		return FPrimaryAssetType(TEXT("MosesExperienceDefinition"));
 	}
 
+private:
+	void InitializeMosesNativeTags();
+
 protected:
 	UPROPERTY()
 	TSet<TObjectPtr<const UObject>> LoadedAssets;

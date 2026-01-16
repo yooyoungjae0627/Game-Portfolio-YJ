@@ -1,10 +1,11 @@
 ﻿#include "MosesAssetManager.h"
 
-#include "Misc/CommandLine.h"
-#include "Misc/Parse.h"
-#include "HAL/PlatformTime.h"
-#include "Misc/ScopeLock.h"
+//#include "Misc/CommandLine.h"
+//#include "Misc/Parse.h"
+//#include "HAL/PlatformTime.h"
+//#include "Misc/ScopeLock.h"
 
+#include "UE5_Multi_Shooter/GAS/MosesGameplayTags.h"
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
 
 UMosesAssetManager::UMosesAssetManager()
@@ -33,6 +34,8 @@ void UMosesAssetManager::StartInitialLoading()
 	// 스캔 확인 로그 (A 검증용)
 	TArray<FPrimaryAssetId> FoundAssets;
 	GetPrimaryAssetIdList(ExperienceType(), FoundAssets);
+
+	InitializeMosesNativeTags();
 
 	UE_LOG(LogMosesExp, Log, TEXT("[AssetManager] Scanned ExperienceDefinitions: %d"), FoundAssets.Num());
 	for (const FPrimaryAssetId& Id : FoundAssets)
@@ -82,4 +85,9 @@ void UMosesAssetManager::AddLoadedAsset(const UObject* Asset)
 
 	FScopeLock Lock(&SyncObject);
 	LoadedAssets.Add(Asset);
+}
+
+void UMosesAssetManager::InitializeMosesNativeTags()
+{
+	FMosesGameplayTags::InitializeNativeTags();
 }

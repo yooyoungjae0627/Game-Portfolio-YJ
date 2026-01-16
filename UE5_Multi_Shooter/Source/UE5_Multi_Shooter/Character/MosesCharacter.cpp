@@ -1,56 +1,153 @@
-// Fill out your copyright notice in the Description page of Project Settings.
+ï»¿#include "UE5_Multi_Shooter/Character/MosesCharacter.h"
 
+#include "TimerManager.h"
+#include "GameFramework/PlayerState.h"
+#include "GameFramework/Controller.h"
 
-#include "MosesCharacter.h"
+#include "UE5_Multi_Shooter/MosesLogChannels.h"
+#include "UE5_Multi_Shooter/Player/MosesPlayerState.h"
 
 #include "UE5_Multi_Shooter/Character/Components/MosesPawnExtensionComponent.h"
+#include "UE5_Multi_Shooter/Character/Components/MosesHeroComponent.h"
 #include "UE5_Multi_Shooter/Camera/MosesCameraComponent.h"
 
-// Sets default values
 AMosesCharacter::AMosesCharacter()
 {
-	// ÀÌ Ä³¸¯ÅÍ°¡ Tick À» »ç¿ëÇÒÁö ¿©ºÎ
+	bReplicates = true;
+
 	PrimaryActorTick.bCanEverTick = true;
-	// ½ÃÀÛ ½Ã Tick À» ÄÓÁö ¿©ºÎ (ÇÊ¿äÇØÁú ¶§±îÁö ²¨µĞ´Ù)
 	PrimaryActorTick.bStartWithTickEnabled = false;
 
-	// PawnExtensionComponent »ı¼º
-	// - ÀÌ ÄÄÆ÷³ÍÆ®°¡ PawnData, InitState Ã¼ÀÎÀÇ Áß½ÉÀÌ µÈ´Ù.
 	PawnExtComponent = CreateDefaultSubobject<UMosesPawnExtensionComponent>(TEXT("PawnExtensionComponent"));
+	HeroComponent = CreateDefaultSubobject<UMosesHeroComponent>(TEXT("HeroComponent"));
 
-	// Ä«¸Ş¶ó ÄÄÆ÷³ÍÆ® »ı¼º
+	// âœ… MosesCameraComponentëŠ” UCameraComponent íŒŒìƒì´ë¼ ë°˜ë“œì‹œ Rootì— ë¶™ì—¬ì•¼ ì•ˆì •ì 
 	CameraComponent = CreateDefaultSubobject<UMosesCameraComponent>(TEXT("CameraComponent"));
+	CameraComponent->SetupAttachment(GetRootComponent());
+	CameraComponent->SetRelativeLocation(FVector(-300.f, 0.f, 75.f));
 
-	// TPS °üÁ¡ÀÇ Ä«¸Ş¶ó ±âº» À§Ä¡(-300, 0, 75)
-	CameraComponent->SetRelativeLocation(FVector(-300.0f, 0.0f, 75.0f));
-
+	// TPS ê¸°ë³¸ íšŒì „ ì •ì±… (ì›í•˜ë©´ ë‚˜ì¤‘ì— ì¡°ì •)
+	bUseControllerRotationYaw = true;
 }
 
-// Called when the game starts or when spawned
 void AMosesCharacter::BeginPlay()
 {
 	Super::BeginPlay();
-	
+	// GAS Initì€ ì—¬ê¸°ì„œ í•˜ì§€ ì•ŠìŒ (PS/í¬ì œìŠ¤ íƒ€ì´ë° ë³´ì¥ X)
 }
 
-// Called every frame
+void AMosesCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	StopLateJoinInitTimer();
+	Super::EndPlay(EndPlayReason);
+}
+
 void AMosesCharacter::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
-
 }
 
-// Called to bind functionality to input
 void AMosesCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
 {
 	Super::SetupPlayerInputComponent(PlayerInputComponent);
+	// ì…ë ¥ ë°”ì¸ë”©ì€ HeroComponentê°€ ë¡œì»¬ì—ì„œ ì²˜ë¦¬(ë‹¨ìˆœ ë²„ì „)
+}
 
-	// ±× ´ÙÀ½ PawnExtensionComponent ¿¡°Ô
-	// "ÀÔ·Â ÁØºñÇØ¶ó(InitState ÁøÇàÇØ¶ó)" ¶ó´Â Æ®¸®°Å¸¦ ´øÁø´Ù.
-	// ½ÇÁ¦ EnhancedInput ¹ÙÀÎµùÀº HeroComponent ³»ºÎ¿¡¼­ ¼öÇàµÈ´Ù.
-	if (PawnExtComponent)
+void AMosesCharacter::PossessedBy(AController* NewController)
+{
+	Super::PossessedBy(NewController);
+
+	UE_LOG(LogMosesGAS, Log, TEXT("[GAS][SV] PossessedBy Pawn=%s Controller=%s"),
+		*GetNameSafe(this), *GetNameSafe(NewController));
+
+	TryInitASC_FromPlayerState();
+}
+
+void AMosesCharacter::UnPossessed()
+{
+	StopLateJoinInitTimer();
+	Super::UnPossessed();
+}
+
+void AMosesCharacter::OnRep_PlayerState()
+{
+	Super::OnRep_PlayerState();
+
+	APlayerState* RawPS = GetPlayerState();
+	UE_LOG(LogMosesGAS, Warning, TEXT("[GAS][CL] OnRep_PlayerState Pawn=%s RawPS=%s"),
+		*GetNameSafe(this), *GetNameSafe(RawPS));
+
+	if (AMosesPlayerState* PS = Cast<AMosesPlayerState>(RawPS))
 	{
-		PawnExtComponent->SetupPlayerInputComponent();
+		PS->TryInitASC(this);
+		StopLateJoinInitTimer();
+		return;
+	}
+
+	// PSê°€ ì•„ì§ ì•ˆ ë‚´ë ¤ì˜¨ ì¼€ì´ìŠ¤ ë°©ì–´
+	StartLateJoinInitTimer();
+}
+
+void AMosesCharacter::TryInitASC_FromPlayerState()
+{
+	AMosesPlayerState* PS = GetPlayerState<AMosesPlayerState>();
+	if (!PS)
+	{
+		StartLateJoinInitTimer();
+		return;
+	}
+
+	PS->TryInitASC(this);
+	StopLateJoinInitTimer();
+}
+
+void AMosesCharacter::StartLateJoinInitTimer()
+{
+	if (TimerHandle_LateJoinInit.IsValid())
+	{
+		return;
+	}
+
+	LateJoinRetryCount = 0;
+
+	GetWorld()->GetTimerManager().SetTimer(
+		TimerHandle_LateJoinInit,
+		this,
+		&ThisClass::LateJoinInitTick,
+		LateJoinRetryIntervalSec,
+		true);
+
+	UE_LOG(LogMosesGAS, Verbose, TEXT("[GAS] Start LateJoinInitTimer Pawn=%s"), *GetNameSafe(this));
+}
+
+void AMosesCharacter::StopLateJoinInitTimer()
+{
+	if (TimerHandle_LateJoinInit.IsValid())
+	{
+		GetWorld()->GetTimerManager().ClearTimer(TimerHandle_LateJoinInit);
 	}
 }
 
+void AMosesCharacter::LateJoinInitTick()
+{
+	++LateJoinRetryCount;
+
+	AMosesPlayerState* PS = GetPlayerState<AMosesPlayerState>();
+	if (PS)
+	{
+		UE_LOG(LogMosesGAS, Log, TEXT("[GAS] LateJoinInit SUCCESS Pawn=%s Retry=%d"),
+			*GetNameSafe(this), LateJoinRetryCount);
+
+		PS->TryInitASC(this);
+		StopLateJoinInitTimer();
+		return;
+	}
+
+	if (LateJoinRetryCount >= MaxLateJoinRetries)
+	{
+		UE_LOG(LogMosesGAS, Warning, TEXT("[GAS] LateJoinInit FAIL Pawn=%s Retries=%d"),
+			*GetNameSafe(this), LateJoinRetryCount);
+
+		StopLateJoinInitTimer();
+	}
+}

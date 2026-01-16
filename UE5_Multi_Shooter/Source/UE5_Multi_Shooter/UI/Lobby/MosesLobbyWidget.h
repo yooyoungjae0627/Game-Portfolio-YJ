@@ -1,13 +1,13 @@
-﻿#pragma once
+﻿// ============================================================================
+// MosesLobbyWidget.h
+// ============================================================================
+
+#pragma once
 
 #include "Blueprint/UserWidget.h"
 #include "MosesLobbyWidget.generated.h"
 
-struct FDialogueNetState;
-
 enum class EMosesRoomJoinResult : uint8;
-enum class EDialogueFlowState : uint8;
-enum class EDialogueSubState : uint8;
 
 class UOverlay;
 class UButton;
@@ -15,30 +15,32 @@ class UCheckBox;
 class UListView;
 class UVerticalBox;
 class UHorizontalBox;
-class USizeBox;
-class UProgressBar;
-class UWidget;
 class UTextBlock;
 class UEditableTextBox;
+class UUserWidget;
+
 class AMosesLobbyGameState;
 class AMosesPlayerState;
-class UMosesDialogueLineDataAsset;
-class UMosesLobbyLocalPlayerSubsystem;
 class AMosesPlayerController;
+class UMosesLobbyLocalPlayerSubsystem;
 class UMSCreateRoomPopupWidget;
 
-static const TCHAR* NetModeToString(ENetMode Mode)
-{
-	switch (Mode)
-	{
-	case NM_Standalone:      return TEXT("Standalone");
-	case NM_DedicatedServer: return TEXT("DedicatedServer");
-	case NM_ListenServer:    return TEXT("ListenServer");
-	case NM_Client:          return TEXT("Client");
-	default:                 return TEXT("Unknown");
-	}
-}
-
+/**
+ * UMosesLobbyWidget
+ *
+ * 책임(요약)
+ * - 로비 UI의 “표시 + 입력” 담당 (버튼/리스트/채팅 입력)
+ * - 서버 권한 로직은 절대 직접 처리하지 않고, PlayerController 서버 RPC로 위임한다.
+ *
+ * 단일 진실(Single Source of Truth)
+ * - 룸/멤버/Ready/채팅 히스토리: AMosesLobbyGameState (복제)
+ * - 내 상태(방 소속/호스트/로그인/Ready 등): AMosesPlayerState (복제)
+ * - UI 갱신 트리거: UMosesLobbyLocalPlayerSubsystem 이벤트 (로컬 전용 브릿지)
+ *
+ * 안전장치
+ * - BindWidgetOptional은 BP에서 누락될 수 있으므로 항상 nullptr 체크 후 사용한다.
+ * - NativeConstruct/NativeDestruct에서 Delegate/Timer를 반드시 해제해 유령 바인딩을 방지한다.
+ */
 UCLASS()
 class UE5_MULTI_SHOOTER_API UMosesLobbyWidget : public UUserWidget
 {
@@ -51,6 +53,7 @@ protected:
 	virtual void NativeConstruct() override;
 	virtual void NativeDestruct() override;
 
+protected:
 	/*====================================================
 	= Initialization / Binding
 	====================================================*/
@@ -60,11 +63,13 @@ protected:
 	void BindSubsystemEvents();
 	void UnbindSubsystemEvents();
 
+protected:
 	/*====================================================
 	= Unified UI Refresh
 	====================================================*/
 	void RefreshAll_UI();
 
+protected:
 	/*====================================================
 	= UI Refresh Internals
 	====================================================*/
@@ -72,13 +77,17 @@ protected:
 	void RefreshPanelsByPlayerState();
 	void RefreshRightPanelControlsByRole();
 
+protected:
 	/*====================================================
 	= Subsystem → UI Entry Points
 	====================================================*/
 	void HandleRoomStateChanged_UI();
 	void HandlePlayerStateChanged_UI();
-	void HandleRulesViewModeChanged_UI(bool bEnable);
 
+	// [DIALOGUE/VOICE DISABLED]
+	// void HandleRulesViewModeChanged_UI(bool bEnable);
+
+protected:
 	/*====================================================
 	= Create Room Popup Flow
 	====================================================*/
@@ -90,12 +99,14 @@ protected:
 
 	void CenterPopupWidget(UUserWidget* PopupWidget) const;
 
+protected:
 	/*====================================================
 	= Start Game Policy
 	====================================================*/
 	bool CanStartGame_UIOnly() const;
 	void UpdateStartButton();
 
+protected:
 	/*====================================================
 	= UI Event Handlers
 	====================================================*/
@@ -115,25 +126,20 @@ protected:
 	void OnClicked_CharNext();
 
 	UFUNCTION()
-	void OnClicked_GameRules();
-
-	UFUNCTION()
-	void OnClicked_ExitDialogue();
-
-	UFUNCTION() 
 	void OnClicked_SendChat();
-
 
 	void OnRoomItemClicked(UObject* ClickedItem);
 
-	void RefreshGameRulesButtonVisibility();
-
+protected:
+	/*====================================================
+	= Chat Helpers
+	====================================================*/
 	FString GetChatInput() const;
 	void RebuildChat(const AMosesLobbyGameState* GS);
 
 protected:
 	/*====================================================
-	= Helpers
+	= General Helpers
 	====================================================*/
 	AMosesPlayerController* GetMosesPC() const;
 	AMosesPlayerState* GetMosesPS() const;
@@ -159,80 +165,13 @@ protected:
 
 public:
 	/*====================================================
-	= Public UI Mode Control
+	= Public API (Subsystem → Widget)
 	====================================================*/
-	void SetRulesViewMode(bool bEnable);
-
 	void RefreshFromState(const AMosesLobbyGameState* InMosesLobbyGameState, const AMosesPlayerState* InMosesPlayerState);
 
-	void SetMySpeechText_UI(const FText& InText);
-	void SetMicState_UI(int32 InMicState);
-	void ShowDialogueBubble_UI(bool bPlayFadeIn);
-	void HideDialogueBubble_UI(bool bPlayFadeOut);
-	void SetDialogueBubbleText_UI(const FText& Text);
-	void SetSubtitleVisibility(bool bVisible);
-
 private:
 	/*====================================================
-	= Dialogue Bubble internals (✅ NEW - LobbyWidget 내부 트리 기준)
-	====================================================*/
-	void CacheDialogueBubble_InternalRefs();
-	void HandleDialogueStateChanged_UI(const FDialogueNetState& NewState);
-	
-	// ✅ 전광판 NetState 적용 (텍스트 업데이트 누락 방지 포함)
-	void ApplyDialogueState_ToBubbleUI(const FDialogueNetState& NewState);
-
-	// ✅ 메타휴먼(시점/카메라) 모드 진입 시: "자막 텍스트"만 강제 Collapsed
-	void OnEnterMetaHumanView_SubtitleOnly();
-
-	// ✅ 메타휴먼(시점/카메라) 모드 종료 후 복귀 시:
-	// - 자막 텍스트 Visible
-	// - 최신 상태를 1회 강제 재적용(숨김/복귀에서 텍스트 안 바뀌는 문제 종결)
-	void OnExitMetaHumanView_SubtitleOnly_Reapply(const FDialogueNetState& LatestState);
-
-	bool ShouldShowBubbleInCurrentMode(const FDialogueNetState& NetState) const;
-	FText GetSubtitleTextFromNetState(const FDialogueNetState& NetState) const;
-
-	// ✅ Fade = BP 애니메이션 안 쓰고, 타이머로 RenderOpacity 보간
-	void StartBubbleFade(float FromOpacity, float ToOpacity, bool bCollapseAfterFade);
-	void TickBubbleFade();
-	void StopBubbleFade();
-	void SetBubbleOpacity(float Opacity);
-
-	UFUNCTION()
-	void OnClicked_MicToggle();
-
-	UFUNCTION()
-	void OnClicked_SubmitCommand();
-
-	void BindVoiceSubsystemEvents();
-	void UnbindVoiceSubsystemEvents();
-	void HandleVoiceLevelChanged(float Level01);
-
-private:
-	// ✅ 자막 라인 데이터(클라에서도 로드 가능한 DataAsset)
-	UPROPERTY(EditDefaultsOnly, Category = "Dialogue")
-	TObjectPtr<UMosesDialogueLineDataAsset> DialogueLineData = nullptr;
-
-	// ✅ LobbyWidget 내부에 직접 배치한 위젯들을 캐시
-	UPROPERTY(Transient)
-	TObjectPtr<UWidget> CachedBubbleRoot = nullptr;      // 이름: "BubbleRoot"
-
-	UPROPERTY(Transient)
-	TObjectPtr<UTextBlock> CachedTB_DialogueText = nullptr; // 이름: "TB_DialogueText"
-
-	// ✅ 중복 재생/깜빡임 방지 캐시
-	UPROPERTY(Transient)
-	int32 CachedDialogueSeq = 0;
-
-	UPROPERTY(Transient)
-	int32 CachedLineIndex = INDEX_NONE;
-
-	UPROPERTY(Transient)
-	EDialogueFlowState CachedFlowState;
-
-	/*====================================================
-	= Widgets (BindWidget)
+	= Widgets (BindWidgetOptional)
 	====================================================*/
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UButton> Button_CreateRoom = nullptr;
@@ -265,77 +204,54 @@ private:
 	TObjectPtr<UOverlay> RoomListViewOverlay = nullptr;
 
 	UPROPERTY(meta = (BindWidgetOptional))
-	TObjectPtr<UButton> Btn_GameRules = nullptr;
-
-	UPROPERTY(meta = (BindWidgetOptional))
-	TObjectPtr<UButton> Btn_ExitDialogue = nullptr;
-
-	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UVerticalBox> CharacterSelectedButtonsBox = nullptr;
-
-	UPROPERTY(meta = (BindWidgetOptional))
-	TObjectPtr<USizeBox> DialogueBubbleWidget = nullptr;
 
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UTextBlock> NickNameText = nullptr;
 
-
-	UPROPERTY(meta = (BindWidgetOptional)) 
-	UButton* Button_MicToggle = nullptr;
-	
-	UPROPERTY(meta = (BindWidgetOptional)) 
-	UProgressBar* ProgressBar_MicLevel = nullptr;
-
-	UPROPERTY(meta = (BindWidgetOptional)) 
-	UEditableTextBox* EditableTextBox_Command = nullptr;
-	
-	UPROPERTY(meta = (BindWidgetOptional)) 
-	UButton* Button_SubmitCommand = nullptr;
-
-
-	UPROPERTY(meta = (BindWidgetOptional)) 
-	TObjectPtr<UListView> ChatListView = nullptr;
-	
-	UPROPERTY(meta = (BindWidgetOptional)) 
-	TObjectPtr<UEditableTextBox> ChatEditableTextBox = nullptr;
-	
-	UPROPERTY(meta = (BindWidgetOptional)) 
-	TObjectPtr<UButton> BTN_SendChat = nullptr;
-
-	UPROPERTY(meta = (BindWidgetOptional)) 
-	TObjectPtr<UTextBlock> TXT_MyRoom = nullptr;
-
-
-	UPROPERTY(meta = (BindWidgetOptional))
-	TObjectPtr<UTextBlock> TB_MySpeech = nullptr;
-
-	UPROPERTY(meta = (BindWidgetOptional))
-	TObjectPtr<UTextBlock> TB_MicState = nullptr;
-
 	// ---------------------------
-	// Mic UI
+	// Debug Command Input (중복 선언이 있었음: BP 호환 위해 둘 다 유지)
 	// ---------------------------
-	UPROPERTY(meta = (BindWidgetOptional))
-	TObjectPtr<UButton> Btn_MicToggle = nullptr;
 
+	// (Legacy) - BP에서 이 이름으로 바인딩 중일 수 있음
 	UPROPERTY(meta = (BindWidgetOptional))
-	TObjectPtr<UProgressBar> PB_MicLevel = nullptr;
+	TObjectPtr<UEditableTextBox> EditableTextBox_Command = nullptr;
 
-	// ---------------------------
-	// Debug Command Input
-	// ---------------------------
+	// (Legacy) - BP에서 이 이름으로 바인딩 중일 수 있음
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UButton> Button_SubmitCommand = nullptr;
+
+	// (Current) - 프로젝트 표준 네이밍(권장)
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UEditableTextBox> ET_CommandInput = nullptr;
 
+	// (Current) - 프로젝트 표준 네이밍(권장)
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UButton> Btn_SubmitCommand = nullptr;
 
+	// ---------------------------
+	// Chat
+	// ---------------------------
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UListView> ChatListView = nullptr;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UEditableTextBox> ChatEditableTextBox = nullptr;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UButton> BTN_SendChat = nullptr;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UTextBlock> TXT_MyRoom = nullptr;
+
+private:
 	/*====================================================
 	= Cached Subsystem
 	====================================================*/
 	UPROPERTY(Transient)
 	TObjectPtr<UMosesLobbyLocalPlayerSubsystem> LobbyLPS = nullptr;
 
+private:
 	/*====================================================
 	= Create Room Popup Assets
 	====================================================*/
@@ -345,6 +261,7 @@ private:
 	UPROPERTY(Transient)
 	TObjectPtr<UMSCreateRoomPopupWidget> CreateRoomPopup = nullptr;
 
+private:
 	/*====================================================
 	= Pending State (UI Only)
 	====================================================*/
@@ -356,29 +273,10 @@ private:
 
 	FTimerHandle PendingEnterRoomTimerHandle;
 
+private:
 	/*====================================================
-	= RulesView state
+	= Join deferred until login
 	====================================================*/
-	bool bRulesViewEnabled = false;
-
-	// ✅ Fade 상태
-	FTimerHandle BubbleFadeTimerHandle;
-	float BubbleFadeDurationSeconds = 0.25f;
-	float BubbleFadeElapsed = 0.f;
-	float BubbleFadeFrom = 0.f;
-	float BubbleFadeTo = 1.f;
-	bool bBubbleCollapseAfterFade = false;
-
-	// GameRules button visibility log cache (spam guard)
-	mutable int32 CachedGameRulesLogHash = INDEX_NONE;
-
-	// ✅ "자막 숨김 상태에서 업데이트가 들어오면" 여기 저장해뒀다가 복귀 시 강제 적용
-	FText PendingSubtitleText;
-
-	// ✅ 메타휴먼 모드에서 자막을 강제로 내렸는지 추적 (복귀 시만 올리려고)
-	bool bSubtitleForcedCollapsedByMetaHuman = false;
-
-
 	FGuid PendingJoinRoomId;
 	bool bPendingJoinAfterLogin = false;
 };

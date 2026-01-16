@@ -23,13 +23,13 @@ static constexpr int32 Lobby_MinRoomMaxPlayers = 2;
 static constexpr int32 Lobby_MaxRoomMaxPlayers = 4;
 
 // =========================================================
-// AMosesPlayerController (Ctor)
+// 생성자
 // =========================================================
 
 AMosesPlayerController::AMosesPlayerController(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
 {
-	// 프로젝트 카메라 매니저 사용
+	// 프로젝트 전용 카메라 매니저 사용
 	PlayerCameraManagerClass = AMosesPlayerCameraManager::StaticClass();
 
 	/**
@@ -39,8 +39,57 @@ AMosesPlayerController::AMosesPlayerController(const FObjectInitializer& ObjectI
 	 */
 }
 
+void AMosesPlayerController::ClientRestart_Implementation(APawn* NewPawn)
+{
+	Super::ClientRestart_Implementation(NewPawn);
+
+	if (!IsLocalController())
+	{
+		return;
+	}
+
+	// 로비면 프리뷰 카메라 유지
+	if (IsLobbyContext())
+	{
+		bAutoManageActiveCameraTarget = false;
+		ApplyLobbyPreviewCamera();
+		return;
+	}
+
+	// ✅ 매치: 클라에서 확실히 Pawn으로 뷰타겟 복구
+	RestoreNonLobbyDefaults_LocalOnly();
+	RestoreNonLobbyInputMode_LocalOnly();
+
+	if (NewPawn)
+	{
+		SetViewTarget(NewPawn);
+		AutoManageActiveCameraTarget(NewPawn);
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("[CAM][PC] ClientRestart -> ForcePawnViewTarget Pawn=%s ViewTarget=%s AutoManage=%d"),
+		*GetNameSafe(NewPawn),
+		*GetNameSafe(GetViewTarget()),
+		bAutoManageActiveCameraTarget ? 1 : 0);
+}
+
+
 // =========================================================
-// Dev Exec Helpers
+// Debug Exec 구현부
+// - 콘솔에서 호출해 상태를 덤프하는 개발용 유틸
+// =========================================================
+
+void AMosesPlayerController::gas_DumpTags()
+{
+	// TODO: 필요 시 태그 덤프 구현
+}
+
+void AMosesPlayerController::gas_DumpAttr()
+{
+	// TODO: 필요 시 어트리뷰트 덤프 구현
+}
+
+// =========================================================
+// Dev Exec Helpers 구현 (Travel Exec 등)
 // =========================================================
 
 void AMosesPlayerController::TravelToMatch_Exec()
@@ -81,11 +130,14 @@ void AMosesPlayerController::TravelToLobby_Exec()
 }
 
 // =========================================================
-// Lifecycle (Local UI / Camera)
+// Lifecycle (Local UI / Camera) 구현
+// - BeginPlay / OnPossess / OnRep_PlayerState
+// - 로컬 전용 초기화와 SeamlessTravel 대비 원복 처리
 // =========================================================
 
 void AMosesPlayerController::SetPendingLobbyNickname_Local(const FString& Nick)
 {
+	// 로컬 컨트롤러 전용 함수: 서버로 닉네임 전송을 보류하고 네트워크 준비 시 전송
 	if (!IsLocalController())
 	{
 		return;
@@ -101,7 +153,7 @@ void AMosesPlayerController::SetPendingLobbyNickname_Local(const FString& Nick)
 
 	bPendingLobbyNicknameSend_Local = true;
 
-	// 이미 조건이 만족되면 즉시 전송 시도
+	// 네트워크/PlayerState 준비되었으면 즉시 시도
 	TrySendPendingLobbyNickname_Local();
 }
 
@@ -115,25 +167,36 @@ void AMosesPlayerController::BeginPlay()
 		return;
 	}
 
-	/**
-	 * SeamlessTravel 함정:
-	 * - PC가 유지되면 로비에서 설정한 플래그/타이머가 다음 맵까지 남을 수 있다.
-	 * - 따라서 BeginPlay에서 "로비면 적용 / 아니면 원복"을 반드시 수행한다.
-	 */
+	// SeamlessTravel 대비: BeginPlay에서 "로비면 적용 / 아니면 원복"을 반드시 수행
 	if (!IsLobbyContext())
 	{
 		RestoreNonLobbyDefaults_LocalOnly();
 		RestoreNonLobbyInputMode_LocalOnly();
+
+		// ✅ 매치 진입 직후: Pawn이 이미 있으면 ViewTarget을 Pawn으로 강제 복구
+		if (APawn* LocalPawn = GetPawn())
+		{
+			SetViewTarget(LocalPawn);
+			AutoManageActiveCameraTarget(LocalPawn);
+		}
+
+		UE_LOG(LogTemp, Warning, TEXT("[CAM][PC] BeginPlay NonLobby -> Restore + ForcePawnViewTarget Pawn=%s ViewTarget=%s AutoManage=%d"),
+			*GetNameSafe(GetPawn()),
+			*GetNameSafe(GetViewTarget()),
+			bAutoManageActiveCameraTarget ? 1 : 0);
+
 		return;
 	}
 
-	// 로비 정책 적용
+	// =========================
+	// Lobby Context
+	// =========================
 	bAutoManageActiveCameraTarget = false;
 
 	ActivateLobbyUI_LocalOnly();
 	ApplyLobbyInputMode_LocalOnly();
 
-	// ViewTarget은 Experience/OnPossess 등에서 덮일 수 있어 즉시 + 지연 재적용
+	// ViewTarget은 Possess/Experience 등에서 덮일 수 있어 즉시 + 지연 재적용
 	ApplyLobbyPreviewCamera();
 
 	GetWorldTimerManager().SetTimer(
@@ -145,30 +208,58 @@ void AMosesPlayerController::BeginPlay()
 	);
 }
 
+void AMosesPlayerController::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	Super::EndPlay(EndPlayReason);
+
+
+}
+
 void AMosesPlayerController::OnPossess(APawn* InPawn)
 {
 	Super::OnPossess(InPawn);
 
-	// Possess 직후 ViewTarget이 Pawn으로 덮일 수 있으니, 로비면 재적용
-	if (IsLocalController() && IsLobbyContext())
+	// 로컬 컨트롤러만 카메라 확정
+	if (!IsLocalController())
 	{
+		return;
+	}
+
+	if (IsLobbyContext())
+	{
+		// 로비 정책: Pawn으로 자동 카메라 관리 중지 + 프리뷰 카메라 유지
 		bAutoManageActiveCameraTarget = false;
+
 		ApplyLobbyPreviewCamera();
 		ApplyLobbyInputMode_LocalOnly();
 	}
+	else
+	{
+		// ✅ 매치 정책: 로비에서 남은 ViewTarget/카메라 오염을 즉시 제거
+		RestoreNonLobbyDefaults_LocalOnly();
+		RestoreNonLobbyInputMode_LocalOnly();
 
-	UE_LOG(LogTemp, Warning, TEXT("[TEST][Cam] PC=%s Pawn=%s ViewTarget=%s AutoManage=%d"),
+		if (InPawn)
+		{
+			SetViewTarget(InPawn);
+			AutoManageActiveCameraTarget(InPawn);
+		}
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("[TEST][Cam] PC=%s Pawn=%s ViewTarget=%s AutoManage=%d Lobby=%d"),
 		*GetNameSafe(this),
 		*GetNameSafe(InPawn),
 		*GetNameSafe(GetViewTarget()),
-		bAutoManageActiveCameraTarget ? 1 : 0);
-
+		bAutoManageActiveCameraTarget ? 1 : 0,
+		IsLobbyContext() ? 1 : 0);
 }
+
 
 void AMosesPlayerController::OnRep_PlayerState()
 {
 	Super::OnRep_PlayerState();
 
+	// 로컬 서브시스템에 PlayerState 변경 알림 전달 (UI 갱신 책임 위임)
 	if (ULocalPlayer* LP = GetLocalPlayer())
 	{
 		if (UMosesLobbyLocalPlayerSubsystem* Subsys = LP->GetSubsystem<UMosesLobbyLocalPlayerSubsystem>())
@@ -178,8 +269,14 @@ void AMosesPlayerController::OnRep_PlayerState()
 	}
 }
 
+void AMosesPlayerController::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
+{
+	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+}
+
 // =========================================================
-// Client → Server RPC (Lobby)
+// Client → Server RPC (Lobby) 구현부
+// - 서버 권한(HasAuthority) 체크 후 GameState/PlayerState에 위임
 // =========================================================
 
 void AMosesPlayerController::Server_CreateRoom_Implementation(const FString& RoomTitle, int32 MaxPlayers)
@@ -216,6 +313,7 @@ void AMosesPlayerController::Server_CreateRoom_Implementation(const FString& Roo
 		SafeMaxPlayers,
 		*GetNameSafe(this));
 }
+
 void AMosesPlayerController::Server_JoinRoom_Implementation(const FGuid& RoomId)
 {
 	if (!HasAuthority())
@@ -243,9 +341,9 @@ void AMosesPlayerController::Server_JoinRoom_Implementation(const FGuid& RoomId)
 	PS->EnsurePersistentId_Server();
 
 	// =====================================================
-	// 2) ✅ NotLoggedIn 레이스 흡수 (가장 중요)
-	// - Join이 Nick RPC보다 먼저 도착하면 서버에서 NotLoggedIn으로 튕김
-	// - 정책: Join 시점에 LoggedIn이 아니면 "Guest"로 자동 로그인 확정 후 진행
+	// 2) NotLoggedIn 레이스 흡수
+	//    - Join이 Nick RPC보다 먼저 도착하면 서버에서 NotLoggedIn으로 튕김
+	//    - 정책: Join 시점에 LoggedIn이 아니면 "Guest"로 자동 로그인 확정 후 진행
 	// =====================================================
 	if (!PS->IsLoggedIn())
 	{
@@ -350,7 +448,7 @@ void AMosesPlayerController::Server_RequestStartMatch_Implementation()
 	{
 		return;
 	}
-
+			
 	AMosesLobbyGameMode* LobbyGM = GetWorld() ? GetWorld()->GetAuthGameMode<AMosesLobbyGameMode>() : nullptr;
 	if (!LobbyGM)
 	{
@@ -359,7 +457,7 @@ void AMosesPlayerController::Server_RequestStartMatch_Implementation()
 		return;
 	}
 
-	// 최종 판정(호스트 여부/인원/Ready 등)은 GM에서
+	// 최종 판정(호스트 여부/인원/Ready 등)은 GM에서 처리
 	LobbyGM->HandleStartMatchRequest(GetPlayerState<AMosesPlayerState>());
 }
 
@@ -417,12 +515,13 @@ void AMosesPlayerController::Server_SendLobbyChat_Implementation(const FString& 
 		return;
 	}
 
-	// GameState가 채팅 단일 진실 (추가/복제/브로드캐스트 책임)
+	// GameState가 채팅의 단일 진실: 추가/복제/브로드캐스트 책임
 	MosesLobbyGameState->Server_AddChatMessage(MosesPlayerState, Clean);
 }
 
 // =========================================================
-// JoinRoom Result (Server → Client)
+// JoinRoom Result (Server → Client) 구현
+// - 클라이언트 UI 조작은 Subsystem에 위임
 // =========================================================
 
 void AMosesPlayerController::Client_JoinRoomResult_Implementation(EMosesRoomJoinResult Result, const FGuid& RoomId)
@@ -440,118 +539,9 @@ void AMosesPlayerController::Client_JoinRoomResult_Implementation(EMosesRoomJoin
 	}
 }
 
-// =========================================================
-// Dialogue Gate (Client → Server)
-// =========================================================
-
-void AMosesPlayerController::Server_RequestEnterLobbyDialogue_Implementation(ELobbyDialogueEntryType EntryType)
-{
-	if (!HasAuthority())
-	{
-		return;
-	}
-
-	AMosesPlayerState* PS = GetPlayerState<AMosesPlayerState>();
-	const bool bInRoom = (PS && PS->GetRoomId().IsValid());
-
-	// RulesView는 방 없어도 허용 / InRoomDialogue는 방 필요
-	if (EntryType == ELobbyDialogueEntryType::InRoomDialogue && !bInRoom)
-	{
-		UE_LOG(LogMosesSpawn, Warning, TEXT("[DOD][Gate][SV] EnterDialogue REJECT NotInRoom PC=%s"),
-			*GetNameSafe(this));
-		return;
-	}
-
-	AMosesLobbyGameState* LGS = GetLobbyGameStateChecked_Log(TEXT("Server_RequestEnterLobbyDialogue"));
-	if (!LGS)
-	{
-		return;
-	}
-
-	UE_LOG(LogMosesSpawn, Log, TEXT("[DOD][Gate][SV] EnterDialogue ACCEPT Type=%d InRoom=%d PC=%s"),
-		(int32)EntryType, bInRoom ? 1 : 0, *GetNameSafe(this));
-
-	// 실제 진입 처리/Phase 변경은 GameState가 단일 진실
-	LGS->ServerEnterLobbyDialogue(/*필요하면 EntryType 전달 버전으로 확장*/);
-}
-
-void AMosesPlayerController::Server_RequestExitLobbyDialogue_Implementation()
-{
-	if (!HasAuthority())
-	{
-		return;
-	}
-
-	AMosesLobbyGameState* LGS = GetLobbyGameStateChecked_Log(TEXT("Server_RequestExitLobbyDialogue"));
-	if (!LGS)
-	{
-		return;
-	}
-
-	// LobbyDialogue 상태가 아니면 무시
-	if (LGS->GetGamePhase() != EGamePhase::LobbyDialogue)
-	{
-		UE_LOG(LogMosesSpawn, Log, TEXT("[DOD][Gate][SV] ExitDialogue SKIP (Not LobbyDialogue phase) PC=%s"),
-			*GetNameSafe(this));
-		return;
-	}
-
-	UE_LOG(LogMosesSpawn, Log, TEXT("[DOD][Gate][SV] ExitDialogue ACCEPT PC=%s"),
-		*GetNameSafe(this));
-
-	LGS->ServerExitLobbyDialogue();
-}
-
-void AMosesPlayerController::Server_SubmitDialogueCommand_Implementation(EDialogueCommandType Type, uint16 ClientCommandSeq)
-{
-	if (!HasAuthority())
-	{
-		return;
-	}
-
-	AMosesLobbyGameMode* LobbyGM = GetWorld() ? GetWorld()->GetAuthGameMode<AMosesLobbyGameMode>() : nullptr;
-	if (!LobbyGM)
-	{
-		return;
-	}
-
-	// LobbyGM->HandleSubmitDialogueCommand(this, Type, ClientCommandSeq);
-}
-
-void AMosesPlayerController::Server_DialogueAdvanceLine_Implementation()
-{
-	if (!HasAuthority())
-	{
-		return;
-	}
-
-	AMosesLobbyGameMode* LobbyGM = GetWorld() ? GetWorld()->GetAuthGameMode<AMosesLobbyGameMode>() : nullptr;
-	if (!LobbyGM)
-	{
-		return;
-	}
-
-	LobbyGM->HandleDialogueAdvanceLineRequest(this);
-}
-
-void AMosesPlayerController::Server_DialogueSetFlowState_Implementation(EDialogueFlowState NewState)
-{
-	if (!HasAuthority())
-	{
-		return;
-	}
-
-	AMosesLobbyGameMode* LobbyGM = GetWorld() ? GetWorld()->GetAuthGameMode<AMosesLobbyGameMode>() : nullptr;
-	if (!LobbyGM)
-	{
-		return;
-	}
-
-	LobbyGM->HandleDialogueSetFlowStateRequest(this, NewState);
-}
 
 // =========================================================
-// Travel Guard (Dev Exec → Server Only)
+// Travel Guard (Dev Exec → Server Only) 구현
 // =========================================================
 
 void AMosesPlayerController::Server_TravelToMatch_Implementation()
@@ -574,8 +564,14 @@ void AMosesPlayerController::Server_TravelToLobby_Implementation()
 	DoServerTravelToLobby();
 }
 
+// =========================================================
+// Pending Nickname 전송 헬퍼 (로컬 전용)
+// - PlayerState/NetConnection 준비 시점까지 보류했다가 전송
+// =========================================================
+
 void AMosesPlayerController::TrySendPendingLobbyNickname_Local()
 {
+	// 로컬 전용 체크
 	if (!IsLocalController())
 	{
 		return;
@@ -604,12 +600,17 @@ void AMosesPlayerController::TrySendPendingLobbyNickname_Local()
 		return;
 	}
 
-	// ✅ PS 준비 완료 시점에서만 서버 RPC 전송
+	// PS 준비 완료 시점에서만 서버 RPC 전송
 	Server_SetLobbyNickname(PendingLobbyNickname_Local);
 
 	// 1회 전송 완료
 	bPendingLobbyNicknameSend_Local = false;
 }
+
+// =========================================================
+// Server-side Travel 실행 헬퍼
+// - 실제로 GameMode에 위임
+// =========================================================
 
 void AMosesPlayerController::DoServerTravelToMatch()
 {
@@ -664,7 +665,8 @@ void AMosesPlayerController::DoServerTravelToLobby()
 }
 
 // =========================================================
-// Lobby Context / Camera / UI
+// Lobby Context / Camera / UI 구현
+// - 로비 여부 판정, 프리뷰 카메라 적용, 로컬 UI 활성화 등
 // =========================================================
 
 bool AMosesPlayerController::IsLobbyContext() const
@@ -714,11 +716,16 @@ void AMosesPlayerController::ApplyLobbyPreviewCamera()
 		return;
 	}
 
+	// 로비는 항상 프리뷰 카메라 고정
+	bAutoManageActiveCameraTarget = false;
 	SetViewTargetWithBlend(TargetCam, 0.0f);
+
+	UE_LOG(LogTemp, Verbose, TEXT("[LobbyCam] Applied ViewTarget=%s"), *GetNameSafe(TargetCam));
 }
 
 void AMosesPlayerController::ActivateLobbyUI_LocalOnly()
 {
+	// 로컬 플레이어의 Subsystem에게 UI 활성화 위임
 	ULocalPlayer* LP = GetLocalPlayer();
 	if (!LP)
 	{
@@ -738,10 +745,6 @@ void AMosesPlayerController::ActivateLobbyUI_LocalOnly()
 
 void AMosesPlayerController::RestoreNonLobbyDefaults_LocalOnly()
 {
-	/**
-	 * SeamlessTravel 대비:
-	 * - 로비에서 끈 bAutoManageActiveCameraTarget이 매치까지 따라오면 Pawn 카메라 자동복구가 죽는다.
-	 */
 	bAutoManageActiveCameraTarget = true;
 
 	// 로비에서 걸어둔 타이머 제거
@@ -749,7 +752,18 @@ void AMosesPlayerController::RestoreNonLobbyDefaults_LocalOnly()
 	{
 		GetWorldTimerManager().ClearTimer(LobbyPreviewCameraTimerHandle);
 	}
+
+	// ✅ ViewTarget이 로비 카메라/PC로 남아있으면 Pawn으로 복구 시도
+	if (IsLocalController())
+	{
+		if (APawn* LocalPawn = GetPawn())
+		{
+			SetViewTarget(LocalPawn);
+			AutoManageActiveCameraTarget(LocalPawn);
+		}
+	}
 }
+
 
 void AMosesPlayerController::ApplyLobbyInputMode_LocalOnly()
 {
@@ -786,6 +800,7 @@ void AMosesPlayerController::RestoreNonLobbyInputMode_LocalOnly()
 
 // =========================================================
 // Shared getters (null/log guard)
+// - GameState / PlayerState가 필요한 RPC에서 재사용
 // =========================================================
 
 AMosesLobbyGameState* AMosesPlayerController::GetLobbyGameStateChecked_Log(const TCHAR* Caller) const
@@ -812,6 +827,11 @@ AMosesPlayerState* AMosesPlayerController::GetMosesPlayerStateChecked_Log(const 
 	return PS;
 }
 
+// =========================================================
+// Server: StartGame → Lobby 진입 요청 처리
+// - StartGameMode에서 호출되어 로비로 이동 트리거
+// =========================================================
+
 void AMosesPlayerController::Server_RequestEnterLobby_Implementation(const FString& Nickname)
 {
 	if (!HasAuthority())
@@ -834,6 +854,11 @@ void AMosesPlayerController::Server_RequestEnterLobby_Implementation(const FStri
 	GM->ServerTravelToLobby();
 }
 
+// =========================================================
+// Server: 캐릭터 선택 처리
+// - 서버에서 입력 값 검증 후 PlayerState에 반영
+// =========================================================
+
 void AMosesPlayerController::Server_SetSelectedCharacterId_Implementation(int32 SelectedId)
 {
 	if (!HasAuthority())
@@ -854,77 +879,5 @@ void AMosesPlayerController::Server_SetSelectedCharacterId_Implementation(int32 
 
 	UE_LOG(LogMosesSpawn, Log, TEXT("[CharSel][SV] SetSelectedCharacterId=%d PC=%s PS=%s"),
 		SafeId, *GetNameSafe(this), *GetNameSafe(PS));
-}
-
-void AMosesPlayerController::Moses_TestEnterRulesView()
-{
-	// 로컬만(멀티 PIE에서도 다른 플레이어에 영향 X)
-	if (!IsLocalController())
-	{
-		return;
-	}
-
-	if (ULocalPlayer* LP = GetLocalPlayer())
-	{
-		if (UMosesLobbyLocalPlayerSubsystem* Subsys = LP->GetSubsystem<UMosesLobbyLocalPlayerSubsystem>())
-		{
-			Subsys->EnterRulesView_UIOnly();
-		}
-	}
-}
-
-void AMosesPlayerController::Moses_TestExitRulesView()
-{
-	if (!IsLocalController())
-	{
-		return;
-	}
-
-	if (ULocalPlayer* LP = GetLocalPlayer())
-	{
-		if (UMosesLobbyLocalPlayerSubsystem* Subsys = LP->GetSubsystem<UMosesLobbyLocalPlayerSubsystem>())
-		{
-			Subsys->ExitRulesView_UIOnly();
-		}
-	}
-}
-
-void AMosesPlayerController::Moses_TestGesture(int32 Count)
-{
-	if (!IsLocalController())
-	{
-		return;
-	}
-
-	Count = FMath::Clamp(Count, 1, 50);
-
-	if (ULocalPlayer* LP = GetLocalPlayer())
-	{
-		if (UMosesLobbyLocalPlayerSubsystem* Subsys = LP->GetSubsystem<UMosesLobbyLocalPlayerSubsystem>())
-		{
-			// Count회 SetAnswer 호출로 "답변 시작"을 연속 발생시켜
-			// 덱 셔플/재셔플/Back-to-Back 방지를 빠르게 검증한다.
-			for (int32 i = 0; i < Count; ++i)
-			{
-				Subsys->SetAnswer(i, FText::FromString(TEXT("Gesture Test Trigger")));
-			}
-		}
-	}
-}
-
-void AMosesPlayerController::Moses_TestSetAnswer(int32 AnswerIndex, const FString& Text)
-{
-	if (!IsLocalController())
-	{
-		return;
-	}
-
-	if (ULocalPlayer* LP = GetLocalPlayer())
-	{
-		if (UMosesLobbyLocalPlayerSubsystem* Subsys = LP->GetSubsystem<UMosesLobbyLocalPlayerSubsystem>())
-		{
-			Subsys->SetAnswer(AnswerIndex, FText::FromString(Text));
-		}
-	}
 }
 

@@ -6,6 +6,7 @@
 class APlayerStart;
 class AController;
 class APlayerController;
+class UMosesPawnData;
 
 /**
  * Match 전용 GameMode
@@ -44,6 +45,16 @@ protected:
 	/** Seamless Travel 인계 과정 로그 */
 	virtual void HandleSeamlessTravelPlayer(AController*& C) override;
 	virtual void GetSeamlessTravelActorList(bool bToTransition, TArray<AActor*>& ActorList) override;
+
+	virtual APawn* SpawnDefaultPawnFor_Implementation(AController* NewPlayer, AActor* StartSpot) override;
+
+private:
+	/** 매치에서 PC에게 Pawn을 스폰하고 빙의시키는 단일 함수(정책 고정) */
+	void SpawnAndPossessMatchPawn(APlayerController* PC);
+
+	/** 이미 유효한 Pawn이 있으면 재사용할지/폐기할지 정책 */
+	bool ShouldRespawnPawn(APlayerController* PC) const;
+
 
 private:
 	/*====================================================
@@ -91,4 +102,7 @@ private:
 	// PC별 할당된 Start (해제용)
 	UPROPERTY()
 	TMap<TWeakObjectPtr<AController>, TWeakObjectPtr<APlayerStart>> AssignedStartByController;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Match|Pawn")
+	TObjectPtr<UMosesPawnData> MatchPawnData;
 };

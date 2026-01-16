@@ -23,5 +23,7 @@ public:
 	UPROPERTY(EditDefaultsOnly, Category = "Third Person")
 	TObjectPtr<const UCurveVector> TargetOffsetCurve;
 	
+	UPROPERTY(EditDefaultsOnly, Category = "Third Person")
+	FVector DefaultTargetOffset = FVector(-300.f, 0.f, 75.f);
 	
 };

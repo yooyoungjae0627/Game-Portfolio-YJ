@@ -1,460 +1,96 @@
-// Fill out your copyright notice in the Description page of Project Settings.
+ï»¿#include "UE5_Multi_Shooter/Character/Components/MosesHeroComponent.h"
 
-
-#include "MosesHeroComponent.h"
-
-#include "UE5_Multi_Shooter/MosesLogChannels.h"
-#include "UE5_Multi_Shooter/Character/Data/MosesPawnData.h"                           
-#include "MosesPawnExtensionComponent.h"           
-
-#include "EnhancedInputSubsystems.h"           
-#include "PlayerMappableInputConfig.h"         
-
-#include "UE5_Multi_Shooter/MosesGameplayTags.h"          
+#include "UE5_Multi_Shooter/Character/Components/MosesPawnExtensionComponent.h"
+#include "UE5_Multi_Shooter/Character/Data/MosesPawnData.h"
 #include "UE5_Multi_Shooter/Camera/MosesCameraComponent.h"
+#include "UE5_Multi_Shooter/Camera/MosesCameraMode.h"
+#include "UE5_Multi_Shooter/MosesLogChannels.h"
 
-#include "UE5_Multi_Shooter/Player/MosesPlayerState.h"
-#include "UE5_Multi_Shooter/Player/MosesPlayerController.h"
-
-/*#include "UE5_Multi_Shooter/Inputs/YJMappableConfigPair.h"
-#include "UE5_Multi_Shooter/Inputs/YJInputComponent.h"    */  
-
-#include "Components/GameFrameworkComponentManager.h"  
-
-
-// GameFrameworkComponentManager ¿¡ µî·ÏÇÒ Feature ÀÌ¸§
-const FName UMosesHeroComponent::NAME_ActorFeatureName("Hero");
-
-// InputConfig ÀÇ GameFeatureAction ¿¡¼­ »ç¿ëÇÒ Extension Event ÀÌ¸§
-const FName UMosesHeroComponent::NAME_BindInputsNow("BindInputsNow");
+#include "GameFramework/Pawn.h"
+#include "GameFramework/PlayerController.h"
 
 UMosesHeroComponent::UMosesHeroComponent(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
 {
-	// HeroComponent ´Â Tick À» »ç¿ëÇÏÁö ¾Ê´Â´Ù.
-	PrimaryComponentTick.bStartWithTickEnabled = false;
 	PrimaryComponentTick.bCanEverTick = false;
-}
-
-// PawnData ¿¡¼­ DefaultCameraMode ¸¦ ²¨³»´Â ÇÔ¼ö
-TSubclassOf<UMosesCameraMode> UMosesHeroComponent::DetermineCameraMode() const
-{
-	// ÀÌ ÄÄÆ÷³ÍÆ®°¡ ºÙ¾î ÀÖ´Â Pawn ¾ò¾î¿À±â
-	const APawn* Pawn = GetPawn<APawn>();
-	if (Pawn == nullptr)
-	{
-		return nullptr;
-	}
-
-	// PawnExtensionComponent Ã£±â
-	if (UMosesPawnExtensionComponent* PawnExtComp = UMosesPawnExtensionComponent::FindPawnExtensionComponent(Pawn))
-	{
-		// PawnData ¸¦ UYJPawnData Å¸ÀÔÀ¸·Î Ä³½ºÆÃÇÏ¿© °¡Á®¿À±â
-		if (const UMosesPawnData* PawnData = PawnExtComp->GetPawnData<UMosesPawnData>())
-		{
-			// PawnData ³»¿¡ Á¤ÀÇµÈ ±âº» Ä«¸Ş¶ó ¸ğµå ¹İÈ¯
-			return PawnData->DefaultCameraMode;
-		}
-	}
-
-	return nullptr;
-}
-
-void UMosesHeroComponent::OnRegister()
-{
-	Super::OnRegister();
-
-	// HeroComponent ´Â ¹İµå½Ã Pawn ±â¹İ Actor ¿¡ ºÙ¾î¾ß ÇÔ
-	{
-		if (!GetPawn<APawn>())
-		{
-			//UE_LOG(LogMoses, Error, TEXT("this component has been added to a BP whose base class is not a Pawn!"));
-			return;
-		}
-	}
-
-	// GameFrameworkComponentManager ¿¡ ÀÌ Feature µî·Ï (InitState ¿¡ Âü¿©)
-	RegisterInitStateFeature();
+	PrimaryComponentTick.bStartWithTickEnabled = false;
 }
 
 void UMosesHeroComponent::BeginPlay()
 {
 	Super::BeginPlay();
 
-	//// ÇÊ¿äÇÏ´Ù¸é ¿©±â¿¡¼­ PawnExtension ÀÇ InitState º¯°æ¿¡ ¹İÀÀÇÏµµ·Ï ¹ÙÀÎµùÇÒ ¼ö ÀÖÀ½.
-	//BindOnActorInitStateChanged(UYJPawnExtensionComponent::NAME_ActorFeatureName, FGameplayTag(), false);
-
-	//ensure(TryToChangeInitState(FYJGameplayTags::Get().InitState_Spawned));
-	CheckDefaultInitialization();
-}
-
-void UMosesHeroComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
-{
-	// InitState ½Ã½ºÅÛ¿¡¼­ Feature µî·Ï ÇØÁ¦
-	UnregisterInitStateFeature();
-
-	Super::EndPlay(EndPlayReason);
-}
-
-void UMosesHeroComponent::OnActorInitStateChanged(const FActorInitStateChangedParams& Params)
-{
-	const FMosesGameplayTags& InitTags = FMosesGameplayTags::Get();
-
-	// PawnExtension Feature ÀÇ »óÅÂ°¡ º¯ÇßÀ» ¶§¸¸ °ü½É ÀÖÀ½
-	//if (Params.FeatureName == UMosesPawnExtensionComponent::NAME_ActorFeatureName)
-	//{
-	//	// PawnExtension ÀÌ DataInitialized °¡ µÈ ¼ø°£
-	//	if (Params.FeatureState == InitTags.InitState_DataInitialized)
-	//	{
-	//		// ³ªµµ InitState Ã¼ÀÎÀ» ÁøÇà½ÃÅ³ ¼ö ÀÖ´ÂÁö È®ÀÎ
-	//		CheckDefaultInitialization();
-	//	}
-	//}
-}
-
-bool UMosesHeroComponent::CanChangeInitState(
-	UGameFrameworkComponentManager* Manager,
-	FGameplayTag CurrentState,
-	FGameplayTag DesiredState) const
-{
-	check(Manager);
-
-	const FMosesGameplayTags& InitTags = FMosesGameplayTags::Get();
 	APawn* Pawn = GetPawn<APawn>();
-	AMosesPlayerState* MosesPlayerState = GetPlayerState<AMosesPlayerState>();
+	UE_LOG(LogMosesSpawn, Log, TEXT("[Hero] BeginPlay Pawn=%s Local=%d"),
+		*GetNameSafe(Pawn),
+		IsLocalPlayerPawn() ? 1 : 0);
 
-	// ¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡
-	// (¾øÀ½) ¡æ Spawned
-	// ¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡
-	if (!CurrentState.IsValid() && DesiredState == InitTags.InitState_Spawned)
+	// âœ… ë¡œì»¬ í”Œë ˆì´ì–´ë§Œ ì¹´ë©”ë¼/ì…ë ¥ ì„¸íŒ…
+	if (!IsLocalPlayerPawn())
 	{
-		// Pawn ¸¸ Á¸ÀçÇÏ¸é Spawned ·Î °¥ ¼ö ÀÖ´Ù.
-		if (Pawn)
+		return;
+	}
+
+	// 1) ì¹´ë©”ë¼ ëª¨ë“œ ë¸ë¦¬ê²Œì´íŠ¸ ë°”ì¸ë”©
+	if (UMosesCameraComponent* CamComp = UMosesCameraComponent::FindCameraComponent(Pawn))
+	{
+		if (!CamComp->DetermineCameraModeDelegate.IsBound())
 		{
-			return true;
+			CamComp->DetermineCameraModeDelegate.BindUObject(this, &ThisClass::DetermineCameraMode);
+			UE_LOG(LogMosesSpawn, Warning, TEXT("[Hero] Bind DetermineCameraModeDelegate OK Pawn=%s"), *GetNameSafe(Pawn));
 		}
 	}
 
-	// ¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡
-	// Spawned ¡æ DataAvailable
-	// ¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡
-	if (CurrentState == InitTags.InitState_Spawned &&
-		DesiredState == InitTags.InitState_DataAvailable)
-	{
-		// PlayerState °¡ ÁØºñµÇ¾î ÀÖ¾î¾ß DataAvailable ·Î °¥ ¼ö ÀÖ´Ù.
-		if (MosesPlayerState  == nullptr)
-		{
-			return false;
-		}
-
-		return true;
-	}
-
-	// ¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡
-	// DataAvailable ¡æ DataInitialized
-	// ¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡
-	//if (CurrentState == InitTags.InitState_DataAvailable &&
-	//	DesiredState == InitTags.InitState_DataInitialized)
-	//{
-	//	// PlayerState °¡ Á¸ÀçÇØ¾ß ÇÏ°í,
-	//	// PawnExtension Feature °¡ ÀÌ¹Ì DataInitialized ¿¡ µµ´ŞÇØ ÀÖ¾î¾ß ÇÔ.
-	//	return MosesPlayerState &&
-	//		Manager->HasFeatureReachedInitState(
-	//			Pawn,
-	//			UMosesPawnExtensionComponent::NAME_ActorFeatureName,
-	//			InitTags.InitState_DataInitialized);
-	//}
-
-	// ¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡
-	// DataInitialized ¡æ GameplayReady
-	// ¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡
-	if (CurrentState == InitTags.InitState_DataInitialized &&
-		DesiredState == InitTags.InitState_GameplayReady)
-	{
-		// Ãß°¡ Á¶°Ç ¾øÀÌ true
-		return true;
-	}
-
-	return false;
+	// 2) ì…ë ¥ ì´ˆê¸°í™” (í˜„ì¬ëŠ” ë¼ˆëŒ€)
+	InitializePlayerInput();
 }
 
-void UMosesHeroComponent::HandleChangeInitState(
-	UGameFrameworkComponentManager* Manager,
-	FGameplayTag CurrentState,
-	FGameplayTag DesiredState)
+bool UMosesHeroComponent::IsLocalPlayerPawn() const
 {
-	const FMosesGameplayTags& InitTags = FMosesGameplayTags::Get();
-
-	// DataAvailable ¡æ DataInitialized ·Î ¸· ³Ñ¾î°£ ¼ø°£¿¡¸¸ µ¿ÀÛ
-	if (CurrentState == InitTags.InitState_DataAvailable &&
-		DesiredState == InitTags.InitState_DataInitialized)
+	const APawn* Pawn = GetPawn<APawn>();
+	if (!Pawn)
 	{
-		APawn* Pawn = GetPawn<APawn>();
-		AMosesPlayerState* MosesPlayerState = GetPlayerState<AMosesPlayerState>();
-
-		// Pawn + PlayerState ´Â ¹İµå½Ã ÀÖ¾î¾ß ÇÑ´Ù.
-		if (ensure(Pawn && MosesPlayerState) == false)
-		{
-			return;
-		}
-
-		const bool bIsLocallyControlled = Pawn->IsLocallyControlled();
-		const UMosesPawnData* PawnData = nullptr;
-
-		// PawnExtensionComponent Ã£¾Æ¼­ PawnData °¡Á®¿À±â
-		//if (UMosesPawnExtensionComponent* PawnExtComp = UMosesPawnExtensionComponent::FindPawnExtensionComponent(Pawn))
-		//{
-		//	PawnData = PawnExtComp->GetPawnData<UMosesPawnData>();
-
-		//	// ÀÌ ½ÃÁ¡¿¡ AbilitySystem ÃÊ±âÈ­ µîÀ» ÇÒ ¼ö ÀÖÀ½ (ÇöÀç´Â ÁÖ¼® Ã³¸®)
-		//	//PawnExtComp->InitializeAbilitySystem(YJPS->GetYJAbilitySystemComponent(), YJPS);
-		//}
-
-		// ·ÎÄÃ ÇÃ·¹ÀÌ¾î + PawnData Á¸Àç ¡æ Ä«¸Ş¶ó ¸ğµå °áÁ¤ µ¨¸®°ÔÀÌÆ® ¹ÙÀÎµù
-		if (bIsLocallyControlled && PawnData)
-		{
-			// MosesCharacter ¿¡ ºÙ¾î ÀÖ´Â YJCameraComponent ¸¦ Ã£´Â´Ù.
-			//if (UMosesCameraComponent* CameraComponent = UMosesCameraComponent::FindCameraComponent(Pawn))
-			//{
-			//	// Ä«¸Ş¶ó°¡ ÇÊ¿äÇÒ ¶§¸¶´Ù HeroComponent::DetermineCameraMode ¸¦ Á÷Á¢ È£ÃâÇØ¼­
-			//	// ¾î¶² Ä«¸Ş¶ó ¸ğµå¸¦ ¾µÁö PawnData ±â¹İÀ¸·Î °áÁ¤ÇÏ°Ô ÇÑ´Ù.
-			//	CameraComponent->DetermineCameraModeDelegate.BindUObject(
-			//		this, &ThisClass::DetermineCameraMode);
-			//}
-		}
-
-		// ÇÃ·¹ÀÌ¾î ÄÁÆ®·Ñ·¯°¡ ÀÖ°í, Pawn ÀÇ InputComponent °¡ ÁØºñµÇ¾ú´Ù¸é
-		// ½ÇÁ¦ ÀÔ·Â ¹ÙÀÎµù(Å°/¸¶¿ì½º ¸ÅÇÎ)À» ¼öÇà
-		if (AMosesPlayerController* MosesPlayerController = GetController<AMosesPlayerController>())
-		{
-			if (Pawn->InputComponent != nullptr)
-			{
-				//UE_LOG(LogMoses, Warning, TEXT("PawnInput=%s Class=%s Outer=%s IsCDO=%d"),
-		/*			*GetNameSafe(Pawn->InputComponent),
-					*GetNameSafe(Pawn->InputComponent ? Pawn->InputComponent->GetClass() : nullptr),
-					*GetNameSafe(Pawn->InputComponent ? Pawn->InputComponent->GetOuter() : nullptr),
-					Pawn->InputComponent && Pawn->InputComponent->HasAnyFlags(RF_ClassDefaultObject));*/
-
-				if (APlayerController* PC = Cast<APlayerController>(Pawn->GetController()))
-				{
-					//UE_LOG(LogMoses, Warning, TEXT("PCInput=%s Class=%s SamePtr=%d"),
-		/*				*GetNameSafe(PC->InputComponent),
-						*GetNameSafe(PC->InputComponent ? PC->InputComponent->GetClass() : nullptr),
-						PC->InputComponent == Pawn->InputComponent);*/
-				}
-
-				// EnhancedInput ±â¹İÀ¸·Î InputContext + ¾×¼Ç ¹ÙÀÎµù ¼¼ÆÃ
-				InitializePlayerInput(Pawn->InputComponent);
-			}
-		}
+		return false;
 	}
+
+	const AController* Controller = Pawn->GetController();
+	const APlayerController* PC = Cast<APlayerController>(Controller);
+	return PC && PC->IsLocalController();
 }
 
-void UMosesHeroComponent::CheckDefaultInitialization()
+TSubclassOf<UMosesCameraMode> UMosesHeroComponent::DetermineCameraMode() const
 {
-	// Hero Feature ´Â PawnExtension Feature ¿¡ Á¾¼ÓµÇ¾î ÀÖ´Ù°í º¸°í,
-	// ÀÚ½Å¸¸ÀÇ InitState Ã¼ÀÎ(Spawned ¡æ DataAvailable ¡æ DataInitialized ¡æ GameplayReady)À»
-	// Manager ¿¡ °è¼Ó ½ÃµµÇÑ´Ù.
-
-	const FMosesGameplayTags& InitTags = FMosesGameplayTags::Get();
-
-	static const TArray<FGameplayTag> StateChain =
+	const APawn* Pawn = GetPawn<APawn>();
+	if (!Pawn)
 	{
-		InitTags.InitState_Spawned,
-		InitTags.InitState_DataAvailable,
-		InitTags.InitState_DataInitialized,
-		InitTags.InitState_GameplayReady
-	};
+		return nullptr;
+	}
 
-	// CanChangeInitState °á°ú¿¡ µû¶ó ¼ø¼­´ë·Î InitState ¸¦ ¿Ã·ÁÁÜ
-	ContinueInitStateChain(StateChain);
+	const UMosesPawnExtensionComponent* PawnExt = UMosesPawnExtensionComponent::FindPawnExtensionComponent(Pawn);
+	if (!PawnExt)
+	{
+		return nullptr;
+	}
+
+	const UMosesPawnData* PawnData = PawnExt->GetPawnData<UMosesPawnData>();
+	if (!PawnData)
+	{
+		return nullptr;
+	}
+
+	return PawnData->DefaultCameraMode;
 }
 
-void UMosesHeroComponent::InitializePlayerInput(UInputComponent* PlayerInputComponent)
+void UMosesHeroComponent::InitializePlayerInput()
 {
-	check(PlayerInputComponent);
+	// âœ… ë„¤ í”„ë¡œì íŠ¸ëŠ” ì•„ì§ InputConfig ë°”ì¸ë”© ì£¼ì„ì´ ë§ìœ¼ë‹ˆ
+	//    ì—¬ê¸°ì„œëŠ” â€œë¡œì»¬ì—ì„œ ì…ë ¥ ì„¸íŒ…ì„ ì‹œì‘í–ˆë‹¤â€ ì •ë„ë§Œ ë¡œê·¸ë¡œ ë‚¨ê¸°ê³ 
+	//    Day3ì—ì„œ EnhancedInput ë°”ì¸ë”©ì„ ì™„ì„±í•˜ë©´ ë¨.
 
 	const APawn* Pawn = GetPawn<APawn>();
-	if (Pawn == nullptr)
-	{
-		// Pawn ÀÌ ¾ø´Ù¸é ÀÔ·Â ¼¼ÆÃ ºÒ°¡
-		return;
-	}
+	const APlayerController* PC = Pawn ? Cast<APlayerController>(Pawn->GetController()) : nullptr;
 
-	// LocalPlayer ¸¦ ¾ò±â À§ÇØ PlayerController ÇÊ¿ä
-	const APlayerController* PC = GetController<APlayerController>();
-	check(PC);
-
-	// EnhancedInputLocalPlayerSubsystem À» »ç¿ëÇÏ·Á¸é LocalPlayer °´Ã¼°¡ ÇÊ¿ä
-	const ULocalPlayer* LP = PC->GetLocalPlayer();
-	check(LP);
-
-	// MappingContext / PlayerMappableInputConfig ¸¦ °ü¸®ÇÏ´Â Subsystem
-	UEnhancedInputLocalPlayerSubsystem* Subsystem =
-		LP->GetSubsystem<UEnhancedInputLocalPlayerSubsystem>();
-	check(Subsystem);
-
-	// 1) ±âÁ¸¿¡ µî·ÏµÈ ¸ğµç MappingContext Á¦°Å
-	//    - Ä³¸¯ÅÍ ±³Ã¼, ¸ğµå ÀüÈ¯ µî »óÈ²¿¡¼­ ±ò²ûÇÏ°Ô ÃÊ±âÈ­ÇÏ±â À§ÇÔ
-	Subsystem->ClearAllMappings();
-
-	// 2) PawnExtensionComponent ¡æ PawnData ¡æ InputConfig ¼øÀ¸·Î Á¢±Ù
-	const UMosesPawnExtensionComponent* PawnExtComp =
-		UMosesPawnExtensionComponent::FindPawnExtensionComponent(Pawn);
-	if (PawnExtComp == nullptr)
-	{
-		return;
-	}
-
-	const UMosesPawnData* PawnData = PawnExtComp->GetPawnData<UMosesPawnData>();
-	if (PawnData == nullptr)
-	{
-		return;
-	}
-
-	//const UMosesInputConfig* InputConfig = PawnData->InputConfig;
-	//if (InputConfig == nullptr)
-	//{
-	//	return;
-	//}
-
-	const FMosesGameplayTags& GameplayTags = FMosesGameplayTags::Get();
-
-	// 2-1) HeroComponent °¡ µé°í ÀÖ´Â DefaultInputConfigs(PlayerMappableInputConfig ¸®½ºÆ®) ¼øÈ¸
-	//for (const FYJMappableConfigPair& Pair : DefaultInputConfigs)
-	//{
-	//	if (Pair.bShouldActivateAutomatically)
-	//	{
-	//		FModifyContextOptions Options = {};
-	//		// ÀÌ¹Ì ´­·Á ÀÖ´Â Å°¸¦ ¹«½ÃÇÏÁö ¾ÊÀ»Áö ¿©ºÎ
-	//		Options.bIgnoreAllPressedKeysUntilRelease = false;
-
-	//		// ÁÖ¼® ÇØÁ¦ÇÏ¸é PlayerMappableInputConfig ¸¦ ½ÇÁ¦·Î ·Îµå & Subsystem¿¡ µî·Ï
-	//		//Subsystem->AddPlayerMappableConfig(Pair.Config.LoadSynchronous(), Options);
-	//	}
-	//}
-
-	//// 2-2) ¿£ÁøÀÌ »ı¼ºÇÑ UInputComponent ¸¦ ¿ì¸® Ä¿½ºÅÒ UYJInputComponent ·Î Ä³½ºÆÃ
-	//UMosesInputComponent* MosesInputComponent = CastChecked<UMosesInputComponent>(PlayerInputComponent);
-	//{
-	//	// 2-2-1) Ability ÀÔ·Â ÀüÃ¼ ¹ÙÀÎµù (GameplayTag ±â¹İ)
-	//	{
-	//		TArray<uint32> BindHandles;
-	//		YJInputComponent->BindAbilityActions(
-	//			InputConfig,
-	//			this,
-	//			&ThisClass::Input_AbilityInputTagPressed,
-	//			&ThisClass::Input_AbilityInputTagReleased,
-	//			BindHandles);
-	//	}
-
-	//	// 2-2-2) Move ¾×¼Ç ¹ÙÀÎµù (NativeInputActions Áß InputTag_Move)
-	//	YJInputComponent->BindNativeAction(
-	//		InputConfig,
-	//		GameplayTags.InputTag_Move,
-	//		ETriggerEvent::Triggered,
-	//		this,
-	//		&ThisClass::Input_Move,
-	//		false);
-
-	//	// 2-2-3) ¸¶¿ì½º Look ¾×¼Ç ¹ÙÀÎµù (InputTag_Look_Mouse)
-	//	YJInputComponent->BindNativeAction(
-	//		InputConfig,
-	//		GameplayTags.InputTag_Look_Mouse,
-	//		ETriggerEvent::Triggered,
-	//		this,
-	//		&ThisClass::Input_LookMouse,
-	//		false);
-	//}
-
-	// 3) GameFeatureAction_AddInputConfig °°Àº °÷¿¡¼­
-	//    "ÀÌ Pawn Àº ÀÌÁ¦ ÀÔ·Â ¹ÙÀÎµùÀÌ ³¡³µ´Ù" ¶ó´Â È®Àå ÀÌº¥Æ®¸¦ ¹ŞÀ» ¼ö ÀÖµµ·Ï ½ÅÈ£¸¦ º¸³½´Ù.
-	UGameFrameworkComponentManager::SendGameFrameworkComponentExtensionEvent(
-		const_cast<APawn*>(Pawn),
-		NAME_BindInputsNow);
+	UE_LOG(LogMosesSpawn, Log, TEXT("[Hero] InitializePlayerInput Pawn=%s PC=%s"),
+		*GetNameSafe(Pawn),
+		*GetNameSafe(PC));
 }
-
-//void UMosesHeroComponent::Input_Move(const FInputActionValue& InputActionValue)
-//{
-//	APawn* Pawn = GetPawn<APawn>();
-//	AController* Controller = Pawn ? Pawn->GetController() : nullptr;
-//
-//	if (Controller)
-//	{
-//		// EnhancedInput ÀÌ ³Ñ°ÜÁØ 2D ÀÔ·Â °ª (X: ÁÂ/¿ì, Y: Àü/ÈÄ)
-//		const FVector2D Value = InputActionValue.Get<FVector2D>();
-//
-//		// ÀÌµ¿ ¹æÇâÀº Ä«¸Ş¶óÀÇ Yaw ¸¦ ±âÁØÀ¸·Î °è»ê
-//		const FRotator MovementRotation(0.0f, Controller->GetControlRotation().Yaw, 0.0f);
-//
-//		// X °ª ¡æ Ä«¸Ş¶ó ±âÁØ ¿À¸¥ÂÊ/¿ŞÂÊ ÀÌµ¿
-//		if (Value.X != 0.0f)
-//		{
-//			const FVector MovementDirection = MovementRotation.RotateVector(FVector::RightVector);
-//			Pawn->AddMovementInput(MovementDirection, Value.X);
-//		}
-//
-//		// Y °ª ¡æ Ä«¸Ş¶ó ±âÁØ ¾Õ/µÚ ÀÌµ¿
-//		if (Value.Y != 0.0f)
-//		{
-//			const FVector MovementDirection = MovementRotation.RotateVector(FVector::ForwardVector);
-//			Pawn->AddMovementInput(MovementDirection, Value.Y);
-//		}
-//	}
-//}
-
-//void UMosesHeroComponent::Input_LookMouse(const FInputActionValue& InputActionValue)
-//{
-//	APawn* Pawn = GetPawn<APawn>();
-//	if (!Pawn)
-//	{
-//		return;
-//	}
-//
-//	const FVector2D Value = InputActionValue.Get<FVector2D>();
-//
-//	// ¸¶¿ì½º X ¡æ Yaw È¸Àü
-//	if (Value.X != 0.0f)
-//	{
-//		Pawn->AddControllerYawInput(Value.X);
-//	}
-//
-//	// ¸¶¿ì½º Y ¡æ Pitch È¸Àü (º¸Åë À§¾Æ·¡ ¹İÀüÀÌ¹Ç·Î -Y)
-//	if (Value.Y != 0.0f)
-//	{
-//		const double AimInversionValue = -Value.Y;
-//		Pawn->AddControllerPitchInput(AimInversionValue);
-//	}
-//}
-
-void UMosesHeroComponent::Input_AbilityInputTagPressed(FGameplayTag InputTag)
-{
-	if (const APawn* Pawn = GetPawn<APawn>())
-	{
-		//if (const UMosesPawnExtensionComponent* PawnExtComp = UMosesPawnExtensionComponent::FindPawnExtensionComponent(Pawn))
-		//{
-		//	// AbilitySystemComponent °¡ ÀÖ´Ù¸é ¿©±â¼­ InputTag ¸¦ Àü´ŞÇØ ÁÙ ¼ö ÀÖÀ½
-		//	//if (UYJAbilitySystemComponent* YJASC = PawnExtComp->GetYJAbilitySystemComponent())
-		//	//{
-		//	//	YJASC->AbilityInputTagPressed(InputTag);
-		//	//}
-		//}
-	}
-}
-
-void UMosesHeroComponent::Input_AbilityInputTagReleased(FGameplayTag InputTag)
-{
-	if (const APawn* Pawn = GetPawn<APawn>())
-	{
-		//if (const UMosesPawnExtensionComponent* PawnExtComp = UMosesPawnExtensionComponent::FindPawnExtensionComponent(Pawn))
-		//{
-		//	//if (UYJAbilitySystemComponent* YJASC = PawnExtComp->GetYJAbilitySystemComponent())
-		//	//{
-		//	//	YJASC->AbilityInputTagReleased(InputTag);
-		//	//}
-		//}
-	}
-}
-
-
-

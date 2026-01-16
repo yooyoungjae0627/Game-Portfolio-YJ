@@ -1,3 +1,7 @@
+// ============================================================================
+// MosesPlayerController.h
+// ============================================================================
+
 #pragma once
 
 #include "CoreMinimal.h"
@@ -10,21 +14,14 @@ class AMosesPlayerState;
 class ACameraActor;
 
 enum class EMosesRoomJoinResult : uint8;
-enum class EDialogueCommandType : uint8;
-enum class EDialogueFlowState : uint8;
-enum class EGamePhase : uint8;
 
-UENUM()
-enum class ELobbyDialogueEntryType : uint8
-{
-	RulesView,      // 방 무관
-	InRoomDialogue  // 방 필요
-};
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnLobbyNicknameChanged, const FString&, NewNick);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnJoinedRoom, EMosesRoomJoinResult, Result, const FGuid&, RoomId);
 
 /**
  * AMosesPlayerController
  *
- * 역할(요약)
+ * 책임(요약)
  * - UI/입력 이벤트를 서버 권한 로직으로 전달하는 "RPC 진입점"
  * - (로비 컨텍스트에서만) 로비 UI 활성화 + 프리뷰 카메라(ViewTarget) 강제
  * - 디버그: Exec 커맨드로 Travel 테스트 (클라는 서버 RPC로 우회)
@@ -45,20 +42,33 @@ class UE5_MULTI_SHOOTER_API AMosesPlayerController : public APlayerController
 public:
 	AMosesPlayerController(const FObjectInitializer& ObjectInitializer = FObjectInitializer::Get());
 
-	// ---------------------------
-	// Dev Exec Helpers
-	// ---------------------------
+public:
+	virtual void ClientRestart_Implementation(APawn* NewPawn) override;
 
+
+	/*====================================================
+	= Debug Exec
+	====================================================*/
+	UFUNCTION(Exec)
+	void gas_DumpTags();
+
+	UFUNCTION(Exec)
+	void gas_DumpAttr();
+
+public:
+	/*====================================================
+	= Dev Exec Helpers
+	====================================================*/
 	UFUNCTION(Exec)
 	void TravelToMatch_Exec();
 
 	UFUNCTION(Exec)
 	void TravelToLobby_Exec();
 
-	// ---------------------------
-	// Client → Server RPC (Lobby)
-	// ---------------------------
-
+public:
+	/*====================================================
+	= Client → Server RPC (Lobby)
+	====================================================*/
 	UFUNCTION(Server, Reliable)
 	void Server_CreateRoom(const FString& RoomTitle, int32 MaxPlayers);
 
@@ -68,7 +78,7 @@ public:
 	UFUNCTION(Server, Reliable)
 	void Server_LeaveRoom();
 
-	/** Ready는 SetReady만 남긴다. 토글은 UI에서 bool로 만들어 호출 */
+	/** Ready 토글은 UI에서 bool로 만들어 전달 */
 	UFUNCTION(Server, Reliable)
 	void Server_SetReady(bool bInReady);
 
@@ -79,91 +89,84 @@ public:
 	UFUNCTION(Server, Reliable)
 	void Server_SetLobbyNickname(const FString& Nick);
 
-
 	UFUNCTION(Server, Reliable)
 	void Server_SendLobbyChat(const FString& Text);
 
-	// ---------------------------
-	// JoinRoom Result (Server → Client)
-	// ---------------------------
-
+public:
+	/*====================================================
+	= JoinRoom Result (Server → Client)
+	====================================================*/
 	UFUNCTION(Client, Reliable)
 	void Client_JoinRoomResult(EMosesRoomJoinResult Result, const FGuid& RoomId);
 
-	// ---------------------------
-	// Dialogue Gate (Client → Server)
-	// ---------------------------
-
-	UFUNCTION(Server, Reliable)
-	void Server_RequestEnterLobbyDialogue(ELobbyDialogueEntryType EntryType);
-
-	UFUNCTION(Server, Reliable)
-	void Server_RequestExitLobbyDialogue();
-
-	UFUNCTION(Server, Unreliable)
-	void Server_SubmitDialogueCommand(EDialogueCommandType Type, uint16 ClientCommandSeq);
-
-	UFUNCTION(Server, Reliable)
-	void Server_DialogueAdvanceLine();
-
-	UFUNCTION(Server, Reliable)
-	void Server_DialogueSetFlowState(EDialogueFlowState NewState);
-
-	// ---------------------------
-	// Travel Guard (Dev Exec → Server Only)
-	// ---------------------------
-
+public:
+	/*====================================================
+	= Travel Guard (Dev Exec → Server Only)
+	====================================================*/
 	UFUNCTION(Server, Reliable)
 	void Server_TravelToMatch();
 
 	UFUNCTION(Server, Reliable)
 	void Server_TravelToLobby();
 
+public:
+	/*====================================================
+	= Enter Lobby / Character Select
+	====================================================*/
 	UFUNCTION(Server, Reliable)
 	void Server_RequestEnterLobby(const FString& Nickname);
 
 	UFUNCTION(Server, Reliable)
 	void Server_SetSelectedCharacterId(int32 SelectedId);
 
-
+public:
+	/*====================================================
+	= Local helpers (UI)
+	====================================================*/
+	UFUNCTION(BlueprintCallable, Category = "Lobby")
 	void SetPendingLobbyNickname_Local(const FString& Nick);
 
+public:
+	/*====================================================
+	= Delegates for Blueprint/UI
+	====================================================*/
+	UPROPERTY(BlueprintAssignable, Category = "Lobby")
+	FOnLobbyNicknameChanged OnLobbyNicknameChanged;
 
-	UFUNCTION(Exec)
-	void Moses_TestEnterRulesView();
-
-	UFUNCTION(Exec)
-	void Moses_TestExitRulesView();
-
-	// Count만큼 "답변 시작"을 강제로 트리거(SetAnswer 호출)
-	// => GestureDeck back-to-back, 재셔플 등을 빠르게 검증 가능
-	UFUNCTION(Exec)
-	void Moses_TestGesture(int32 Count = 1);
-
-	// 임의의 텍스트를 중앙 자막에 표시 + 제스처 1회
-	UFUNCTION(Exec)
-	void Moses_TestSetAnswer(int32 AnswerIndex = 0, const FString& Text = TEXT("테스트 답변입니다."));
-
+	UPROPERTY(BlueprintAssignable, Category = "Lobby")
+	FOnJoinedRoom OnLobbyJoinedRoom;
 
 protected:
-	// ---------------------------
-	// Lifecycle (Local UI / Camera)
-	// ---------------------------
-
+	/*====================================================
+	= Lifecycle (Local UI / Camera)
+	====================================================*/
 	virtual void BeginPlay() override;
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 	virtual void OnPossess(APawn* InPawn) override;
 	virtual void OnRep_PlayerState() override;
 
+	/*====================================================
+	= Replication
+	====================================================*/
+	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
+
 private:
+	/*====================================================
+	= Pending nickname send (Local-only)
+	====================================================*/
 	void TrySendPendingLobbyNickname_Local();
 
+private:
+	/*====================================================
+	= Server-side Travel helpers
+	====================================================*/
 	void DoServerTravelToMatch();
 	void DoServerTravelToLobby();
 
-	// ---------------------------
-	// Lobby Context / Camera / UI
-	// ---------------------------
-
+private:
+	/*====================================================
+	= Lobby Context / Camera / UI (Local-only)
+	====================================================*/
 	bool IsLobbyContext() const;
 	void ApplyLobbyPreviewCamera();
 
@@ -173,18 +176,17 @@ private:
 	void ApplyLobbyInputMode_LocalOnly();
 	void RestoreNonLobbyInputMode_LocalOnly();
 
-	// ---------------------------
-	// Shared getters (null/log guard)
-	// ---------------------------
-
+private:
+	/*====================================================
+	= Shared getters (null/log guard)
+	====================================================*/
 	AMosesLobbyGameState* GetLobbyGameStateChecked_Log(const TCHAR* Caller) const;
 	AMosesPlayerState* GetMosesPlayerStateChecked_Log(const TCHAR* Caller) const;
 
 private:
-	// ---------------------------
-	// Lobby Preview Camera 정책 변수들
-	// ---------------------------
-
+	/*====================================================
+	= Lobby Preview Camera policy vars
+	====================================================*/
 	UPROPERTY(EditDefaultsOnly, Category = "Lobby|Camera")
 	FName LobbyPreviewCameraTag = TEXT("LobbyPreviewCamera");
 
@@ -193,6 +195,23 @@ private:
 
 	FTimerHandle LobbyPreviewCameraTimerHandle;
 
+private:
+	/*====================================================
+	= Local pending nickname
+	====================================================*/
+	UPROPERTY(Transient)
 	FString PendingLobbyNickname_Local;
+
+	UPROPERTY(Transient)
 	bool bPendingLobbyNicknameSend_Local = false;
+
+private:
+	/*====================================================
+	= Replicated lobby-related state (주의: PS와 중복되면 안 됨)
+	====================================================*/
+	UPROPERTY(Replicated)
+	int32 SelectedCharacterId = INDEX_NONE;
+
+	UPROPERTY(Replicated)
+	bool bRep_IsReady = false;
 };

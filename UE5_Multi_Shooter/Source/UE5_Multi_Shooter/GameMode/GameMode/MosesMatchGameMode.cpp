@@ -2,7 +2,9 @@
 
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
 #include "UE5_Multi_Shooter/Player/MosesPlayerState.h"
-
+#include "UE5_Multi_Shooter/Character/MosesCharacter.h"
+#include "UE5_Multi_Shooter/Player/MosesPlayerController.h"
+#include "UE5_Multi_Shooter/Character/Data/MosesPawnData.h"
 #include "Engine/World.h"
 #include "TimerManager.h"
 #include "Kismet/GameplayStatics.h"
@@ -11,14 +13,16 @@
 #include "GameFramework/PlayerController.h"
 #include "GameFramework/PlayerStart.h"
 
-// =========================================================
-// AMosesMatchGameMode
-// =========================================================
 
 AMosesMatchGameMode::AMosesMatchGameMode()
 {
-	// 왕복 Travel + PS/PC 유지 검증을 위해 권장
 	bUseSeamlessTravel = true;
+
+	// ✅ 매치에서도 PS/PC 클래스를 강제로 고정
+	PlayerStateClass = AMosesPlayerState::StaticClass();
+	PlayerControllerClass = AMosesPlayerController::StaticClass();
+
+	UE_LOG(LogMosesSpawn, Warning, TEXT("[MatchGM] DefaultPawnClass is NOT hard-fixed. Using SpawnDefaultPawnFor override."));
 }
 
 // =========================================================
@@ -62,6 +66,20 @@ void AMosesMatchGameMode::BeginPlay()
 
 		UE_LOG(LogMosesSpawn, Warning, TEXT("[MatchGM] AutoReturnToLobby in %.2f sec"), AutoReturnToLobbySeconds);
 	}
+
+	// ✅ Travel로 들어온 경우, BeginPlay 시점에 이미 PC가 존재할 수 있다.
+	// 이때도 Pawn이 없으면 붙여준다.
+	if (HasAuthority())
+	{
+		for (FConstPlayerControllerIterator It = GetWorld()->GetPlayerControllerIterator(); It; ++It)
+		{
+			if (APlayerController* PC = It->Get())
+			{
+				SpawnAndPossessMatchPawn(PC);
+			}
+		}
+	}
+
 }
 
 void AMosesMatchGameMode::PostLogin(APlayerController* NewPlayer)
@@ -77,6 +95,12 @@ void AMosesMatchGameMode::PostLogin(APlayerController* NewPlayer)
 		*GetNameSafe(PS),
 		PS ? PS->GetPlayerId() : -1,
 		PS ? *PS->GetPlayerName() : TEXT("None"));
+
+	// ✅ 여기서 Pawn/Possess 보장
+	if (HasAuthority())
+	{
+		SpawnAndPossessMatchPawn(NewPlayer);
+	}
 }
 
 void AMosesMatchGameMode::Logout(AController* Exiting)
@@ -230,6 +254,54 @@ void AMosesMatchGameMode::GetSeamlessTravelActorList(bool bToTransition, TArray<
 		bToTransition, ActorList.Num());
 }
 
+APawn* AMosesMatchGameMode::SpawnDefaultPawnFor_Implementation(AController* NewPlayer, AActor* StartSpot)
+{
+	// 1) 기본 방어
+	if (!HasAuthority() || !NewPlayer || !StartSpot)
+	{
+		return Super::SpawnDefaultPawnFor_Implementation(NewPlayer, StartSpot);
+	}
+
+	// 2) PawnClass 결정: PawnData -> PawnClass (없으면 Super fallback)
+	TSubclassOf<APawn> PawnClassToSpawn = nullptr;
+
+	// ✅ 너 프로젝트 구조상 PawnData를 어디서 가져올지 1개로 고정해야 함.
+	//    지금 가장 빠른 방법: GameMode에 UPROPERTY로 PawnData를 직접 넣는 것.
+	if (MatchPawnData)
+	{
+		PawnClassToSpawn = MatchPawnData->PawnClass;
+	}
+
+	if (!PawnClassToSpawn)
+	{
+		UE_LOG(LogMosesSpawn, Warning, TEXT("[MatchGM] SpawnDefaultPawnFor fallback -> Super (No MatchPawnData or PawnClass)"));
+		return Super::SpawnDefaultPawnFor_Implementation(NewPlayer, StartSpot);
+	}
+
+	// 3) 스폰 트랜스폼
+	const FTransform SpawnTM = StartSpot->GetActorTransform();
+
+	FActorSpawnParameters Params;
+	Params.Owner = NewPlayer;
+	Params.Instigator = Cast<APawn>(NewPlayer->GetPawn());
+	Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn;
+
+	APawn* NewPawn = GetWorld()->SpawnActor<APawn>(PawnClassToSpawn, SpawnTM, Params);
+	if (!NewPawn)
+	{
+		UE_LOG(LogMosesSpawn, Error, TEXT("[MatchGM] SpawnActor FAILED PawnClass=%s"), *GetNameSafe(PawnClassToSpawn));
+		return nullptr;
+	}
+
+	UE_LOG(LogMosesSpawn, Warning, TEXT("[MatchGM] Spawned Pawn=%s Class=%s Start=%s"),
+		*GetNameSafe(NewPawn),
+		*GetNameSafe(PawnClassToSpawn),
+		*GetNameSafe(StartSpot));
+
+	return NewPawn;
+}
+
+
 void AMosesMatchGameMode::HandleSeamlessTravelPlayer(AController*& C)
 {
 	Super::HandleSeamlessTravelPlayer(C);
@@ -237,6 +309,8 @@ void AMosesMatchGameMode::HandleSeamlessTravelPlayer(AController*& C)
 	APlayerController* PC = Cast<APlayerController>(C);
 	if (PC)
 	{
+		SpawnAndPossessMatchPawn(PC);
+
 		if (AMosesPlayerState* PS = PC->GetPlayerState<AMosesPlayerState>())
 		{
 			PS->DOD_PS_Log(this, TEXT("GM:HandleSeamlessTravelPlayer"));
@@ -402,4 +476,80 @@ void AMosesMatchGameMode::DumpReservedStarts(const TCHAR* Where) const
 			*GetNameSafe(PC),
 			*GetNameSafe(PS));
 	}
+}
+
+bool AMosesMatchGameMode::ShouldRespawnPawn(APlayerController* PC) const
+{
+	// 정책(최소):
+	// - Pawn이 없으면 스폰 필요
+	// - Pawn이 있는데 PendingKill/Destroyed면 스폰 필요
+	// - Pawn이 있는데 Match용 캐릭터가 아니면(로비 Dummy 등) 스폰 필요
+	if (!PC)
+	{
+		return false;
+	}
+
+	APawn* ExistingPawn = PC->GetPawn();
+	if (!IsValid(ExistingPawn))
+	{
+		return true;
+	}
+
+	// 로비에서 DummyPawn을 쓴다면 여기서 타입 체크로 교체 가능
+	// 예: if (!ExistingPawn->IsA(AMosesCharacter::StaticClass())) return true;
+
+	return false;
+}
+
+void AMosesMatchGameMode::SpawnAndPossessMatchPawn(APlayerController* PC)
+{
+	if (!HasAuthority() || !PC)
+	{
+		return;
+	}
+
+	// 이미 유효한 Pawn이 있고 정책상 재스폰이 아니면 종료
+	if (!ShouldRespawnPawn(PC))
+	{
+		UE_LOG(LogMosesSpawn, Verbose, TEXT("[MatchGM] SpawnAndPossess SKIP (AlreadyHasPawn) PC=%s Pawn=%s"),
+			*GetNameSafe(PC), *GetNameSafe(PC->GetPawn()));
+		return;
+	}
+
+	// 기존 Pawn이 있으면 정리(선택)
+	if (APawn* OldPawn = PC->GetPawn())
+	{
+		UE_LOG(LogMosesSpawn, Warning, TEXT("[MatchGM] UnPossess old pawn PC=%s OldPawn=%s"),
+			*GetNameSafe(PC), *GetNameSafe(OldPawn));
+
+		PC->UnPossess();
+
+		// 필요하면 Destroy까지 (프로젝트 정책에 따라)
+		OldPawn->Destroy();
+	}
+
+	// ✅ PlayerStart 선택(네 ChoosePlayerStart_Implementation을 타게 됨)
+	AActor* StartSpot = ChoosePlayerStart(PC);
+	if (!StartSpot)
+	{
+		UE_LOG(LogMosesSpawn, Warning, TEXT("[MatchGM] Spawn FAIL (NoStartSpot) PC=%s"), *GetNameSafe(PC));
+		return;
+	}
+
+	// ✅ 기본 Pawn 스폰(GameModeBase 내부 유틸 사용)
+	APawn* NewPawn = SpawnDefaultPawnFor(PC, StartSpot);
+	if (!NewPawn)
+	{
+		UE_LOG(LogMosesSpawn, Error, TEXT("[MatchGM] Spawn FAIL (SpawnDefaultPawnFor returned null) PC=%s"),
+			*GetNameSafe(PC));
+		return;
+	}
+
+	// ✅ Possess (여기서 AMosesCharacter::PossessedBy() 호출됨)
+	PC->Possess(NewPawn);
+
+	UE_LOG(LogMosesSpawn, Warning, TEXT("[MatchGM] Possess OK PC=%s Pawn=%s Start=%s"),
+		*GetNameSafe(PC),
+		*GetNameSafe(NewPawn),
+		*GetNameSafe(StartSpot));
 }
