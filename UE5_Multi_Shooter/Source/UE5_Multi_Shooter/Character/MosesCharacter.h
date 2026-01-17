@@ -24,7 +24,9 @@ protected:
 
 public:
 	virtual void Tick(float DeltaTime) override;
-	virtual void SetupPlayerInputComponent(UInputComponent* PlayerInputComponent) override;
+
+	/** [FIX] 입력 바인딩을 여기에서 확정한다. (엔진이 준비된 InputComponent를 전달함) */
+	virtual void SetupPlayerInputComponent(UInputComponent* PlayerInputComponent) override; // [FIX]
 
 	virtual void PossessedBy(AController* NewController) override;
 	virtual void UnPossessed() override;

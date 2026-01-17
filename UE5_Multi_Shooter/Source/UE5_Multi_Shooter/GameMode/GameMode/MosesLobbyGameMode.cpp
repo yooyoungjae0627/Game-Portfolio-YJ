@@ -213,6 +213,16 @@ void AMosesLobbyGameMode::HandleSelectCharacterRequest(AMosesPlayerController* R
 	PS->DOD_PS_Log(this, TEXT("Lobby:AfterSelectCharacter"));
 }
 
+APawn* AMosesLobbyGameMode::SpawnDefaultPawnFor_Implementation(AController* NewPlayer, AActor* StartSpot) // [FIX]
+{
+	// [FIX] 로비는 PreviewActor 기반 UI만 사용한다. Pawn 스폰 금지.
+	UE_LOG(LogMosesSpawn, Warning, TEXT("[LobbyGM] SpawnDefaultPawnFor BLOCKED PC=%s Start=%s"),
+		*GetNameSafe(NewPlayer),
+		*GetNameSafe(StartSpot));
+
+	return nullptr;
+}
+
 // =========================================================
 // Helpers (checked getters)
 // =========================================================

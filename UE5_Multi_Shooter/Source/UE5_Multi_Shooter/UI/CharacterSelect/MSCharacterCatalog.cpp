@@ -1,8 +1,6 @@
-// Fill out your copyright notice in the Description page of Project Settings.
+#include "UE5_Multi_Shooter/UI/CharacterSelect/MSCharacterCatalog.h"
 
-#include "MSCharacterCatalog.h"
-
-bool UMSCharacterCatalog::FindById(const FName InId, FMSCharacterEntry& OutEntry) const
+bool UMSCharacterCatalog::FindById(FName InId, FMSCharacterEntry& OutEntry) const
 {
 	for (const FMSCharacterEntry& Entry : Entries)
 	{
@@ -15,4 +13,13 @@ bool UMSCharacterCatalog::FindById(const FName InId, FMSCharacterEntry& OutEntry
 	return false;
 }
 
+bool UMSCharacterCatalog::FindByIndex(int32 InIndex, FMSCharacterEntry& OutEntry) const
+{
+	if (!Entries.IsValidIndex(InIndex))
+	{
+		return false;
+	}
 
+	OutEntry = Entries[InIndex];
+	return true;
+}

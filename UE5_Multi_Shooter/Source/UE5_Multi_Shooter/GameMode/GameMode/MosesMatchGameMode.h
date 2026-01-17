@@ -7,11 +7,18 @@ class APlayerStart;
 class AController;
 class APlayerController;
 class UMosesPawnData;
+class UMSCharacterCatalog;
 
 /**
- * Match 전용 GameMode
- * - 매치 규칙 + 로비 복귀 Travel + 디버그 로그
- * - PlayerStart 중복 방지(예약/해제)
+ * AMosesMatchGameMode
+ *
+ * [목표]
+ * - Lobby에서 서버가 확정한 PlayerState.SelectedCharacterId를 기반으로
+ *   MatchLevel에서 "선택된 캐릭터 PawnClass"를 Spawn/Possess 한다.
+ *
+ * [정책]
+ * - 서버 권위: PawnClass 선택도 서버에서 결정한다.
+ * - 클라는 결과(스폰된 Pawn 및 Possess)를 replication으로 받는다.
  */
 UCLASS()
 class UE5_MULTI_SHOOTER_API AMosesMatchGameMode : public AMosesGameModeBase
@@ -46,63 +53,56 @@ protected:
 	virtual void HandleSeamlessTravelPlayer(AController*& C) override;
 	virtual void GetSeamlessTravelActorList(bool bToTransition, TArray<AActor*>& ActorList) override;
 
+	/** [DAY2-MOD] SpawnDefaultPawnFor는 "선택된 PawnClass"로 Spawn 되도록 보장한다. */
 	virtual APawn* SpawnDefaultPawnFor_Implementation(AController* NewPlayer, AActor* StartSpot) override;
 
-private:
-	/** 매치에서 PC에게 Pawn을 스폰하고 빙의시키는 단일 함수(정책 고정) */
-	void SpawnAndPossessMatchPawn(APlayerController* PC);
+	/** 컨트롤러별 기본 PawnClass 결정(SelectedId -> Catalog) */
+	virtual UClass* GetDefaultPawnClassForController_Implementation(AController* InController) override;
 
-	/** 이미 유효한 Pawn이 있으면 재사용할지/폐기할지 정책 */
+private:
+	void SpawnAndPossessMatchPawn(APlayerController* PC);
 	bool ShouldRespawnPawn(APlayerController* PC) const;
 
-
 private:
-	/*====================================================
-	= Internal helpers
-	====================================================*/
 	FString GetLobbyMapURL() const;
 	void DumpPlayerStates(const TCHAR* Prefix) const;
-
-	/** ✅ DoD 고정 포맷 덤프(AMosesPlayerState만) */
 	void DumpAllDODPlayerStates(const TCHAR* Where) const;
 
-	/** 서버에서만 Travel하도록 방어 */
 	bool CanDoServerTravel() const;
 
-	/** Match에서 사용할 PlayerStart 목록 수집(Tag=Match) */
 	void CollectMatchPlayerStarts(TArray<APlayerStart*>& OutStarts) const;
-
-	/** 이미 점유된 Start를 제외한 후보만 만들기 */
 	void FilterFreeStarts(const TArray<APlayerStart*>& InAll, TArray<APlayerStart*>& OutFree) const;
-
-	/** PC에 PlayerStart를 예약(중복 방지) */
 	void ReserveStartForController(AController* Player, APlayerStart* Start);
-
-	/** PC에 예약된 PlayerStart 해제 */
 	void ReleaseReservedStart(AController* Player);
-
-	/** 디버그: 현재 예약 상태 덤프 */
 	void DumpReservedStarts(const TCHAR* Where) const;
 
 private:
-	/*====================================================
-	= Timers
-	====================================================*/
 	FTimerHandle AutoReturnTimerHandle;
 	void HandleAutoReturn();
 
 private:
-	/*====================================================
-	= PlayerStart reservation (duplicate prevention)
-	====================================================*/
-	// 중복 방지: 이미 할당된 PlayerStart 추적
 	UPROPERTY()
 	TSet<TWeakObjectPtr<APlayerStart>> ReservedPlayerStarts;
 
-	// PC별 할당된 Start (해제용)
 	UPROPERTY()
 	TMap<TWeakObjectPtr<AController>, TWeakObjectPtr<APlayerStart>> AssignedStartByController;
 
+	/**
+	 * MatchPawnData
+	 * - [주의] PawnClass 선택은 SelectedId/Catalog가 "단일 진실"이다.
+	 * - PawnData는 Pawn 자체(각 캐릭터 BP)의 PawnExtensionComponent에서 들고 가는 구조가 이미 존재하므로,
+	 *   여기 GameMode의 PawnData는 Day2 스폰 결정에는 쓰지 않는다.
+	 */
 	UPROPERTY(EditDefaultsOnly, Category = "Match|Pawn")
-	TObjectPtr<UMosesPawnData> MatchPawnData;
+	TObjectPtr<UMosesPawnData> MatchPawnData = nullptr; // (유지: 필요시 확장)
+
+private:
+	UClass* ResolvePawnClassFromSelectedId(int32 SelectedId) const;
+
+private:
+	UPROPERTY(EditDefaultsOnly, Category = "Moses|CharacterSelect")
+	TObjectPtr<UMSCharacterCatalog> CharacterCatalog = nullptr;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Moses|CharacterSelect")
+	TSubclassOf<APawn> FallbackPawnClass;
 };

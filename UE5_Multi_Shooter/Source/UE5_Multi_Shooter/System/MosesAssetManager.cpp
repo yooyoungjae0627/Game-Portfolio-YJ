@@ -1,10 +1,4 @@
 ﻿#include "MosesAssetManager.h"
-
-//#include "Misc/CommandLine.h"
-//#include "Misc/Parse.h"
-//#include "HAL/PlatformTime.h"
-//#include "Misc/ScopeLock.h"
-
 #include "UE5_Multi_Shooter/GAS/MosesGameplayTags.h"
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
 
@@ -61,7 +55,8 @@ UObject* UMosesAssetManager::SynchronousLoadAsset(const FSoftObjectPath& AssetPa
 	// 옵션: 로딩 시간 측정 로그
 	const double Start = FPlatformTime::Seconds();
 
-	checkf(UAssetManager::IsValid(), TEXT("AssetManager must be valid when loading assets: %s"), *AssetPath.ToString());
+	// [MOD] UE5: AssetManager는 항상 Construct되므로 IsValid() 대신 IsInitialized() 사용 (C4996 경고 방지)
+	checkf(UAssetManager::IsInitialized(), TEXT("AssetManager must be initialized when loading assets: %s"), *AssetPath.ToString());
 
 	UObject* Loaded = UAssetManager::GetStreamableManager().LoadSynchronous(AssetPath);
 
@@ -75,6 +70,7 @@ UObject* UMosesAssetManager::SynchronousLoadAsset(const FSoftObjectPath& AssetPa
 
 	return Loaded;
 }
+
 
 void UMosesAssetManager::AddLoadedAsset(const UObject* Asset)
 {

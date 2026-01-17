@@ -1,48 +1,57 @@
-// Fill out your copyright notice in the Description page of Project Settings.
+ï»¿#pragma once
 
-#pragma once
-
-#include "CoreMinimal.h"
-#include "Blueprint/UserWidget.h"
+#include "Engine/DataAsset.h"
+#include "UObject/SoftObjectPtr.h"
 #include "MSCharacterCatalog.generated.h"
 
+class AMosesCharacter;
+
 /**
- * Ä³¸¯ÅÍ ¼±ÅÃ¿ë µ¥ÀÌÅÍ 1°³
- * - "¼±ÅÃ ID"´Â ¼­¹ö¿¡ º¸³»´Â ÃÖ¼Ò ´ÜÀ§(¼­¹ö ±ÇÇÑ È®Á¤ Å°)
- * - ÇÁ¸®ºä´Â SkeletalMesh¸¸ ÀÖ¾îµµ ÃæºĞ (ÃßÈÄ AnimBP/¾ÆÀÌµé/½ºÅ² È®Àå °¡´É)
+ * FMSCharacterEntry
+ *
+ * [ì—­í• ]
+ * - ë¡œë¹„: CharacterId ê¸°ë°˜ìœ¼ë¡œ ì„ íƒ/í”„ë¦¬ë·°
+ * - ë§¤ì¹˜: SelectedCharacterId(index) ê¸°ë°˜ìœ¼ë¡œ PawnClassë¥¼ ìŠ¤í°
+ *
+ * [ì¤‘ìš”]
+ * - PawnClassëŠ” AMosesCharacter íŒŒìƒ BP(ìºë¦­í„° 2ì¢…)ë¥¼ ì§€ì •í•´ì•¼ í•œë‹¤.
+ * - SoftClassPtrë¥¼ ì‚¬ìš©í•˜ë©´ íŒ¨í‚¤ì§€ ë¡œë”©/ì°¸ì¡° ì˜ì¡´ì„ ì™„í™”í•  ìˆ˜ ìˆë‹¤.
  */
+
 USTRUCT(BlueprintType)
 struct FMSCharacterEntry
 {
 	GENERATED_BODY()
 
-	UPROPERTY(EditAnywhere, BlueprintReadOnly)
+public:
+	/** UI/ë¡œê·¸/ì„ íƒìš© ì‹ë³„ì (ì˜ˆ: Hero_1, Hero_2) */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
 	FName CharacterId;
 
-	UPROPERTY(EditAnywhere, BlueprintReadOnly)
-	FText DisplayName;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, meta = (MultiLine = true))
-	FText Description;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly)
-	TObjectPtr<USkeletalMesh> PreviewMesh = nullptr;
+	/** âœ… MatchLevelì—ì„œ ì‹¤ì œë¡œ ìŠ¤í°í•  ìºë¦­í„° Pawn BP (AMosesCharacter íŒŒìƒ) */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
+	TSoftClassPtr<AMosesCharacter> PawnClass;
 };
 
 /**
- * Character Select¿¡¼­ »ç¿ëÇÒ "Ä³¸¯ÅÍ ¸ñ·Ï" ¼Ò½º
- * - WBP/WidgetÀº ÀÌ Catalog¸¦ ÀĞ¾î¼­ ÁÂ/¿ì ÀÎµ¦½º·Î µ¹¸°´Ù.
+ * UMSCharacterCatalog (DataAsset)
  */
+
 UCLASS(BlueprintType)
 class UE5_MULTI_SHOOTER_API UMSCharacterCatalog : public UDataAsset
 {
 	GENERATED_BODY()
 
 public:
+	/** CharacterId(FName)ë¡œ ì—”íŠ¸ë¦¬ ì¡°íšŒ: ë¡œë¹„ í”„ë¦¬ë·°/ì„ íƒì— ì‚¬ìš© */
+	bool FindById(FName InId, FMSCharacterEntry& OutEntry) const;
+
+	/** SelectedCharacterId(index)ë¡œ ì—”íŠ¸ë¦¬ ì¡°íšŒ: ë§¤ì¹˜ ìŠ¤í°ì— ì‚¬ìš© */
+	bool FindByIndex(int32 InIndex, FMSCharacterEntry& OutEntry) const;
+
 	const TArray<FMSCharacterEntry>& GetEntries() const { return Entries; }
-	bool FindById(const FName InId, FMSCharacterEntry& OutEntry) const;
 
 private:
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, meta = (AllowPrivateAccess = "true"))
 	TArray<FMSCharacterEntry> Entries;
 };

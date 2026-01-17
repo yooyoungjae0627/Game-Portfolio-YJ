@@ -6,13 +6,20 @@
 
 class UInputMappingContext;
 class UInputAction;
-class UMosesInputComponent;
+class UEnhancedInputComponent; // [FIX] 표준 EnhancedInputComponent 사용
 class UMosesCameraMode;
 
 /**
  * UMosesHeroComponent
- * - 로컬 플레이어 전용: Enhanced Input MappingContext 추가 + InputAction 바인딩
- * - BeginPlay 시점에 InputComponent가 아직 준비되지 않을 수 있으므로, 타이머로 재시도한다. // [MOD]
+ * - 로컬 플레이어 전용:
+ *   1) CameraModeDelegate 바인딩
+ *   2) Enhanced Input MappingContext 추가(1회)
+ *   3) InputAction 바인딩 (Pawn::SetupPlayerInputComponent에서 호출)
+ *
+ * [FIX]
+ * - BindAction 대상은 UMosesInputComponent(커스텀) 강제가 아니라
+ *   UEnhancedInputComponent(엔진 표준)를 사용한다.
+ *   -> "PawnInputComponent0"로 들어오는 케이스에서도 입력 바인딩이 안정적으로 동작.
  */
 UCLASS(ClassGroup = (Moses), meta = (BlueprintSpawnableComponent))
 class UE5_MULTI_SHOOTER_API UMosesHeroComponent : public UActorComponent
@@ -21,6 +28,10 @@ class UE5_MULTI_SHOOTER_API UMosesHeroComponent : public UActorComponent
 
 public:
 	UMosesHeroComponent(const FObjectInitializer& ObjectInitializer);
+
+public:
+	/** Pawn::SetupPlayerInputComponent에서 호출 */
+	void SetupInputBindings(UInputComponent* PlayerInputComponent);
 
 protected:
 	virtual void BeginPlay() override;
@@ -32,10 +43,9 @@ private:
 	// --- Camera ---
 	TSubclassOf<UMosesCameraMode> DetermineCameraMode() const;
 
-	// --- Input Init ---
-	void InitializePlayerInput();                 // 기존 유지
-	void TryInitializePlayerInput();              // [MOD] 재시도 래퍼
-	void ScheduleRetryInitializePlayerInput();    // [MOD] 타이머 재시도
+	// --- Input ---
+	void AddMappingContextOnce();
+	void BindInputActions(UInputComponent* PlayerInputComponent);
 
 	// --- Input Handlers ---
 	void HandleMove(const FInputActionValue& Value);
@@ -66,15 +76,6 @@ private:
 
 private:
 	// ---------------- Runtime Guards ----------------
-	bool bMappingContextAdded = false; // [MOD] AddMappingContext 1회 보장
-	bool bInputBound = false;          // [MOD] BindAction 1회 보장
-
-	// ---------------- Retry (BeginPlay 타이밍 문제 방지) ----------------
-	int32 InputInitAttempts = 0;             // [MOD]
-	UPROPERTY()
-	float InputInitRetryIntervalSec = 0.05f; // [MOD] 50ms
-	UPROPERTY()
-	int32 InputInitMaxAttempts = 40;         // [MOD] 40회면 2초 정도 재시도
-
-	FTimerHandle InputInitRetryTimerHandle;  // [MOD]
+	bool bMappingContextAdded = false;
+	bool bInputBound = false;
 };

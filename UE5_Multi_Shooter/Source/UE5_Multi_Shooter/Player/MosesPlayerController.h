@@ -1,8 +1,4 @@
-// ============================================================================
-// MosesPlayerController.h
-// ============================================================================
-
-#pragma once
+ï»¿#pragma once
 
 #include "CoreMinimal.h"
 #include "GameFramework/PlayerController.h"
@@ -10,6 +6,8 @@
 
 class AMosesLobbyGameState;
 class AMosesLobbyGameMode;
+class AMosesStartGameMode;
+class AMosesMatchGameMode;
 class AMosesPlayerState;
 class ACameraActor;
 
@@ -21,18 +19,13 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnJoinedRoom, EMosesRoomJoinResult
 /**
  * AMosesPlayerController
  *
- * Ã¥ÀÓ(¿ä¾à)
- * - UI/ÀÔ·Â ÀÌº¥Æ®¸¦ ¼­¹ö ±ÇÇÑ ·ÎÁ÷À¸·Î Àü´ŞÇÏ´Â "RPC ÁøÀÔÁ¡"
- * - (·Îºñ ÄÁÅØ½ºÆ®¿¡¼­¸¸) ·Îºñ UI È°¼ºÈ­ + ÇÁ¸®ºä Ä«¸Ş¶ó(ViewTarget) °­Á¦
- * - µğ¹ö±×: Exec Ä¿¸Çµå·Î Travel Å×½ºÆ® (Å¬¶ó´Â ¼­¹ö RPC·Î ¿ìÈ¸)
+ * ì±…ì„(ìš”ì•½)
+ * - UI/ì…ë ¥ ì´ë²¤íŠ¸ë¥¼ ì„œë²„ ê¶Œí•œ ë¡œì§ìœ¼ë¡œ ì „ë‹¬í•˜ëŠ” "RPC ì§„ì…ì "
+ * - (ë¡œë¹„ ì»¨í…ìŠ¤íŠ¸ì—ì„œë§Œ) ë¡œë¹„ UI í™œì„±í™” + í”„ë¦¬ë·° ì¹´ë©”ë¼(ViewTarget) ê°•ì œ
  *
- * ´ÜÀÏ Áø½Ç(Single Source of Truth)
- * - ·ë µ¥ÀÌÅÍ/»óÅÂ º¯°æ: AMosesLobbyGameState
- * - StartMatch ÃÖÁ¾ °ËÁõ + Travel Æ®¸®°Å: AMosesLobbyGameMode
- *
- * ¾ÈÀüÀåÄ¡
- * - LocalController¸¸ UI/Ä«¸Ş¶ó¸¦ Á¶ÀÛ (´Ù¸¥ PC/¸®½¼¼­¹ö ¿À¿° ¹æÁö)
- * - SeamlessTravel·Î PC°¡ À¯ÁöµÇ¸é ·Îºñ Ä«¸Ş¶ó/ÀÔ·Â ÇÃ·¡±×°¡ ´ÙÀ½ ¸Ê±îÁö ³²À» ¼ö ÀÖÀ½ ¡æ ·Îºñ°¡ ¾Æ´Ï¸é ¿øº¹
+ * [FIX]
+ * - ì…ë ¥ ì»´í¬ë„ŒíŠ¸ ê°•ì œ ìƒì„±(CreateInputComponent override) ì œê±°.
+ *   ì…ë ¥ ë°”ì¸ë”©ì€ Pawn::SetupPlayerInputComponent â†’ HeroComponent ê²½ë¡œì—ì„œ í™•ì •í•œë‹¤.
  */
 UCLASS()
 class UE5_MULTI_SHOOTER_API AMosesPlayerController : public APlayerController
@@ -44,7 +37,6 @@ public:
 
 public:
 	virtual void ClientRestart_Implementation(APawn* NewPawn) override;
-
 
 	/*====================================================
 	= Debug Exec
@@ -67,7 +59,7 @@ public:
 
 public:
 	/*====================================================
-	= Client ¡æ Server RPC (Lobby)
+	= Client â†’ Server RPC (Lobby)
 	====================================================*/
 	UFUNCTION(Server, Reliable)
 	void Server_CreateRoom(const FString& RoomTitle, int32 MaxPlayers);
@@ -78,11 +70,9 @@ public:
 	UFUNCTION(Server, Reliable)
 	void Server_LeaveRoom();
 
-	/** Ready Åä±ÛÀº UI¿¡¼­ bool·Î ¸¸µé¾î Àü´Ş */
 	UFUNCTION(Server, Reliable)
 	void Server_SetReady(bool bInReady);
 
-	/** ¹æÀå¸¸ StartMatch ¿äÃ» °¡´É. ÃÖÁ¾ ÆÇÁ¤Àº GM */
 	UFUNCTION(Server, Reliable)
 	void Server_RequestStartMatch();
 
@@ -94,14 +84,14 @@ public:
 
 public:
 	/*====================================================
-	= JoinRoom Result (Server ¡æ Client)
+	= JoinRoom Result (Server â†’ Client)
 	====================================================*/
 	UFUNCTION(Client, Reliable)
 	void Client_JoinRoomResult(EMosesRoomJoinResult Result, const FGuid& RoomId);
 
 public:
 	/*====================================================
-	= Travel Guard (Dev Exec ¡æ Server Only)
+	= Travel Guard (Dev Exec â†’ Server Only)
 	====================================================*/
 	UFUNCTION(Server, Reliable)
 	void Server_TravelToMatch();
@@ -207,7 +197,7 @@ private:
 
 private:
 	/*====================================================
-	= Replicated lobby-related state (ÁÖÀÇ: PS¿Í Áßº¹µÇ¸é ¾È µÊ)
+	= Replicated lobby-related state (ì£¼ì˜: PSì™€ ì¤‘ë³µë˜ë©´ ì•ˆ ë¨)
 	====================================================*/
 	UPROPERTY(Replicated)
 	int32 SelectedCharacterId = INDEX_NONE;

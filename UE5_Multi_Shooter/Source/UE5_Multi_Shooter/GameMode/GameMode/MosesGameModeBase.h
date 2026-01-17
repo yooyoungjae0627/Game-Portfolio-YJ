@@ -42,7 +42,7 @@ protected:
 
 
 	/** 컨트롤러별 PawnClass 결정(PawnData의 PawnClass 우선) */
-	virtual UClass* GetDefaultPawnClassForController_Implementation(AController* InController) final;
+	virtual UClass* GetDefaultPawnClassForController_Implementation(AController* InController);
 
 	/**
 	 * SpawnGate 핵심:

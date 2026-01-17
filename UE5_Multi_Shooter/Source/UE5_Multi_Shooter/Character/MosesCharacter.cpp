@@ -57,7 +57,18 @@ void AMosesCharacter::Tick(float DeltaTime)
 void AMosesCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
 {
 	Super::SetupPlayerInputComponent(PlayerInputComponent);
-	// 입력 바인딩은 HeroComponent가 로컬에서 처리
+
+	// [FIX]
+	// 입력 바인딩은 "PC->InputComponent"가 아니라,
+	// 엔진이 준비된 InputComponent를 넘겨주는 SetupPlayerInputComponent에서 확정한다.
+	if (HeroComponent)
+	{
+		HeroComponent->SetupInputBindings(PlayerInputComponent); // [FIX]
+	}
+	else
+	{
+		UE_LOG(LogMosesSpawn, Warning, TEXT("[Hero] Missing HeroComponent Pawn=%s"), *GetNameSafe(this));
+	}
 }
 
 void AMosesCharacter::PossessedBy(AController* NewController)

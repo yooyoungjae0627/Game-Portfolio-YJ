@@ -45,6 +45,9 @@ public:
 	====================================================*/
 	void HandleSelectCharacterRequest(AMosesPlayerController* RequestPC, const FName CharacterId);
 
+public:
+	virtual APawn* SpawnDefaultPawnFor_Implementation(AController* NewPlayer, AActor* StartSpot) override; // [FIX]
+
 protected:
 	/*====================================================
 	= Engine
