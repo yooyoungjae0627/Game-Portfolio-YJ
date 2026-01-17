@@ -80,6 +80,11 @@ public:
 	void RequestSetLobbyNickname_LocalOnly(const FString& Nick);
 
 public:
+	// [ADD] PlayerState RepNotify(닉네임 변경) -> Subsys -> Widget 갱신 파이프
+	void NotifyLobbyNicknameChanged(const FString& NewNickname);
+
+
+public:
 	/*====================================================
 	= Lobby Preview (Local-only)
 	====================================================*/

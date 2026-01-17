@@ -554,10 +554,13 @@ UClass* AMosesMatchGameMode::ResolvePawnClassFromSelectedId(int32 SelectedId) co
 		return nullptr;
 	}
 
+	// [ADD] 안전장치: 선택값이 0/쓰레기값이면 1로 고정
+	const int32 SafeSelectedId = FMath::Clamp(SelectedId, 1, 2);
+
 	FMSCharacterEntry Entry;
-	if (!CharacterCatalog->FindByIndex(SelectedId, Entry))
+	if (!CharacterCatalog->FindByIndex(SafeSelectedId, Entry))
 	{
-		UE_LOG(LogMosesSpawn, Warning, TEXT("[MatchGM] Invalid SelectedId=%d (Catalog FindByIndex failed)"), SelectedId);
+		UE_LOG(LogMosesSpawn, Warning, TEXT("[MatchGM] Invalid SelectedId=%d (Catalog FindByIndex failed)"), SafeSelectedId);
 		return nullptr;
 	}
 
@@ -565,10 +568,11 @@ UClass* AMosesMatchGameMode::ResolvePawnClassFromSelectedId(int32 SelectedId) co
 	if (!PawnClass)
 	{
 		UE_LOG(LogMosesSpawn, Error, TEXT("[MatchGM] PawnClass Load FAIL. SelectedId=%d CharacterId=%s"),
-			SelectedId,
+			SafeSelectedId,
 			*Entry.CharacterId.ToString());
 		return nullptr;
 	}
 
 	return PawnClass;
 }
+

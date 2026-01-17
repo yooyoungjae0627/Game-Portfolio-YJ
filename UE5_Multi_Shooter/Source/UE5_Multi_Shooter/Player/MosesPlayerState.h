@@ -1,77 +1,51 @@
-﻿#pragma once
+﻿// ============================================================================
+// MosesPlayerState.h
+// ============================================================================
 
+#pragma once
+
+#include "CoreMinimal.h"
 #include "AbilitySystemInterface.h"
 #include "GameFramework/PlayerState.h"
 #include "MosesPlayerState.generated.h"
 
-// Forward Declarations
 class UAbilitySystemComponent;
 class UMosesAbilitySystemComponent;
 class UMosesAttributeSet;
 class UMosesCombatComponent;
+class UMosesPawnData;
+class UMosesLobbyLocalPlayerSubsystem; // [ADD]
 
-/**
- * AMosesPlayerState
- *
- * [SSOT: Single Source of Truth]
- * - PlayerState는 Pawn보다 수명이 길어, Respawn/SeamlessTravel/LateJoin에서도 유지된다.
- *
- * [GAS: Lyra Style]
- * - ASC OwnerActor  = PlayerState
- * - ASC AvatarActor = Pawn/Character
- *
- * [Network Policy]
- * - 서버가 확정하고(Authority), 클라는 RepNotify(OnRep)로만 UI를 갱신한다.
- */
+DECLARE_MULTICAST_DELEGATE_OneParam(FOnMosesSelectedCharacterChangedNative, int32 /*NewId*/);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnMosesSelectedCharacterChangedBP, int32, NewId);
+
 UCLASS()
 class UE5_MULTI_SHOOTER_API AMosesPlayerState : public APlayerState, public IAbilitySystemInterface
 {
 	GENERATED_BODY()
 
 public:
-	AMosesPlayerState();
+	AMosesPlayerState(const FObjectInitializer& ObjectInitializer = FObjectInitializer::Get());
 
-	// ------------------------------------------------------------
-	// Engine / Net
-	// ------------------------------------------------------------
+public:
 	virtual void PostInitializeComponents() override;
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 
-	/** IAbilitySystemInterface */
 	virtual UAbilitySystemComponent* GetAbilitySystemComponent() const override;
 
-	/** SeamlessTravel: OldPS -> NewPS (Server) */
 	virtual void CopyProperties(APlayerState* NewPlayerState) override;
-
-	/** SeamlessTravel: NewPS overwrites from OldPS (Server/Client) */
 	virtual void OverrideWith(APlayerState* OldPlayerState) override;
 
-	// ------------------------------------------------------------
-	// GAS Init
-	// ------------------------------------------------------------
+public:
 	void TryInitASC(AActor* InAvatarActor);
 
-	// ------------------------------------------------------------
-	// Server-only GameplayTag Policy
-	// ------------------------------------------------------------
-	void ServerSetCombatPhase(bool bEnable);
-	void ServerSetDead(bool bEnable);
+public:
+	FOnMosesSelectedCharacterChangedNative OnSelectedCharacterChangedNative;
 
-	// ------------------------------------------------------------
-	// Server authoritative setters (Server SSOT)
-	// ------------------------------------------------------------
-	void ServerSetLoggedIn(bool bInLoggedIn);
-	void ServerSetReady(bool bInReady);
+	UPROPERTY(BlueprintAssignable, Category = "Moses|Lobby")
+	FOnMosesSelectedCharacterChangedBP OnSelectedCharacterChangedBP;
 
-	/** 로비에서 선택한 캐릭터 Index 확정 (Server RPC) */
-	UFUNCTION(Server, Reliable)
-	void ServerSetSelectedCharacterId(int32 InId);
-
-	void ServerSetRoom(const FGuid& InRoomId, bool bInIsHost);
-
-	// ------------------------------------------------------------
-	// Accessors (Client/UI must use getters)
-	// ------------------------------------------------------------
+public:
 	bool IsLoggedIn() const { return bLoggedIn; }
 	bool IsReady() const { return bReady; }
 
@@ -85,46 +59,52 @@ public:
 	UMosesCombatComponent* GetCombatComponent() const { return CombatComponent; }
 	const UMosesAttributeSet* GetMosesAttributeSet() const { return AttributeSet; }
 
-	// ------------------------------------------------------------
-	// PawnData access (Lyra-style compatibility)
-	// ------------------------------------------------------------
-	template<typename T>
-	const T* GetPawnData() const // [MOD-FIX] 프로젝트에서 이미 호출 중이므로 반드시 제공
-	{
-		return Cast<T>(PawnData);
-	}
-
-	// ------------------------------------------------------------
-	// Debug / DoD Logs
-	// ------------------------------------------------------------
-	void DOD_PS_Log(const UObject* Caller, const TCHAR* Phase) const;
-
-	// ------------------------------------------------------------
-	// Server-only helpers
-	// ------------------------------------------------------------
+public:
 	void EnsurePersistentId_Server();
-	void SetLoggedIn_Server(bool bInLoggedIn);
+	void ServerSetLoggedIn(bool bInLoggedIn);
+	void ServerSetReady(bool bInReady);
+
+	UFUNCTION(Server, Reliable)
+	void ServerSetSelectedCharacterId(int32 InId);
+
+	void ServerSetRoom(const FGuid& InRoomId, bool bInIsHost);
 	void ServerSetPlayerNickName(const FString& InNickName);
 
-	UFUNCTION()
-	void OnRep_PlayerNickName();
+public:
+	void SetLoggedIn_Server(bool bInLoggedIn) { ServerSetLoggedIn(bInLoggedIn); } // 호환
+
+	template <typename TPawnData>
+	const TPawnData* GetPawnData() const
+	{
+		return Cast<TPawnData>(PawnData);
+	}
+
+	void SetPawnData(const UMosesPawnData* InPawnData) { PawnData = InPawnData; }
+
+public:
+	void DOD_PS_Log(const UObject* Caller, const TCHAR* Phase) const;
 
 private:
-	// Internal logs
-	void LogASCInit(AActor* InAvatarActor) const;
-	void LogAttributes() const;
-
-	// RepNotify
 	UFUNCTION() void OnRep_PersistentId();
 	UFUNCTION() void OnRep_LoggedIn();
 	UFUNCTION() void OnRep_Ready();
 	UFUNCTION() void OnRep_SelectedCharacterId();
 	UFUNCTION() void OnRep_Room();
+	UFUNCTION() void OnRep_PlayerNickName();
 
 private:
-	// ------------------------------------------------------------
-	// Replicated Fields (SSOT)
-	// ------------------------------------------------------------
+	void BroadcastSelectedCharacterChanged(const TCHAR* Reason);
+	void BindCombatDelegatesOnce();
+
+	UFUNCTION()
+	void HandleCombatDataChanged_BP(FString Reason);
+
+	void HandleCombatDataChanged_Native(const TCHAR* Reason);
+
+	// [ADD] 로컬 UI 갱신 파이프를 확실히 태우는 헬퍼
+	void NotifyLobbyPlayerStateChanged_Local(const TCHAR* Reason) const;
+
+private:
 	UPROPERTY(ReplicatedUsing = OnRep_PersistentId)
 	FGuid PersistentId;
 
@@ -134,7 +114,6 @@ private:
 	UPROPERTY(ReplicatedUsing = OnRep_Ready)
 	bool bReady = false;
 
-	/** LobbyGM 서버가 확정한 Catalog index */
 	UPROPERTY(ReplicatedUsing = OnRep_SelectedCharacterId)
 	int32 SelectedCharacterId = 1;
 
@@ -147,8 +126,10 @@ private:
 	UPROPERTY(ReplicatedUsing = OnRep_PlayerNickName)
 	FString PlayerNickName;
 
+	UPROPERTY(Transient)
+	TObjectPtr<const UMosesPawnData> PawnData = nullptr;
+
 private:
-	// Components / Data
 	UPROPERTY(VisibleAnywhere, Category = "Moses|Combat")
 	TObjectPtr<UMosesCombatComponent> CombatComponent = nullptr;
 
@@ -158,14 +139,12 @@ private:
 	UPROPERTY()
 	TObjectPtr<UMosesAttributeSet> AttributeSet = nullptr;
 
-	/** Lyra-style PawnData placeholder (완성 전까지 nullptr 허용) */
-	UPROPERTY()
-	TObjectPtr<const UObject> PawnData = nullptr; // [MOD-FIX] GetPawnData<T>() 지원을 위해 유지
-
-	// GAS Init Guards
 	UPROPERTY(Transient)
 	bool bASCInitialized = false;
 
 	UPROPERTY(Transient)
 	TWeakObjectPtr<AActor> CachedAvatar;
+
+	UPROPERTY(Transient)
+	bool bCombatDelegatesBound = false;
 };

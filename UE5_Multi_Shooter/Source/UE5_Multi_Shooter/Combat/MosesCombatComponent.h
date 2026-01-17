@@ -1,36 +1,26 @@
-﻿#pragma once
+﻿// ============================================================================
+// MosesCombatComponent.h
+// ============================================================================
+
+#pragma once
 
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
-#include "UE5_Multi_Shooter/Combat/MosesWeaponTypes.h"
+#include "MosesWeaponTypes.h" // [FIX] 네가 올린 실제 타입 사용(EMosesWeaponType, FAmmoState, FWeaponSlotState)
 #include "MosesCombatComponent.generated.h"
 
-/**
- * UI/HUD는 Tick을 사용하지 않는다.
- * RepNotify → Delegate 브로드캐스트를 통해 즉시 갱신한다.
- */
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(
-	FOnAmmoChanged,
-	EMosesWeaponType, WeaponType,
-	const FAmmoState&, NewState
-);
+// ---------------------------
+// Delegates (UI/HUD bind)
+// ---------------------------
 
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(
-	FOnWeaponSlotChanged,
-	EMosesWeaponType, WeaponType,
-	const FWeaponSlotState&, NewSlot
-);
+DECLARE_MULTICAST_DELEGATE_OneParam(FOnMosesCombatDataChangedNative, const TCHAR* /*Reason*/);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnMosesCombatDataChangedBP, FString, Reason);
 
 /**
  * UMosesCombatComponent
- *
- * - PlayerState 소유 (Single Source of Truth)
- * - 무기 슬롯 / 탄약 상태를 서버 권위로 관리
- * - RepNotify + Delegate 기반 UI 갱신
- *
- * ⚠️ Lyra 스타일 핵심:
- *   - 상태는 PS에 있고
- *   - Pawn/Character는 "표시와 요청"만 수행
+ * - PlayerState 소유 (SSOT)
+ * - 서버에서만 초기값/변경 확정
+ * - 클라는 RepNotify -> Delegate로 UI 갱신 (Tick 금지)
  */
 UCLASS(ClassGroup = (Moses), meta = (BlueprintSpawnableComponent))
 class UE5_MULTI_SHOOTER_API UMosesCombatComponent : public UActorComponent
@@ -40,137 +30,105 @@ class UE5_MULTI_SHOOTER_API UMosesCombatComponent : public UActorComponent
 public:
 	UMosesCombatComponent(const FObjectInitializer& ObjectInitializer = FObjectInitializer::Get());
 
-	/* =========================
-	 * Engine
-	 * ========================= */
+public:
+	// ------------------------------------------------------------
+	// Getters (UI/HUD)
+	// ------------------------------------------------------------
+	const TArray<FAmmoState>& GetAmmoStates() const { return AmmoStates; }
+	const TArray<FWeaponSlotState>& GetWeaponSlots() const { return WeaponSlots; }
+	bool IsServerInitialized_Day2() const { return bServerInitialized_Day2; }
 
-	 /** 네트워크 복제 필드 등록 */
+public:
+	// ------------------------------------------------------------
+	// Delegates (UI bind)
+	// ------------------------------------------------------------
+	FOnMosesCombatDataChangedNative OnCombatDataChangedNative;
+
+	UPROPERTY(BlueprintAssignable, Category = "Moses|Combat")
+	FOnMosesCombatDataChangedBP OnCombatDataChangedBP;
+
+public:
+	// ------------------------------------------------------------
+	// Server-only init / server authoritative setters
+	// (서버에서만 호출한다는 전제 - RPC 아님)
+	// ------------------------------------------------------------
+	void Server_EnsureInitialized_Day2(); // [ADD]
+
+	void Server_SetAmmoState(EMosesWeaponType WeaponType, const FAmmoState& NewState); // [ADD]
+	void Server_AddReserveAmmo(EMosesWeaponType WeaponType, int32 DeltaReserve);      // [ADD] Pickup_Ammo.cpp 에서 필요
+	void Server_AddMagAmmo(EMosesWeaponType WeaponType, int32 DeltaMag);              // [ADD] (선택) 필요하면 사용
+	void Server_SetWeaponSlot(EMosesWeaponType SlotType, const FWeaponSlotState& NewState); // [ADD]
+
+protected:
+	virtual void BeginPlay() override;
+
+private:
+	// ------------------------------------------------------------
+	// RepNotifies
+	// ------------------------------------------------------------
+	UFUNCTION()
+	void OnRep_AmmoStates(); // [ADD]
+
+	UFUNCTION()
+	void OnRep_WeaponSlots(); // [ADD]
+
+	UFUNCTION()
+	void OnRep_ServerInitialized_Day2(); // [ADD]
+
+private:
+	// ------------------------------------------------------------
+	// Internal helpers
+	// ------------------------------------------------------------
+	void BroadcastCombatDataChanged(const TCHAR* Reason); // [ADD]
+	void EnsureArraysSized();                             // [ADD]
+	int32 WeaponTypeToIndex(EMosesWeaponType WeaponType) const; // [ADD]
+
+	void ForceReplication(); // [ADD] ForceReplication() 에러 해결용: 우리가 직접 구현
+
+private:
+	// ------------------------------------------------------------
+	// Replication
+	// ------------------------------------------------------------
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 
-	/* =========================
-	 * Ammo (Server Authoritative)
-	 * ========================= */
-
-	 /** 해당 무기 타입의 탄약 상태가 유효한지 확인 */
-	bool HasAmmoState(EMosesWeaponType WeaponType) const;
-
-	/** 현재 탄약 상태 조회 (복사본 반환) */
-	FAmmoState GetAmmoState(EMosesWeaponType WeaponType) const;
-
-	/**
-	 * 서버 전용: 탄약 상태 직접 설정
-	 * - 값 보정(Clamp) 포함
-	 * - Replication으로 클라 동기화
-	 */
-	void Server_SetAmmoState(EMosesWeaponType WeaponType, const FAmmoState& NewState);
-
-	/**
-	 * 서버 전용: 예비 탄약 증가
-	 * - Pickup 보상 등에 사용
-	 */
-	void Server_AddReserveAmmo(EMosesWeaponType WeaponType, int32 AddAmount);
-
-	/**
-	 * 서버 전용: 탄창 탄약 소모
-	 * @return 소모 성공 여부
-	 */
-	bool Server_ConsumeMagAmmo(EMosesWeaponType WeaponType, int32 ConsumeAmount);
-
-	/* =========================
-	 * Weapon Slot (Server Authoritative)
-	 * ========================= */
-
-	 /** 슬롯 상태 조회 */
-	FWeaponSlotState GetWeaponSlot(EMosesWeaponType WeaponType) const;
-
-	/** 서버 전용: 무기 슬롯 상태 설정 */
-	void Server_SetWeaponSlot(EMosesWeaponType WeaponType, const FWeaponSlotState& NewSlot);
-
-	/* =========================
-	 * Delegates (UI/HUD)
-	 * ========================= */
-
-	 /**
-	  * 탄약 상태 변경 이벤트
-	  * - RepNotify에서도 호출됨
-	  * - UI는 이것만 구독하면 됨 (Tick 금지)
-	  */
-	UPROPERTY(BlueprintAssignable)
-	FOnAmmoChanged OnAmmoChanged;
-
-	/** 무기 슬롯 변경 이벤트 */
-	UPROPERTY(BlueprintAssignable)
-	FOnWeaponSlotChanged OnWeaponSlotChanged;
-
 private:
-	/* =========================
-	 * RepNotify
-	 * ========================= */
-
-	 /** AmmoStates 복제 도착 시 호출 */
-	UFUNCTION()
-	void OnRep_AmmoStates();
-
-	/** WeaponSlots 복제 도착 시 호출 */
-	UFUNCTION()
-	void OnRep_WeaponSlots();
-
-private:
-	/* =========================
-	 * Internal Helpers
-	 * ========================= */
-
-	 /**
-	  * 기본값 초기화
-	  * - 서버/클라 공통
-	  * - Replication 이전에도 안전
-	  * - 한 번만 실행됨
-	  */
-	void InitializeDefaultsIfNeeded();
-
-	/**
-	 * Replicated 배열 크기 보장
-	 * - enum 개수 변경에 안전
-	 */
-	void EnsureReplicatedArrays();
-
-	/** enum 항목 개수 계산 (MAX 제외) */
-	int32 GetWeaponTypeCount() const;
-
-	/** enum 값이 유효 범위인지 검사 */
-	bool IsValidWeaponType(EMosesWeaponType WeaponType) const;
-
-	/** enum → array index 변환 */
-	int32 WeaponTypeToIndex(EMosesWeaponType WeaponType) const;
-
-	/** 모든 탄약 상태 브로드캐스트 */
-	void BroadcastAmmoAll() const;
-
-	/** 모든 슬롯 상태 브로드캐스트 */
-	void BroadcastSlotsAll() const;
-
-	/** 음수 방지 유틸 */
-	static int32 ClampNonNegative(int32 Value);
-
-private:
-	/* =========================
-	 * Replicated Data
-	 * =========================
-	 *
-	 * ⚠️ UE는 TMap Replication을 지원하지 않음
-	 * → enum index 기반 배열 사용
-	 * → Lyra에서도 흔히 쓰는 방식
-	 */
-
+	// ------------------------------------------------------------
+	// Replicated data (Day2)
+	// ------------------------------------------------------------
 	UPROPERTY(ReplicatedUsing = OnRep_AmmoStates)
-	TArray<FAmmoState> AmmoStates;
+	TArray<FAmmoState> AmmoStates; // [FIX] FAmmoState 사용
 
 	UPROPERTY(ReplicatedUsing = OnRep_WeaponSlots)
-	TArray<FWeaponSlotState> WeaponSlots;
+	TArray<FWeaponSlotState> WeaponSlots; // [FIX] FWeaponSlotState 사용
 
-	/**
-	 * 기본값 중복 초기화 방지 플래그
-	 * - 서버/클라 모두 사용
-	 */
-	bool bDefaultsInitialized = false;
+	UPROPERTY(ReplicatedUsing = OnRep_ServerInitialized_Day2)
+	bool bServerInitialized_Day2 = false;
+
+private:
+	// ------------------------------------------------------------
+	// Tuning (server defaults) - 필요 최소만
+	// ------------------------------------------------------------
+	UPROPERTY(EditDefaultsOnly, Category = "Moses|Combat|Defaults")
+	int32 DefaultRifleMag = 30;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Moses|Combat|Defaults")
+	int32 DefaultRifleReserve = 90;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Moses|Combat|Defaults")
+	int32 DefaultRifleMaxMag = 30;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Moses|Combat|Defaults")
+	int32 DefaultRifleMaxReserve = 120;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Moses|Combat|Defaults")
+	int32 DefaultPistolMag = 15;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Moses|Combat|Defaults")
+	int32 DefaultPistolReserve = 45;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Moses|Combat|Defaults")
+	int32 DefaultPistolMaxMag = 15;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Moses|Combat|Defaults")
+	int32 DefaultPistolMaxReserve = 60;
 };

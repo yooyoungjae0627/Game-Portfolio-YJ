@@ -197,12 +197,20 @@ void UMosesLobbyLocalPlayerSubsystem::NotifyPlayerStateChanged()
 {
 	UE_LOG(LogMosesSpawn, Verbose, TEXT("[UIFlow] NotifyPlayerStateChanged"));
 
-	// ✅ 매치/다른 월드이면 로비 전용 작업(프리뷰/UI 갱신/바인딩 재시도) 중단
 	if (!IsLobbyContext())
 	{
 		StopLobbyOnlyTimers();
 		ClearLobbyPreviewCache();
 		return;
+	}
+
+	// [ADD] PS가 늦게 붙는 구간(SeamlessTravel 직후) 대비: 한번은 무조건 다음틱에 UI 갱신 시도
+	if (AMosesPlayerState* MyPS = GetMosesPS_LocalOnly(); !MyPS)
+	{
+		if (UWorld* World = GetWorld())
+		{
+			World->GetTimerManager().SetTimerForNextTick(this, &ThisClass::RefreshLobbyUI_FromCurrentState);
+		}
 	}
 
 	if (!bLoginSubmitted_Local)
@@ -814,4 +822,23 @@ void UMosesLobbyLocalPlayerSubsystem::TrySendPendingLobbyNickname_Local()
 
 	UE_LOG(LogMosesSpawn, Log, TEXT("[Nick][LPS] Sent Server_SetLobbyNickname '%s' PC=%s PS=%s"),
 		*PendingLobbyNickname_Local, *GetNameSafe(PC), *GetNameSafe(PS));
+}
+
+void UMosesLobbyLocalPlayerSubsystem::NotifyLobbyNicknameChanged(const FString& NewNickname)
+{
+	UE_LOG(LogMosesSpawn, Warning, TEXT("[Nick][LPS] NotifyLobbyNicknameChanged NewNick='%s' World=%s"),
+		*NewNickname,
+		*GetNameSafe(GetWorld()));
+
+	// ✅ 매치/다른 맵이면 로비 UI 갱신 파이프 자체를 돌리지 않음
+	if (!IsLobbyContext())
+	{
+		return;
+	}
+
+	// ✅ Widget이 이미 LPS 이벤트에 바인딩되어 있으니, "PS 바뀜" 이벤트를 재사용해서 한 파이프만 유지
+	LobbyPlayerStateChangedEvent.Broadcast();
+
+	// ✅ 즉시 갱신도 한번 더(위젯이 아직 바인딩 전인 타이밍 대비)
+	RefreshLobbyUI_FromCurrentState();
 }

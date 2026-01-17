@@ -1,4 +1,8 @@
-﻿#include "UE5_Multi_Shooter/Character/Components/MosesHeroComponent.h"
+﻿// ============================================================================
+// MosesHeroComponent.cpp
+// ============================================================================
+
+#include "UE5_Multi_Shooter/Character/Components/MosesHeroComponent.h"
 
 #include "UE5_Multi_Shooter/Character/Components/MosesPawnExtensionComponent.h"
 #include "UE5_Multi_Shooter/Character/Data/MosesPawnData.h"
@@ -12,9 +16,9 @@
 #include "GameFramework/PlayerController.h"
 
 #include "EnhancedInputSubsystems.h"
-#include "EnhancedInputComponent.h"     // [FIX] UEnhancedInputComponent
+#include "EnhancedInputComponent.h"
 #include "InputActionValue.h"
-#include "InputMappingContext.h"       // [FIX] UInputMappingContext 정의(로그/PathName)
+#include "InputMappingContext.h"
 
 UMosesHeroComponent::UMosesHeroComponent(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
@@ -37,7 +41,6 @@ void UMosesHeroComponent::BeginPlay()
 		return;
 	}
 
-	// Camera delegate
 	if (UMosesCameraComponent* CamComp = UMosesCameraComponent::FindCameraComponent(Pawn))
 	{
 		if (!CamComp->DetermineCameraModeDelegate.IsBound())
@@ -46,8 +49,6 @@ void UMosesHeroComponent::BeginPlay()
 			UE_LOG(LogMosesSpawn, Warning, TEXT("[Hero] Bind DetermineCameraModeDelegate OK Pawn=%s"), *GetNameSafe(Pawn));
 		}
 	}
-
-	// 입력 바인딩은 Pawn::SetupPlayerInputComponent에서 수행한다.
 }
 
 bool UMosesHeroComponent::IsLocalPlayerPawn() const
@@ -110,11 +111,10 @@ void UMosesHeroComponent::SetupInputBindings(UInputComponent* PlayerInputCompone
 		*GetNameSafe(PC),
 		*GetNameSafe(PlayerInputComponent));
 
-	// 입력 에셋 누락 체크
+	// 입력 에셋 누락 체크(DoD 로그)
 	if (!InputMappingContext || !IA_Move || !IA_Sprint || !IA_Jump || !IA_Interact)
 	{
-		UE_LOG(LogMosesSpawn, Error, TEXT("[Hero] Input assets missing. Set IMC + IA_* in BP. Pawn=%s"),
-			*GetNameSafe(Pawn));
+		UE_LOG(LogMosesSpawn, Error, TEXT("[Hero] Input assets missing. Set IMC + IA_* in BP. Pawn=%s"), *GetNameSafe(Pawn));
 		return;
 	}
 
@@ -151,7 +151,6 @@ void UMosesHeroComponent::AddMappingContextOnce()
 	Subsystem->AddMappingContext(InputMappingContext.Get(), MappingPriority);
 	bMappingContextAdded = true;
 
-	// [FIX] TObjectPtr 안전 로그
 	const UObject* IMCObj = InputMappingContext.Get();
 	UE_LOG(LogMosesSpawn, Log, TEXT("[Hero] AddMappingContext OK IMC=%s Priority=%d Pawn=%s"),
 		IMCObj ? *IMCObj->GetPathName() : TEXT("None"),
@@ -166,9 +165,7 @@ void UMosesHeroComponent::BindInputActions(UInputComponent* PlayerInputComponent
 		return;
 	}
 
-	// [FIX] UMosesInputComponent 강제 캐스팅 제거.
-	//      엔진 표준 EnhancedInputComponent로 바인딩한다.
-	UEnhancedInputComponent* EIC = Cast<UEnhancedInputComponent>(PlayerInputComponent); // [FIX]
+	UEnhancedInputComponent* EIC = Cast<UEnhancedInputComponent>(PlayerInputComponent);
 	if (!EIC)
 	{
 		UE_LOG(LogMosesSpawn, Error, TEXT("[Hero] BindInputActions FAILED. Expected UEnhancedInputComponent. Actual=%s Pawn=%s"),

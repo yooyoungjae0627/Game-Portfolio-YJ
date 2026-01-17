@@ -1,25 +1,25 @@
-﻿#include "UE5_Multi_Shooter/Player/MosesPlayerState.h"
+﻿// ============================================================================
+// MosesPlayerState.cpp
+// ============================================================================
+
+#include "UE5_Multi_Shooter/Player/MosesPlayerState.h"
 
 // Project
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
-#include "UE5_Multi_Shooter/System/MosesLobbyLocalPlayerSubsystem.h"
 #include "UE5_Multi_Shooter/Combat/MosesCombatComponent.h"
+#include "UE5_Multi_Shooter/System/MosesLobbyLocalPlayerSubsystem.h" // [ADD]
 
 // GAS
 #include "UE5_Multi_Shooter/GAS/Components/MosesAbilitySystemComponent.h"
 #include "UE5_Multi_Shooter/GAS/AttributeSet/MosesAttributeSet.h"
-#include "UE5_Multi_Shooter/GAS/MosesGameplayTags.h"
 
 // Engine
-#include "Engine/LocalPlayer.h"
-#include "GameFramework/PlayerController.h"
 #include "Net/UnrealNetwork.h"
+#include "GameFramework/PlayerController.h"
+#include "Engine/LocalPlayer.h"
 
-// ------------------------------------------------------------
-// ctor
-// ------------------------------------------------------------
-
-AMosesPlayerState::AMosesPlayerState()
+AMosesPlayerState::AMosesPlayerState(const FObjectInitializer& ObjectInitializer)
+	: Super(ObjectInitializer)
 {
 	bReplicates = true;
 	SetNetUpdateFrequency(100.f);
@@ -32,13 +32,16 @@ AMosesPlayerState::AMosesPlayerState()
 	CombatComponent = CreateDefaultSubobject<UMosesCombatComponent>(TEXT("MosesCombatComponent"));
 }
 
-// ------------------------------------------------------------
-// Engine / Net
-// ------------------------------------------------------------
-
 void AMosesPlayerState::PostInitializeComponents()
 {
 	Super::PostInitializeComponents();
+
+	if (HasAuthority() && CombatComponent)
+	{
+		CombatComponent->Server_EnsureInitialized_Day2();
+	}
+
+	BindCombatDelegatesOnce();
 }
 
 void AMosesPlayerState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
@@ -76,6 +79,7 @@ void AMosesPlayerState::CopyProperties(APlayerState* NewPlayerState)
 	NewPS->SelectedCharacterId = SelectedCharacterId;
 	NewPS->RoomId = RoomId;
 	NewPS->bIsRoomHost = bIsRoomHost;
+	NewPS->PawnData = PawnData;
 }
 
 void AMosesPlayerState::OverrideWith(APlayerState* OldPlayerState)
@@ -95,11 +99,8 @@ void AMosesPlayerState::OverrideWith(APlayerState* OldPlayerState)
 	SelectedCharacterId = OldPS->SelectedCharacterId;
 	RoomId = OldPS->RoomId;
 	bIsRoomHost = OldPS->bIsRoomHost;
+	PawnData = OldPS->PawnData;
 }
-
-// ------------------------------------------------------------
-// GAS Init
-// ------------------------------------------------------------
 
 void AMosesPlayerState::TryInitASC(AActor* InAvatarActor)
 {
@@ -112,9 +113,6 @@ void AMosesPlayerState::TryInitASC(AActor* InAvatarActor)
 
 	if (bASCInitialized && !bAvatarChanged)
 	{
-		UE_LOG(LogMosesGAS, Verbose, TEXT("[GAS] ASC Init SKIP PS=%s Avatar=%s"),
-			*GetNameSafe(this),
-			*GetNameSafe(InAvatarActor));
 		return;
 	}
 
@@ -122,66 +120,20 @@ void AMosesPlayerState::TryInitASC(AActor* InAvatarActor)
 	bASCInitialized = true;
 
 	MosesAbilitySystemComponent->InitAbilityActorInfo(this, InAvatarActor);
-
-	UE_LOG(LogMosesGAS, Log, TEXT("[GAS] ASC Init PS=%s Avatar=%s Role=%s AvatarChanged=%d"),
-		*GetNameSafe(this),
-		*GetNameSafe(InAvatarActor),
-		*UEnum::GetValueAsString(GetLocalRole()),
-		bAvatarChanged ? 1 : 0);
-
-	LogAttributes();
 }
 
-// ------------------------------------------------------------
-// Server-only GameplayTag Policy
-// ------------------------------------------------------------
-
-void AMosesPlayerState::ServerSetCombatPhase(bool bEnable)
+void AMosesPlayerState::EnsurePersistentId_Server()
 {
 	check(HasAuthority());
 
-	if (!MosesAbilitySystemComponent)
+	if (PersistentId.IsValid())
 	{
 		return;
 	}
 
-	const FMosesGameplayTags& MosesTags = FMosesGameplayTags::Get(); // [MOD-FIX] 이름 충돌 방지(AActor::Tags)
-
-	if (bEnable)
-	{
-		MosesAbilitySystemComponent->AddLooseGameplayTag(MosesTags.State_Phase_Combat);
-	}
-	else
-	{
-		MosesAbilitySystemComponent->RemoveLooseGameplayTag(MosesTags.State_Phase_Combat);
-	}
+	PersistentId = FGuid::NewGuid();
+	ForceNetUpdate();
 }
-
-void AMosesPlayerState::ServerSetDead(bool bEnable)
-{
-	check(HasAuthority());
-
-	if (!MosesAbilitySystemComponent)
-	{
-		return;
-	}
-
-	const FMosesGameplayTags& MosesTags = FMosesGameplayTags::Get(); // [MOD-FIX] 이름 충돌 방지(AActor::Tags)
-
-	if (bEnable)
-	{
-		MosesAbilitySystemComponent->AddLooseGameplayTag(MosesTags.State_Dead);
-		MosesAbilitySystemComponent->RemoveLooseGameplayTag(MosesTags.State_Phase_Combat);
-	}
-	else
-	{
-		MosesAbilitySystemComponent->RemoveLooseGameplayTag(MosesTags.State_Dead);
-	}
-}
-
-// ------------------------------------------------------------
-// Server authoritative setters
-// ------------------------------------------------------------
 
 void AMosesPlayerState::ServerSetLoggedIn(bool bInLoggedIn)
 {
@@ -194,6 +146,9 @@ void AMosesPlayerState::ServerSetLoggedIn(bool bInLoggedIn)
 
 	bLoggedIn = bInLoggedIn;
 	ForceNetUpdate();
+
+	// [ADD] 리슨서버 즉시 UI 갱신
+	NotifyLobbyPlayerStateChanged_Local(TEXT("ServerSetLoggedIn"));
 }
 
 void AMosesPlayerState::ServerSetReady(bool bInReady)
@@ -206,19 +161,23 @@ void AMosesPlayerState::ServerSetReady(bool bInReady)
 	}
 
 	bReady = bInReady;
+	ForceNetUpdate();
+
+	// [ADD] 리슨서버 즉시 UI 갱신
+	NotifyLobbyPlayerStateChanged_Local(TEXT("ServerSetReady"));
 }
 
 void AMosesPlayerState::ServerSetSelectedCharacterId_Implementation(int32 InId)
 {
 	check(HasAuthority());
 
-	SelectedCharacterId = FMath::Max(0, InId);
-
-	UE_LOG(LogMosesPlayer, Log, TEXT("[CharSel][SV][PS] Set SelectedCharacterId=%d Pid=%s"),
-		SelectedCharacterId,
-		*PersistentId.ToString(EGuidFormats::DigitsWithHyphens));
-
+	SelectedCharacterId = FMath::Max(1, InId);
 	ForceNetUpdate();
+
+	BroadcastSelectedCharacterChanged(TEXT("ServerSetSelectedCharacterId"));
+
+	// [ADD] 리슨서버 즉시 UI 갱신
+	NotifyLobbyPlayerStateChanged_Local(TEXT("ServerSetSelectedCharacterId"));
 }
 
 void AMosesPlayerState::ServerSetRoom(const FGuid& InRoomId, bool bInIsHost)
@@ -232,127 +191,11 @@ void AMosesPlayerState::ServerSetRoom(const FGuid& InRoomId, bool bInIsHost)
 
 	RoomId = InRoomId;
 	bIsRoomHost = bInIsHost;
-}
 
-// ------------------------------------------------------------
-// Debug / DoD
-// ------------------------------------------------------------
-
-void AMosesPlayerState::DOD_PS_Log(const UObject* Caller, const TCHAR* Phase) const
-{
-	const TCHAR* CallerName = Caller ? *Caller->GetName() : TEXT("None");
-
-	UE_LOG(LogMosesPlayer, Log,
-		TEXT("[PS][%s] %s Caller=%s Pid=%s RoomId=%s Host=%d Ready=%d LoggedIn=%d SelChar=%d"),
-		Phase,
-		*GetName(),
-		CallerName,
-		*PersistentId.ToString(EGuidFormats::DigitsWithHyphens),
-		*RoomId.ToString(EGuidFormats::DigitsWithHyphens),
-		bIsRoomHost ? 1 : 0,
-		bReady ? 1 : 0,
-		bLoggedIn ? 1 : 0,
-		SelectedCharacterId);
-}
-
-// ------------------------------------------------------------
-// Local notify helper (UI entry)
-// ------------------------------------------------------------
-
-static void NotifyOwningLocalPlayer_PSChanged(AMosesPlayerState* PS)
-{
-	if (!PS)
-	{
-		return;
-	}
-
-	APlayerController* PC = Cast<APlayerController>(PS->GetOwner());
-	if (!PC)
-	{
-		return;
-	}
-
-	ULocalPlayer* LP = PC->GetLocalPlayer();
-	if (!LP)
-	{
-		return;
-	}
-
-	if (UMosesLobbyLocalPlayerSubsystem* Subsys = LP->GetSubsystem<UMosesLobbyLocalPlayerSubsystem>())
-	{
-		Subsys->NotifyPlayerStateChanged();
-	}
-}
-
-// ------------------------------------------------------------
-// RepNotify
-// ------------------------------------------------------------
-
-void AMosesPlayerState::OnRep_PersistentId()
-{
-	UE_LOG(LogMosesPlayer, Log, TEXT("[PS][CL] OnRep_PersistentId -> %s PS=%s"),
-		*PersistentId.ToString(EGuidFormats::DigitsWithHyphens),
-		*GetNameSafe(this));
-
-	NotifyOwningLocalPlayer_PSChanged(this);
-}
-
-void AMosesPlayerState::OnRep_LoggedIn()
-{
-	NotifyOwningLocalPlayer_PSChanged(this);
-}
-
-void AMosesPlayerState::OnRep_Ready()
-{
-	NotifyOwningLocalPlayer_PSChanged(this);
-}
-
-void AMosesPlayerState::OnRep_SelectedCharacterId()
-{
-	UE_LOG(LogMosesPlayer, Log, TEXT("[CharSel][CL][PS] OnRep SelectedCharacterId=%d Pid=%s"),
-		SelectedCharacterId,
-		*PersistentId.ToString(EGuidFormats::DigitsWithHyphens));
-
-	NotifyOwningLocalPlayer_PSChanged(this);
-}
-
-void AMosesPlayerState::OnRep_Room()
-{
-	NotifyOwningLocalPlayer_PSChanged(this);
-}
-
-// ------------------------------------------------------------
-// Server-only helpers
-// ------------------------------------------------------------
-
-void AMosesPlayerState::EnsurePersistentId_Server()
-{
-	check(HasAuthority());
-
-	if (PersistentId.IsValid())
-	{
-		return;
-	}
-
-	PersistentId = FGuid::NewGuid();
 	ForceNetUpdate();
 
-	UE_LOG(LogMosesPlayer, Log, TEXT("[PS][SV] EnsurePersistentId_Server -> %s PS=%s"),
-		*PersistentId.ToString(EGuidFormats::DigitsWithHyphens),
-		*GetNameSafe(this));
-}
-
-void AMosesPlayerState::SetLoggedIn_Server(bool bInLoggedIn)
-{
-	check(HasAuthority());
-
-	if (bLoggedIn == bInLoggedIn)
-	{
-		return;
-	}
-
-	bLoggedIn = bInLoggedIn;
-	ForceNetUpdate();
+	// [ADD] 리슨서버 즉시 UI 갱신
+	NotifyLobbyPlayerStateChanged_Local(TEXT("ServerSetRoom"));
 }
 
 void AMosesPlayerState::ServerSetPlayerNickName(const FString& InNickName)
@@ -373,36 +216,145 @@ void AMosesPlayerState::ServerSetPlayerNickName(const FString& InNickName)
 	PlayerNickName = Clean;
 	ForceNetUpdate();
 
-	UE_LOG(LogMosesPlayer, Log, TEXT("[Nick][SV][PS] Set Nick=%s Pid=%s"),
-		*PlayerNickName,
-		*PersistentId.ToString(EGuidFormats::DigitsWithHyphens));
+	// [ADD] 리슨서버 즉시 UI 갱신
+	NotifyLobbyPlayerStateChanged_Local(TEXT("ServerSetPlayerNickName"));
+}
+
+void AMosesPlayerState::OnRep_PersistentId()
+{
+	UE_LOG(LogMosesPlayer, Verbose, TEXT("[PS][CL] OnRep_PersistentId -> %s PS=%s"),
+		*PersistentId.ToString(EGuidFormats::DigitsWithHyphens),
+		*GetNameSafe(this));
+
+	// [ADD]
+	NotifyLobbyPlayerStateChanged_Local(TEXT("OnRep_PersistentId"));
+}
+
+void AMosesPlayerState::OnRep_LoggedIn()
+{
+	UE_LOG(LogMosesPlayer, Verbose, TEXT("[PS][CL] OnRep_LoggedIn -> %d PS=%s"),
+		bLoggedIn ? 1 : 0,
+		*GetNameSafe(this));
+
+	// [ADD]
+	NotifyLobbyPlayerStateChanged_Local(TEXT("OnRep_LoggedIn"));
+}
+
+void AMosesPlayerState::OnRep_Ready()
+{
+	UE_LOG(LogMosesPlayer, Verbose, TEXT("[PS][CL] OnRep_Ready -> %d PS=%s"),
+		bReady ? 1 : 0,
+		*GetNameSafe(this));
+
+	// [ADD] ✅ Ready 체크박스 갱신 트리거
+	NotifyLobbyPlayerStateChanged_Local(TEXT("OnRep_Ready"));
+}
+
+void AMosesPlayerState::OnRep_SelectedCharacterId()
+{
+	UE_LOG(LogMosesPlayer, Verbose, TEXT("[PS][CL] OnRep_SelectedCharacterId=%d PS=%s"),
+		SelectedCharacterId,
+		*GetNameSafe(this));
+
+	BroadcastSelectedCharacterChanged(TEXT("OnRep_SelectedCharacterId"));
+
+	// [ADD]
+	NotifyLobbyPlayerStateChanged_Local(TEXT("OnRep_SelectedCharacterId"));
+}
+
+void AMosesPlayerState::OnRep_Room()
+{
+	UE_LOG(LogMosesPlayer, Warning, TEXT("[PS][CL] OnRep_Room RoomId=%s Host=%d PS=%s"),
+		*RoomId.ToString(EGuidFormats::DigitsWithHyphens),
+		bIsRoomHost ? 1 : 0,
+		*GetNameSafe(this));
+
+	// [ADD] ✅ 방 진입/퇴장/호스트 변경 UI 트리거 (Pending 해제의 핵심)
+	NotifyLobbyPlayerStateChanged_Local(TEXT("OnRep_Room"));
 }
 
 void AMosesPlayerState::OnRep_PlayerNickName()
 {
-	NotifyOwningLocalPlayer_PSChanged(this);
-}
-
-// ------------------------------------------------------------
-// Internal logs
-// ------------------------------------------------------------
-
-void AMosesPlayerState::LogASCInit(AActor* InAvatarActor) const
-{
-	UE_LOG(LogMosesGAS, Log, TEXT("[GAS] ASC Init PS=%s Avatar=%s Role=%s"),
+	UE_LOG(LogMosesPlayer, Warning, TEXT("[Nick][CL][PS] OnRep Nick=%s PS=%s Pid=%s"),
+		*PlayerNickName,
 		*GetNameSafe(this),
-		*GetNameSafe(InAvatarActor),
-		*UEnum::GetValueAsString(GetLocalRole()));
+		*PersistentId.ToString(EGuidFormats::DigitsWithHyphens));
+
+	// [ADD] ✅ 닉 변경도 동일 파이프
+	NotifyLobbyPlayerStateChanged_Local(TEXT("OnRep_PlayerNickName"));
 }
 
-void AMosesPlayerState::LogAttributes() const
+void AMosesPlayerState::NotifyLobbyPlayerStateChanged_Local(const TCHAR* Reason) const
 {
-	if (!AttributeSet)
+	APlayerController* PC = Cast<APlayerController>(GetOwner());
+	if (!PC || !PC->IsLocalController())
 	{
 		return;
 	}
 
-	UE_LOG(LogMosesGAS, Log, TEXT("[GAS] Attr HP=%.1f MaxHP=%.1f"),
-		AttributeSet->GetHealth(),
-		AttributeSet->GetMaxHealth());
+	ULocalPlayer* LP = PC->GetLocalPlayer();
+	if (!LP)
+	{
+		return;
+	}
+
+	UMosesLobbyLocalPlayerSubsystem* LPS = LP->GetSubsystem<UMosesLobbyLocalPlayerSubsystem>();
+	if (!LPS)
+	{
+		return;
+	}
+
+	UE_LOG(LogMosesSpawn, Verbose, TEXT("[LPS][NotifyFromPS] Reason=%s PS=%s"), Reason ? Reason : TEXT("None"), *GetNameSafe(this));
+
+	// 기존 파이프 재사용
+	LPS->NotifyPlayerStateChanged();
+}
+
+// ---- 아래 함수들은 네가 이미 가진 구현 유지(여기서는 생략해도 됨) ----
+void AMosesPlayerState::BroadcastSelectedCharacterChanged(const TCHAR* Reason)
+{
+	const int32 NewId = SelectedCharacterId;
+	OnSelectedCharacterChangedNative.Broadcast(NewId);
+	OnSelectedCharacterChangedBP.Broadcast(NewId);
+}
+
+void AMosesPlayerState::BindCombatDelegatesOnce()
+{
+	if (bCombatDelegatesBound || !CombatComponent)
+	{
+		return;
+	}
+
+	bCombatDelegatesBound = true;
+
+	CombatComponent->OnCombatDataChangedNative.AddUObject(this, &ThisClass::HandleCombatDataChanged_Native);
+	CombatComponent->OnCombatDataChangedBP.AddDynamic(this, &ThisClass::HandleCombatDataChanged_BP);
+}
+
+void AMosesPlayerState::HandleCombatDataChanged_Native(const TCHAR* Reason)
+{
+}
+
+void AMosesPlayerState::HandleCombatDataChanged_BP(FString Reason)
+{
+}
+
+// [ADD] 링커 에러 해결: 선언만 있고 정의가 없던 함수 구현
+void AMosesPlayerState::DOD_PS_Log(const UObject* Caller, const TCHAR* Phase) const
+{
+	const TCHAR* CallerName = Caller ? *Caller->GetName() : TEXT("None");
+	const TCHAR* PhaseStr = Phase ? Phase : TEXT("None");
+
+	UE_LOG(LogMosesPlayer, Warning,
+		TEXT("[PS][DOD][%s] PS=%s Caller=%s Nick=%s Pid=%s RoomId=%s Host=%d Ready=%d LoggedIn=%d SelChar=%d"),
+		PhaseStr,
+		*GetNameSafe(this),
+		CallerName,
+		*PlayerNickName,
+		*PersistentId.ToString(EGuidFormats::DigitsWithHyphens),
+		*RoomId.ToString(EGuidFormats::DigitsWithHyphens),
+		bIsRoomHost ? 1 : 0,
+		bReady ? 1 : 0,
+		bLoggedIn ? 1 : 0,
+		SelectedCharacterId);
 }

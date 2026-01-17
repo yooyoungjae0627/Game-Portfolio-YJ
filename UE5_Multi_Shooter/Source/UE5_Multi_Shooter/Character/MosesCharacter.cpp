@@ -1,4 +1,8 @@
-﻿#include "UE5_Multi_Shooter/Character/MosesCharacter.h"
+﻿// ============================================================================
+// MosesCharacter.cpp
+// ============================================================================
+
+#include "UE5_Multi_Shooter/Character/MosesCharacter.h"
 
 #include "TimerManager.h"
 #include "Net/UnrealNetwork.h"
@@ -19,7 +23,7 @@ AMosesCharacter::AMosesCharacter()
 {
 	bReplicates = true;
 
-	PrimaryActorTick.bCanEverTick = true;
+	PrimaryActorTick.bCanEverTick = false;
 	PrimaryActorTick.bStartWithTickEnabled = false;
 
 	PawnExtComponent = CreateDefaultSubobject<UMosesPawnExtensionComponent>(TEXT("PawnExtensionComponent"));
@@ -32,15 +36,33 @@ AMosesCharacter::AMosesCharacter()
 	bUseControllerRotationYaw = true;
 }
 
+bool AMosesCharacter::IsSprinting() const
+{
+	// [FIX] 로컬은 예측 값으로 UI/Anim을 더 부드럽게, 원격은 복제값
+	if (IsLocallyControlled())
+	{
+		return bLocalPredictedSprinting;
+	}
+
+	return bIsSprinting;
+}
+
+// =========================================================
+// Engine
+// =========================================================
+
 void AMosesCharacter::BeginPlay()
 {
 	Super::BeginPlay();
 
-	// 초기 속도 적용
+	// 초기 속도 적용(서버/클라 공통)
 	if (UCharacterMovementComponent* MoveComp = GetCharacterMovement())
 	{
 		MoveComp->MaxWalkSpeed = WalkSpeed;
 	}
+
+	UE_LOG(LogMosesMove, Log, TEXT("[MOVE] BeginPlay WalkSpeed=%.0f SprintSpeed=%.0f Pawn=%s Role=%s"),
+		WalkSpeed, SprintSpeed, *GetNameSafe(this), *UEnum::GetValueAsString(GetLocalRole()));
 }
 
 void AMosesCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
@@ -58,12 +80,10 @@ void AMosesCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputComp
 {
 	Super::SetupPlayerInputComponent(PlayerInputComponent);
 
-	// [FIX]
-	// 입력 바인딩은 "PC->InputComponent"가 아니라,
-	// 엔진이 준비된 InputComponent를 넘겨주는 SetupPlayerInputComponent에서 확정한다.
+	// 입력 바인딩은 PC->InputComponent가 아니라, 엔진이 준비된 InputComponent로 확정한다.
 	if (HeroComponent)
 	{
-		HeroComponent->SetupInputBindings(PlayerInputComponent); // [FIX]
+		HeroComponent->SetupInputBindings(PlayerInputComponent);
 	}
 	else
 	{
@@ -80,8 +100,8 @@ void AMosesCharacter::PossessedBy(AController* NewController)
 
 	TryInitASC_FromPlayerState();
 
-	// 서버는 스프린트 상태에 맞춰 속도 강제
-	OnRep_IsSprinting();
+	// [FIX] 서버는 SSOT 값을 기반으로 속도 동기화
+	ApplySprintSpeed_FromAuthoritativeState(TEXT("PossessedBy"));
 }
 
 void AMosesCharacter::UnPossessed()
@@ -107,6 +127,17 @@ void AMosesCharacter::OnRep_PlayerState()
 
 	StartLateJoinInitTimer();
 }
+
+void AMosesCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
+{
+	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+
+	DOREPLIFETIME(AMosesCharacter, bIsSprinting);
+}
+
+// =========================================================
+// GAS Init
+// =========================================================
 
 void AMosesCharacter::TryInitASC_FromPlayerState()
 {
@@ -172,6 +203,10 @@ void AMosesCharacter::LateJoinInitTick()
 	}
 }
 
+// =========================================================
+// Input
+// =========================================================
+
 void AMosesCharacter::Input_Move(const FVector2D& MoveValue)
 {
 	if (Controller && (MoveValue.X != 0.0f || MoveValue.Y != 0.0f))
@@ -187,10 +222,10 @@ void AMosesCharacter::Input_Move(const FVector2D& MoveValue)
 
 void AMosesCharacter::Input_SprintPressed()
 {
-	UE_LOG(LogMosesMove, Log, TEXT("[MOVE] Sprint On Requested Pawn=%s"), *GetNameSafe(this));
+	UE_LOG(LogMosesMove, Warning, TEXT("[Sprint][CL] Input Pressed Pawn=%s"), *GetNameSafe(this));
 
-	// 로컬 예측(체감)
-	ApplySprintSpeed(true);
+	// [FIX] 로컬 체감은 로컬 변수로만(Rep 변수 직접 수정 금지)
+	ApplySprintSpeed_LocalPredict(true);
 
 	// 서버 확정
 	Server_SetSprinting(true);
@@ -198,9 +233,9 @@ void AMosesCharacter::Input_SprintPressed()
 
 void AMosesCharacter::Input_SprintReleased()
 {
-	UE_LOG(LogMosesMove, Log, TEXT("[MOVE] Sprint Off Requested Pawn=%s"), *GetNameSafe(this));
+	UE_LOG(LogMosesMove, Warning, TEXT("[Sprint][CL] Input Released Pawn=%s"), *GetNameSafe(this));
 
-	ApplySprintSpeed(false);
+	ApplySprintSpeed_LocalPredict(false);
 	Server_SetSprinting(false);
 }
 
@@ -221,41 +256,89 @@ void AMosesCharacter::Input_InteractPressed()
 	Server_TryPickup(Target);
 }
 
-void AMosesCharacter::ApplySprintSpeed(bool bNewSprinting)
-{
-	bIsSprinting = bNewSprinting;
+// =========================================================
+// Sprint
+// =========================================================
 
+void AMosesCharacter::ApplySprintSpeed_LocalPredict(bool bNewSprinting)
+{
+	// 로컬 플레이어만 예측 허용
+	if (!IsLocallyControlled())
+	{
+		return;
+	}
+
+	bLocalPredictedSprinting = bNewSprinting;
+
+	if (UCharacterMovementComponent* MoveComp = GetCharacterMovement())
+	{
+		MoveComp->MaxWalkSpeed = bLocalPredictedSprinting ? SprintSpeed : WalkSpeed;
+	}
+
+	UE_LOG(LogMosesMove, Log, TEXT("[Sprint][CL] Predict Sprint=%d Speed=%.0f Pawn=%s"),
+		bLocalPredictedSprinting ? 1 : 0,
+		GetCharacterMovement() ? GetCharacterMovement()->MaxWalkSpeed : 0.f,
+		*GetNameSafe(this));
+}
+
+void AMosesCharacter::ApplySprintSpeed_FromAuthoritativeState(const TCHAR* From)
+{
+	// 서버/OnRep에서 “복제 상태”를 이동속도에 반영
 	if (UCharacterMovementComponent* MoveComp = GetCharacterMovement())
 	{
 		MoveComp->MaxWalkSpeed = bIsSprinting ? SprintSpeed : WalkSpeed;
 	}
 
-	UE_LOG(LogMosesMove, Log, TEXT("[MOVE] Sprint %s Speed=%.0f Pawn=%s"),
-		bIsSprinting ? TEXT("On") : TEXT("Off"),
+	// 로컬이면 예측값을 서버 확정값으로 동기화(튐 방지)
+	if (IsLocallyControlled())
+	{
+		bLocalPredictedSprinting = bIsSprinting;
+	}
+
+	UE_LOG(LogMosesMove, Warning, TEXT("[Sprint][%s] Apply Auth Sprint=%d Speed=%.0f Pawn=%s Role=%s"),
+		From ? From : TEXT("None"),
+		bIsSprinting ? 1 : 0,
 		GetCharacterMovement() ? GetCharacterMovement()->MaxWalkSpeed : 0.f,
-		*GetNameSafe(this));
+		*GetNameSafe(this),
+		*UEnum::GetValueAsString(GetLocalRole()));
 }
 
 void AMosesCharacter::Server_SetSprinting_Implementation(bool bNewSprinting)
 {
 	// ✅ 서버 단일진실
+	if (!HasAuthority())
+	{
+		return;
+	}
+
 	if (bIsSprinting == bNewSprinting)
 	{
 		return;
 	}
 
 	bIsSprinting = bNewSprinting;
-	OnRep_IsSprinting();
+
+	UE_LOG(LogMosesMove, Warning, TEXT("[Sprint][SV] Set Sprint=%d Pawn=%s"),
+		bIsSprinting ? 1 : 0,
+		*GetNameSafe(this));
+
+	// 서버 즉시 반영(리스닝 포함)
+	ApplySprintSpeed_FromAuthoritativeState(TEXT("Server"));
+	ForceNetUpdate();
 }
 
 void AMosesCharacter::OnRep_IsSprinting()
 {
-	// ✅ 모든 프록시가 동일한 속도 정책을 가지도록 강제
-	if (UCharacterMovementComponent* MoveComp = GetCharacterMovement())
-	{
-		MoveComp->MaxWalkSpeed = bIsSprinting ? SprintSpeed : WalkSpeed;
-	}
+	UE_LOG(LogMosesMove, Warning, TEXT("[Sprint][CL] OnRep Sprint=%d Pawn=%s"),
+		bIsSprinting ? 1 : 0,
+		*GetNameSafe(this));
+
+	ApplySprintSpeed_FromAuthoritativeState(TEXT("OnRep"));
 }
+
+// =========================================================
+// Pickup
+// =========================================================
 
 APickupBase* AMosesCharacter::FindPickupTarget_Local() const
 {
@@ -263,7 +346,7 @@ APickupBase* AMosesCharacter::FindPickupTarget_Local() const
 	const FVector Forward = GetControlRotation().Vector();
 	const FVector End = Start + Forward * PickupTraceDistance;
 
-	FCollisionQueryParams Params(SCENE_QUERY_STAT(PickupTrace), /*bTraceComplex*/ false);
+	FCollisionQueryParams Params(SCENE_QUERY_STAT(PickupTrace), false);
 	Params.AddIgnoredActor(this);
 
 	FHitResult Hit;
@@ -278,20 +361,17 @@ APickupBase* AMosesCharacter::FindPickupTarget_Local() const
 
 void AMosesCharacter::Server_TryPickup_Implementation(APickupBase* Target)
 {
-	// ✅ 서버 검증 1: 권한
 	if (!HasAuthority())
 	{
 		return;
 	}
 
-	// ✅ 서버 검증 2: 타겟 유효
 	if (!IsValid(Target))
 	{
 		UE_LOG(LogMosesPickup, Warning, TEXT("[PICKUP] FAIL Reason=InvalidTarget Pawn=%s"), *GetNameSafe(this));
 		return;
 	}
 
-	// ✅ 서버 검증 3: 이미 소비됨
 	if (Target->IsConsumed())
 	{
 		UE_LOG(LogMosesPickup, Warning, TEXT("[PICKUP] FAIL Reason=Consumed Target=%s Pawn=%s"),
@@ -299,12 +379,5 @@ void AMosesCharacter::Server_TryPickup_Implementation(APickupBase* Target)
 		return;
 	}
 
-	// ✅ 최종 확정: Pickup 자신이 원자성/거리/재진입 방어를 수행
 	Target->Server_TryConsume(this);
-}
-
-void AMosesCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
-{
-	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
-	DOREPLIFETIME(AMosesCharacter, bIsSprinting);
 }

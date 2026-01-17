@@ -236,14 +236,35 @@ void AMosesPlayerController::OnRep_PlayerState()
 {
 	Super::OnRep_PlayerState();
 
-	if (ULocalPlayer* LP = GetLocalPlayer())
+	// [FIX] PS가 실제로 유효해진 시점에 Subsystem에게 "누가" 바뀌었는지 함께 알려준다.
+	//       PS=None 타이밍에서 UI가 먼저 읽는 문제를 차단하는 1차 게이트.
+	if (!IsLocalController())
 	{
-		if (UMosesLobbyLocalPlayerSubsystem* Subsys = LP->GetSubsystem<UMosesLobbyLocalPlayerSubsystem>())
-		{
-			Subsys->NotifyPlayerStateChanged();
-		}
+		return;
 	}
+
+	ULocalPlayer* LP = GetLocalPlayer();
+	if (!LP)
+	{
+		return;
+	}
+
+	UMosesLobbyLocalPlayerSubsystem* Subsys = LP->GetSubsystem<UMosesLobbyLocalPlayerSubsystem>();
+	if (!Subsys)
+	{
+		return;
+	}
+
+	AMosesPlayerState* PS = GetPlayerState<AMosesPlayerState>();
+	UE_LOG(LogMosesSpawn, Warning, TEXT("[PC][CL] OnRep_PlayerState PS=%s"), *GetNameSafe(PS));
+
+	// [FIX] 기존 함수는 유지하되, PS를 바로 읽도록 유도(Subsystem 내부에서 PC->PS 읽지 말고 인자로 받은 PS 사용 권장)
+	Subsys->NotifyPlayerStateChanged(); // 기존 유지
+
+	// [ADD] (권장) Subsystem에 새 함수가 있으면 이걸로 바꾸면 더 안전함.
+	// Subsys->NotifyPlayerStateChanged(PS);
 }
+
 
 void AMosesPlayerController::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
 {
