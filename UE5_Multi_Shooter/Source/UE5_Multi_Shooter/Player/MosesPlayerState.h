@@ -1,6 +1,5 @@
 ﻿#pragma once
 
-#include "CoreMinimal.h"
 #include "GameFramework/PlayerState.h"
 #include "AbilitySystemInterface.h"     // IAbilitySystemInterface(ASC 접근 표준 인터페이스)
 #include "MosesPlayerState.generated.h" 
@@ -8,7 +7,7 @@
 class UAbilitySystemComponent;          // GetAbilitySystemComponent 반환 타입(전방선언)
 class UMosesAbilitySystemComponent;     // 커스텀 ASC
 class UMosesAttributeSet;               // 커스텀 AttributeSet
-
+class UMosesCombatComponent;
 /**
  * AMosesPlayerState
  *
@@ -125,6 +124,11 @@ public:
 	}
 
 	// ---------------------------
+	// ✅ Combat Component access (Single source of truth)
+	// ---------------------------
+	UMosesCombatComponent* GetCombatComponent() const { return CombatComponent; }
+
+	// ---------------------------
 	// Debug / DoD Logs
 	// ---------------------------
 
@@ -220,6 +224,12 @@ private:
 	/** Lyra-style PawnData(완성 전엔 nullptr) */
 	UPROPERTY()
 	TObjectPtr<const UObject> PawnData = nullptr;
+
+	// ---------------------------
+	// ✅ CombatComponent (PlayerState single truth)
+	// ---------------------------
+	UPROPERTY(VisibleAnywhere, Category = "Moses|Combat")
+	TObjectPtr<UMosesCombatComponent> CombatComponent;
 
 private:
 	// ---------------------------

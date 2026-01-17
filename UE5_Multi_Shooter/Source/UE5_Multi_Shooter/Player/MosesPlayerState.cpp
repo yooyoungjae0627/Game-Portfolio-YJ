@@ -7,10 +7,13 @@
 #include "UE5_Multi_Shooter/GAS/AttributeSet/MosesAttributeSet.h"
 #include "UE5_Multi_Shooter/GAS/MosesGameplayTags.h"
 
+#include "UE5_Multi_Shooter/Combat/MosesCombatComponent.h"
+
 #include "Net/UnrealNetwork.h"
 
 #include "Engine/LocalPlayer.h"
 #include "Engine/GameInstance.h"
+
 #include "GameFramework/PlayerController.h"
 
 AMosesPlayerState::AMosesPlayerState()
@@ -32,6 +35,8 @@ AMosesPlayerState::AMosesPlayerState()
 
 	// ✅ AttributeSet도 PS에 소유( Pawn은 죽어서 교체되지만 PS는 유지 )
 	AttributeSet = CreateDefaultSubobject<UMosesAttributeSet>(TEXT("MosesAttributeSet"));
+
+	CombatComponent = CreateDefaultSubobject<UMosesCombatComponent>(TEXT("MosesCombatComponent"));
 }
 
 void AMosesPlayerState::PostInitializeComponents()

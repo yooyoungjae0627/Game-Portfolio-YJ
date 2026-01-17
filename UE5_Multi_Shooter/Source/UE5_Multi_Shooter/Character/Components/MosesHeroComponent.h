@@ -1,35 +1,80 @@
-#pragma once
+ï»¿#pragma once
 
-#include "CoreMinimal.h"
-#include "Components/PawnComponent.h"
-#include "GameplayTagContainer.h"
+#include "Components/ActorComponent.h"
+#include "InputActionValue.h"
 #include "MosesHeroComponent.generated.h"
 
+class UInputMappingContext;
+class UInputAction;
+class UMosesInputComponent;
 class UMosesCameraMode;
 
 /**
- * UMosesHeroComponent (Simple)
- * - ·ÎÄÃ ÇÃ·¹ÀÌ¾î Àü¿ë: Ä«¸Ş¶ó ¸ğµå µ¨¸®°ÔÀÌÆ® ¹ÙÀÎµù + ÀÔ·Â ÃÊ±âÈ­ ÈÅ
- * - Lyra InitState / GameFrameworkComponentManager Ã¼ÀÎ Á¦°Å ¹öÀü
+ * UMosesHeroComponent
+ * - ë¡œì»¬ í”Œë ˆì´ì–´ ì „ìš©: Enhanced Input MappingContext ì¶”ê°€ + InputAction ë°”ì¸ë”©
+ * - BeginPlay ì‹œì ì— InputComponentê°€ ì•„ì§ ì¤€ë¹„ë˜ì§€ ì•Šì„ ìˆ˜ ìˆìœ¼ë¯€ë¡œ, íƒ€ì´ë¨¸ë¡œ ì¬ì‹œë„í•œë‹¤. // [MOD]
  */
 UCLASS(ClassGroup = (Moses), meta = (BlueprintSpawnableComponent))
-class UE5_MULTI_SHOOTER_API UMosesHeroComponent : public UPawnComponent
+class UE5_MULTI_SHOOTER_API UMosesHeroComponent : public UActorComponent
 {
 	GENERATED_BODY()
 
 public:
-	UMosesHeroComponent(const FObjectInitializer& ObjectInitializer = FObjectInitializer::Get());
+	UMosesHeroComponent(const FObjectInitializer& ObjectInitializer);
 
 protected:
 	virtual void BeginPlay() override;
 
 private:
-	/** PawnData -> DefaultCameraMode ¹İÈ¯ */
+	// --- Local Pawn Helper ---
+	bool IsLocalPlayerPawn() const;
+
+	// --- Camera ---
 	TSubclassOf<UMosesCameraMode> DetermineCameraMode() const;
 
-	/** ÀÔ·Â ÃÊ±âÈ­ ÈÅ (Áö±İÀº »À´ë¸¸) */
-	void InitializePlayerInput();
+	// --- Input Init ---
+	void InitializePlayerInput();                 // ê¸°ì¡´ ìœ ì§€
+	void TryInitializePlayerInput();              // [MOD] ì¬ì‹œë„ ë˜í¼
+	void ScheduleRetryInitializePlayerInput();    // [MOD] íƒ€ì´ë¨¸ ì¬ì‹œë„
 
-	/** ·ÎÄÃ ÇÃ·¹ÀÌ¾î ¿©ºÎ */
-	bool IsLocalPlayerPawn() const;
+	// --- Input Handlers ---
+	void HandleMove(const FInputActionValue& Value);
+	void HandleSprintPressed(const FInputActionValue& Value);
+	void HandleSprintReleased(const FInputActionValue& Value);
+	void HandleJumpPressed(const FInputActionValue& Value);
+	void HandleInteractPressed(const FInputActionValue& Value);
+
+private:
+	// ---------------- Input Assets (BPì—ì„œ ì§€ì •) ----------------
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Moses|Input", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UInputMappingContext> InputMappingContext = nullptr;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Moses|Input", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UInputAction> IA_Move = nullptr;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Moses|Input", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UInputAction> IA_Sprint = nullptr;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Moses|Input", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UInputAction> IA_Jump = nullptr;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Moses|Input", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UInputAction> IA_Interact = nullptr;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Moses|Input", meta = (AllowPrivateAccess = "true"))
+	int32 MappingPriority = 0;
+
+private:
+	// ---------------- Runtime Guards ----------------
+	bool bMappingContextAdded = false; // [MOD] AddMappingContext 1íšŒ ë³´ì¥
+	bool bInputBound = false;          // [MOD] BindAction 1íšŒ ë³´ì¥
+
+	// ---------------- Retry (BeginPlay íƒ€ì´ë° ë¬¸ì œ ë°©ì§€) ----------------
+	int32 InputInitAttempts = 0;             // [MOD]
+	UPROPERTY()
+	float InputInitRetryIntervalSec = 0.05f; // [MOD] 50ms
+	UPROPERTY()
+	int32 InputInitMaxAttempts = 40;         // [MOD] 40íšŒë©´ 2ì´ˆ ì •ë„ ì¬ì‹œë„
+
+	FTimerHandle InputInitRetryTimerHandle;  // [MOD]
 };
