@@ -1,29 +1,31 @@
-// Fill out your copyright notice in the Description page of Project Settings.
-
 #pragma once
 
+#include "CoreMinimal.h"
 #include "UObject/Object.h"
 #include "MosesCameraMode.generated.h"
 
-// TPS 카메라 모드 / FPS 카메라 모드 / 차 탑승 카메라 모드...
 class UMosesCameraComponent;
+template <class TClass> class TSubclassOf;
 
-/**
- * [0,1]을 BlendFunction에 맞게 재매핑을 위한 타입
- */
 UENUM(BlueprintType)
 enum class EMosesCameraModeBlendFunction : uint8
 {
 	Linear,
-	/**
-	 * EaseIn/Out은 exponent 값에 의해 조절된다:
-	 */
 	EaseIn,
 	EaseOut,
 	EaseInOut,
 	COUNT
 };
 
+/**
+ * FMosesCameraModeView
+ *
+ * [기능]
+ * - 카메라 최종 출력 값 묶음(Location/Rotation/ControlRotation/FOV)
+ *
+ * [명세]
+ * - Blend()로 다른 View와 가중치 기반 합성 가능
+ */
 struct FMosesCameraModeView
 {
 	FMosesCameraModeView();
@@ -36,82 +38,97 @@ struct FMosesCameraModeView
 	float FieldOfView;
 };
 
-// Camera Blending 대상 유닛
+/**
+ * UMosesCameraMode
+ *
+ * [기능]
+ * - TPS/FPS/Sniper 같은 "카메라 모드 1개"의 계산 단위.
+ *
+ * [명세]
+ * - Outer는 UMosesCameraComponent여야 한다(스택이 NewObject로 생성).
+ * - UpdateView()에서 View를 계산하고, UpdateBlending()에서 BlendWeight를 계산.
+ * - 판정/입력 없음(표시 전용).
+ */
 UCLASS(Abstract, NotBlueprintable)
 class UE5_MULTI_SHOOTER_API UMosesCameraMode : public UObject
 {
 	GENERATED_BODY()
-	
+
 public:
 	UMosesCameraMode(const FObjectInitializer& ObjectInitializer = FObjectInitializer::Get());
 
 	UMosesCameraComponent* GetMosesCameraComponent() const;
 	AActor* GetTargetActor() const;
+
 	FVector GetPivotLocation() const;
 	FRotator GetPivotRotation() const;
-	void UpdateBlending(float DeltaTime);
-	void UpdateCameraMode(float DeltaTime);
 
+	void UpdateCameraMode(float DeltaTime);
+	void ResetForNewPush(float InitialBlendWeight);
+
+protected:
 	virtual void UpdateView(float DeltaTime);
 
-	/** CameraMode에 의해 생성된 CameraModeView */
+private:
+	void UpdateBlending(float DeltaTime);
+
+public:
 	FMosesCameraModeView View;
 
-	/** Camera Mode의 FOV */
-	UPROPERTY(EditDefaultsOnly, Category = "View", Meta = (UIMin = "5.0", UIMax = "170", ClampMin = "5.0", Clampmax = "170.0"))
-	float FieldOfView;
+	UPROPERTY(EditDefaultsOnly, Category = "Moses|View", meta = (UIMin = "5.0", UIMax = "170.0", ClampMin = "5.0", ClampMax = "170.0"))
+	float FieldOfView = 80.0f;
 
-	/** View에 대한 Pitch [Min, Max] */
-	UPROPERTY(EditDefaultsOnly, Category = "View", Meta = (UIMin = "-89.9", UIMax = "89.9", ClampMin = "-89.9", Clampmax = "89.9"))
-	float ViewPitchMin;
+	UPROPERTY(EditDefaultsOnly, Category = "Moses|View", meta = (UIMin = "-89.9", UIMax = "89.9", ClampMin = "-89.9", ClampMax = "89.9"))
+	float ViewPitchMin = -89.0f;
 
-	UPROPERTY(EditDefaultsOnly, Category = "View", Meta = (UIMin = "-89.9", UIMax = "89.9", ClampMin = "-89.9", Clampmax = "89.9"))
-	float ViewPitchMax;
+	UPROPERTY(EditDefaultsOnly, Category = "Moses|View", meta = (UIMin = "-89.9", UIMax = "89.9", ClampMin = "-89.9", ClampMax = "89.9"))
+	float ViewPitchMax = 89.0f;
 
-	/** 얼마동안 Blend를 진행할지 시간을 의미 */
-	UPROPERTY(EditDefaultsOnly, Category = "Blending")
-	float BlendTime;
+	UPROPERTY(EditDefaultsOnly, Category = "Moses|Blending")
+	float BlendTime = 0.15f;
 
-	/** 선형적인 Blend 값 [0, 1] */
-	float BlendAlpha;
+	UPROPERTY(EditDefaultsOnly, Category = "Moses|Blending")
+	float BlendExponent = 4.0f;
 
-	/**
-	 * 해당 CameraMode의 최종 Blend 값
-	 * 앞서 BlendAlpha의 선형 값을 매핑하여 최종 BlendWeight를 계산 (코드를 보며, 이해해보자)
-	 */
-	float BlendWeight;
+	UPROPERTY(EditDefaultsOnly, Category = "Moses|Blending")
+	EMosesCameraModeBlendFunction BlendFunction = EMosesCameraModeBlendFunction::EaseOut;
 
-	/**
-	 * EaseIn/Out에 사용한 Exponent
-	 */
-	UPROPERTY(EditDefaultsOnly, Category = "Blending")
-	float BlendExponent;
-
-	/** Blend function */
-	EMosesCameraModeBlendFunction BlendFunction;
+public:
+	float BlendAlpha = 1.0f;
+	float BlendWeight = 1.0f;
 };
 
-// Camera Blending을 담당하는 객체
+/**
+ * UMosesCameraModeStack
+ *
+ * [기능]
+ * - CameraMode들을 스택으로 쌓고, BlendWeight로 합성하여 최종 View를 만든다.
+ *
+ * [명세]
+ * - PushCameraMode(): 모드를 Top(0)에 올림
+ * - EvaluateStack(): Update + Blend로 최종 View 계산
+ * - Bottom(마지막) 모드는 항상 BlendWeight=1 유지
+ */
 UCLASS()
-class UMosesCameraModeStack : public UObject
+class UE5_MULTI_SHOOTER_API UMosesCameraModeStack : public UObject
 {
 	GENERATED_BODY()
+
 public:
 	UMosesCameraModeStack(const FObjectInitializer& ObjectInitializer = FObjectInitializer::Get());
 
-	UMosesCameraMode* GetCameraModeInstance(TSubclassOf<UMosesCameraMode>& CameraModeClass);
-	void PushCameraMode(TSubclassOf<UMosesCameraMode>& CameraModeClass);
-	void UpdateStack(float DeltaTime);
-	void BlendStack(FMosesCameraModeView& OutCameraModeView) const;
+	void PushCameraMode(TSubclassOf<UMosesCameraMode> CameraModeClass);
 	void EvaluateStack(float DeltaTime, FMosesCameraModeView& OutCameraModeView);
 
-	// 생성된 CameraMode를 관리
+private:
+	UMosesCameraMode* GetCameraModeInstance(TSubclassOf<UMosesCameraMode> CameraModeClass);
+	void UpdateStack(float DeltaTime);
+	void BlendStack(FMosesCameraModeView& OutCameraModeView) const;
+
+private:
 	UPROPERTY()
 	TArray<TObjectPtr<UMosesCameraMode>> CameraModeInstances;
 
-	// Camera Matrix Blend 업데이트 진행 큐
 	UPROPERTY()
 	TArray<TObjectPtr<UMosesCameraMode>> CameraModeStack;
-
-	
 };

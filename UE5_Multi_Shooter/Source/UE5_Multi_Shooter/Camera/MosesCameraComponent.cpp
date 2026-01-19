@@ -1,23 +1,25 @@
-﻿// Fill out your copyright notice in the Description page of Project Settings.
+﻿#include "UE5_Multi_Shooter/Camera/MosesCameraComponent.h"
 
+#include "GameFramework/Pawn.h"
+#include "GameFramework/PlayerController.h"
 
-#include "MosesCameraComponent.h"
+#include "UE5_Multi_Shooter/MosesLogChannels.h"
+#include "UE5_Multi_Shooter/Camera/MosesCameraMode.h"
 
-#include "MosesCameraMode.h"
-
-
-UMosesCameraComponent::UMosesCameraComponent(const FObjectInitializer& ObjectInitializer) : Super(ObjectInitializer), CameraModeStack(nullptr)
+UMosesCameraComponent::UMosesCameraComponent(const FObjectInitializer& ObjectInitializer)
+	: Super(ObjectInitializer)
 {
-
+	PrimaryComponentTick.bCanEverTick = false;
+	PrimaryComponentTick.bStartWithTickEnabled = false;
 }
 
 void UMosesCameraComponent::OnRegister()
 {
 	Super::OnRegister();
 
-	if (CameraModeStack == nullptr)
+	// 스택 객체는 BeginPlay 없이도 되므로 NewObject로 생성
+	if (!CameraModeStack)
 	{
-		// 초기화 (Beingplay와 같은)가 딱히 필요없는 객체로 NewObject로 할당
 		CameraModeStack = NewObject<UMosesCameraModeStack>(this);
 	}
 }
@@ -26,29 +28,81 @@ void UMosesCameraComponent::GetCameraView(float DeltaTime, FMinimalViewInfo& Des
 {
 	check(CameraModeStack);
 
+	// 1) 이번 프레임에 사용할 모드를 스택에 Push
 	UpdateCameraModes();
 
+	// 2) 스택 평가(업데이트+블렌딩)로 최종 View 계산
 	FMosesCameraModeView CameraModeView;
 	CameraModeStack->EvaluateStack(DeltaTime, CameraModeView);
 
-	if (APawn* TargetPawn = Cast<APawn>(GetTargetActor()))
+	// 3) 로컬 컨트롤러만 ControlRotation 갱신(서버/타인 영향 차단)
+	UpdateLocalControlRotationIfNeeded(CameraModeView);
+
+	// 4) 카메라 컴포넌트 트랜스폼과 DesiredView에 적용
+	SetWorldLocationAndRotation(CameraModeView.Location, CameraModeView.Rotation);
+	FieldOfView = CameraModeView.FieldOfView;
+
+	ApplyCameraViewToDesiredView(CameraModeView, DesiredView);
+}
+
+void UMosesCameraComponent::UpdateCameraModes()
+{
+	check(CameraModeStack);
+
+	const TSubclassOf<UMosesCameraMode> ModeClass = ResolveCameraModeClass();
+	if (ModeClass)
 	{
-		if (APlayerController* PC = TargetPawn->GetController<APlayerController>())
+		CameraModeStack->PushCameraMode(ModeClass);
+		return;
+	}
+
+	if (!bLoggedNoModeClassOnce)
+	{
+		UE_LOG(LogMosesCamera, Error, TEXT("[MosesCamera] No CameraModeClass (Delegate + Default are null)"));
+		bLoggedNoModeClassOnce = true;
+	}
+}
+
+TSubclassOf<UMosesCameraMode> UMosesCameraComponent::ResolveCameraModeClass() const
+{
+	// Delegate가 있으면 우선 사용
+	if (DetermineCameraModeDelegate.IsBound())
+	{
+		return DetermineCameraModeDelegate.Execute();
+	}
+
+	// 없으면 폴백
+	if (!bLoggedNoDelegateOnce)
+	{
+		UE_LOG(LogMosesCamera, Warning, TEXT("[MosesCamera] Delegate not bound -> fallback DefaultCameraModeClass"));
+		bLoggedNoDelegateOnce = true;
+	}
+
+	return DefaultCameraModeClass;
+}
+
+void UMosesCameraComponent::UpdateLocalControlRotationIfNeeded(const FMosesCameraModeView& CameraModeView)
+{
+	if (APawn* Pawn = Cast<APawn>(GetTargetActor()))
+	{
+		if (APlayerController* PC = Pawn->GetController<APlayerController>())
 		{
-			// ✅ 로컬 컨트롤러만 ControlRotation을 직접 갱신 (서버/타인 영향 차단)
+			// 로컬 컨트롤러만 갱신
 			if (PC->IsLocalController())
 			{
 				PC->SetControlRotation(CameraModeView.ControlRotation);
 			}
 		}
 	}
+}
 
-	SetWorldLocationAndRotation(CameraModeView.Location, CameraModeView.Rotation);
-	FieldOfView = CameraModeView.FieldOfView;
-
+void UMosesCameraComponent::ApplyCameraViewToDesiredView(const FMosesCameraModeView& CameraModeView, FMinimalViewInfo& DesiredView)
+{
 	DesiredView.Location = CameraModeView.Location;
 	DesiredView.Rotation = CameraModeView.Rotation;
 	DesiredView.FOV = CameraModeView.FieldOfView;
+
+	// CameraComponent 기본 설정을 그대로 전달
 	DesiredView.OrthoWidth = OrthoWidth;
 	DesiredView.OrthoNearClipPlane = OrthoNearClipPlane;
 	DesiredView.OrthoFarClipPlane = OrthoFarClipPlane;
@@ -56,50 +110,10 @@ void UMosesCameraComponent::GetCameraView(float DeltaTime, FMinimalViewInfo& Des
 	DesiredView.bConstrainAspectRatio = bConstrainAspectRatio;
 	DesiredView.bUseFieldOfViewForLOD = bUseFieldOfViewForLOD;
 	DesiredView.ProjectionMode = ProjectionMode;
+
 	DesiredView.PostProcessBlendWeight = PostProcessBlendWeight;
 	if (PostProcessBlendWeight > 0.0f)
 	{
 		DesiredView.PostProcessSettings = PostProcessSettings;
 	}
 }
-
-void UMosesCameraComponent::UpdateCameraModes()
-{
-	check(CameraModeStack);
-
-	TSubclassOf<UMosesCameraMode> CameraModeClass = nullptr;
-
-	// 1) 정상 루트: HeroComponent가 바인딩한 Delegate에서 가져오기
-	if (DetermineCameraModeDelegate.IsBound())
-	{
-		CameraModeClass = DetermineCameraModeDelegate.Execute();
-	}
-	else
-	{
-		// 2) 폴백 루트: DefaultCameraModeClass 사용 (즉시 화면 정상화)
-		static bool bLoggedOnce_NoDelegate = false;
-		if (!bLoggedOnce_NoDelegate)
-		{
-			UE_LOG(LogTemp, Warning, TEXT("[MosesCamera] DetermineCameraModeDelegate NOT bound -> use DefaultCameraModeClass fallback"));
-			bLoggedOnce_NoDelegate = true;
-		}
-
-		CameraModeClass = DefaultCameraModeClass;
-	}
-
-	if (CameraModeClass)
-	{
-		CameraModeStack->PushCameraMode(CameraModeClass);
-		UE_LOG(LogTemp, Verbose, TEXT("[MosesCamera] PushCameraMode=%s"), *GetNameSafe(CameraModeClass));
-	}
-	else
-	{
-		static bool bLoggedOnce_Null = false;
-		if (!bLoggedOnce_Null)
-		{
-			UE_LOG(LogTemp, Error, TEXT("[MosesCamera] No CameraModeClass (delegate + fallback both null). Camera will be invalid."));
-			bLoggedOnce_Null = true;
-		}
-	}
-}
-

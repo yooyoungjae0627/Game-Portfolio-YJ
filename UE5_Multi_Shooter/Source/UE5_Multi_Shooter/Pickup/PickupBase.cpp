@@ -1,138 +1,97 @@
 ﻿#include "UE5_Multi_Shooter/Pickup/PickupBase.h"
 
-#include "Components/SphereComponent.h"
-#include "Components/StaticMeshComponent.h"
-#include "GameFramework/Pawn.h"
-#include "Net/UnrealNetwork.h"
-
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
+#include "UE5_Multi_Shooter/Character/PlayerCharacter.h"
 
 APickupBase::APickupBase()
 {
 	bReplicates = true;
-	SetReplicateMovement(true);
-
-	SphereCollision = CreateDefaultSubobject<USphereComponent>(TEXT("SphereCollision"));
-	SetRootComponent(SphereCollision);
-	SphereCollision->InitSphereRadius(80.f);
-	SphereCollision->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
-	SphereCollision->SetCollisionObjectType(ECC_WorldDynamic);
-	SphereCollision->SetCollisionResponseToAllChannels(ECR_Ignore);
-	SphereCollision->SetCollisionResponseToChannel(ECC_Pawn, ECR_Overlap);
-
-	Mesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("Mesh"));
-	Mesh->SetupAttachment(SphereCollision);
-	Mesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	PrimaryActorTick.bCanEverTick = false;
 }
 
-void APickupBase::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
+void APickupBase::BeginPlay()
 {
-	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
-	DOREPLIFETIME(APickupBase, bConsumed);
+	Super::BeginPlay();
 }
 
-bool APickupBase::Server_TryConsume(APawn* InstigatorPawn)
+void APickupBase::ServerTryConsume(APlayerCharacter* RequestingPawn)
 {
-	check(HasAuthority());
-
-	// ✅ 원자성 핵심 1: 이미 먹힘
-	if (bConsumed)
+	// 1) 서버만 확정 (클라에서 호출되어도 무시)
+	if (!HasAuthority())
 	{
-		UE_LOG(LogMosesPickup, Warning, TEXT("[PICKUP] FAIL Reason=Consumed Pickup=%s Pawn=%s"),
-			*GetNameSafe(this), *GetNameSafe(InstigatorPawn));
-		return false;
+		return;
 	}
 
-	// ✅ 원자성 핵심 2: 재진입 가드 (RPC 중복/재전송/연타 방어)
-	if (bProcessing)
+	// 2) 원자성 잠금: 처리 중이거나 이미 소비됐으면 즉시 실패
+	if (bProcessing || bConsumed)
 	{
-		UE_LOG(LogMosesPickup, Warning, TEXT("[PICKUP] FAIL Reason=Processing Pickup=%s Pawn=%s"),
-			*GetNameSafe(this), *GetNameSafe(InstigatorPawn));
-		return false;
+		UE_LOG(LogMosesPickup, Log, TEXT("[Pickup][SV] Reject(Processing/Consumed) Target=%s Pawn=%s"),
+			*GetNameSafe(this), *GetNameSafe(RequestingPawn));
+		return;
 	}
 
 	bProcessing = true;
 
-	FString FailReason;
-	if (!Server_ValidateConsume(InstigatorPawn, FailReason))
+	// 3) 거리/유효성 검사
+	if (!CanConsume_Server(RequestingPawn))
 	{
-		UE_LOG(LogMosesPickup, Warning, TEXT("[PICKUP/SEC] FAIL Reason=%s Pickup=%s Pawn=%s"),
-			*FailReason, *GetNameSafe(this), *GetNameSafe(InstigatorPawn));
-
 		bProcessing = false;
-		return false;
+
+		UE_LOG(LogMosesPickup, Log, TEXT("[Pickup][SV] Reject(Invalid/TooFar) Target=%s Pawn=%s"),
+			*GetNameSafe(this), *GetNameSafe(RequestingPawn));
+		return;
 	}
 
-	// ✅ 보상 적용(파생 클래스가 구현)
-	if (!Server_ApplyPickup(InstigatorPawn))
-	{
-		UE_LOG(LogMosesPickup, Warning, TEXT("[PICKUP] FAIL Reason=ApplyFailed Pickup=%s Pawn=%s"),
-			*GetNameSafe(this), *GetNameSafe(InstigatorPawn));
+	// 4) 보상 적용 시도 (핵심 변경점)
+	// - 자식 클래스(APickup_Ammo 등)가 override한 Server_ApplyPickup()에서
+	//   실제 지급/적용을 수행하고 성공/실패를 반환한다.
+	const bool bApplied = Server_ApplyPickup(RequestingPawn); // [MODIFIED]
 
+	if (!bApplied)
+	{
+		// 적용 실패면 소비 확정하면 안 된다.
 		bProcessing = false;
-		return false;
+
+		UE_LOG(LogMosesPickup, Log, TEXT("[Pickup][SV] Reject(ApplyFailed) Target=%s Pawn=%s"),
+			*GetNameSafe(this), *GetNameSafe(RequestingPawn));
+		return;
 	}
 
-	// ✅ 소비 확정
+	// 5) 여기부터 성공 확정
 	bConsumed = true;
-	OnRep_Consumed(); // 서버도 즉시 처리
 
-	UE_LOG(LogMosesPickup, Log, TEXT("[PICKUP] OK Pickup=%s Pawn=%s"),
-		*GetNameSafe(this), *GetNameSafe(InstigatorPawn));
+	UE_LOG(LogMosesPickup, Warning, TEXT("[Pickup][SV] SUCCESS Consume Target=%s Pawn=%s"),
+		*GetNameSafe(this), *GetNameSafe(RequestingPawn));
 
-	// ✅ Destroy는 서버만
+	bProcessing = false;
+
+	// 6) 기본 동작: 소비되면 제거
+	// - 나중에 Respawn/재생성 시스템이 생기면 여기만 바꾸면 된다.
 	Destroy();
+}
 
-	return true;
+
+bool APickupBase::CanConsume_Server(APlayerCharacter* RequestingPawn) const
+{
+	if (!RequestingPawn)
+	{
+		return false;
+	}
+
+	const float DistSq = FVector::DistSquared(RequestingPawn->GetActorLocation(), GetActorLocation());
+	return DistSq <= FMath::Square(ConsumeDistance);
+}
+
+void APickupBase::ApplyReward_Server(APlayerCharacter* RequestingPawn)
+{
+	// 베이스는 "보상 없음" (자식에서 반드시 override 추천)
+	UE_LOG(LogMosesPickup, Log, TEXT("[Pickup][SV] ApplyReward(Base) Target=%s Pawn=%s"),
+		*GetNameSafe(this), *GetNameSafe(RequestingPawn));
 }
 
 bool APickupBase::Server_ApplyPickup(APawn* InstigatorPawn)
 {
-	// Base는 아무 보상도 안 줌 (파생에서 구현)
-	return IsValid(InstigatorPawn);
-}
-
-bool APickupBase::Server_ValidateConsume(APawn* InstigatorPawn, FString& OutFailReason) const
-{
-	if (!HasAuthority())
-	{
-		OutFailReason = TEXT("NoAuthority");
-		return false;
-	}
-
-	if (!IsValid(InstigatorPawn))
-	{
-		OutFailReason = TEXT("InvalidPawn");
-		return false;
-	}
-
-	if (!IsValid(this) || IsActorBeingDestroyed())
-	{
-		OutFailReason = TEXT("InvalidPickup");
-		return false;
-	}
-
-	const float Dist = GetDistanceToPawn(InstigatorPawn);
-	if (Dist > InteractionRange)
-	{
-		OutFailReason = FString::Printf(TEXT("TooFar(%.1f>%.1f)"), Dist, InteractionRange);
-		return false;
-	}
-
-	return true;
-}
-
-float APickupBase::GetDistanceToPawn(APawn* InstigatorPawn) const
-{
-	if (!IsValid(InstigatorPawn))
-	{
-		return BIG_NUMBER;
-	}
-	return FVector::Dist(GetActorLocation(), InstigatorPawn->GetActorLocation());
-}
-
-void APickupBase::OnRep_Consumed()
-{
-	// ✅ 클라에서 사라지는 연출/이펙트 등을 넣고 싶으면 여기서 처리
-	// Day2 최소는 비워둔다.
+	// 기본 구현은 "아무것도 안 함"
+	// 자식(APickup_Ammo 등)이 override해서 실제 지급을 수행
+	return false;
 }
