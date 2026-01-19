@@ -80,7 +80,7 @@ private:
 	// [ADD] Phase -> Experience Switch
 	// ------------------------------------------------------------
 	/** [ADD] Phase에 해당하는 Experience 이름(PrimaryAssetName) 반환 */
-static FName GetExperienceNameForPhase(EMosesMatchPhase Phase);
+	static FName GetExperienceNameForPhase(EMosesMatchPhase Phase);
 
 	/**
 	 * [ADD] 서버 권위로 Experience를 교체한다.
