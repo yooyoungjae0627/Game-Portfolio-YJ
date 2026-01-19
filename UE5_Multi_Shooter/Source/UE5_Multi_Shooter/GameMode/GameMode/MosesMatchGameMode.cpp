@@ -1,4 +1,5 @@
-﻿#include "MosesMatchGameMode.h"
+﻿
+#include "MosesMatchGameMode.h"
 
 #include "UE5_Multi_Shooter/Character/MosesCharacter.h"
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
@@ -21,6 +22,8 @@ AMosesMatchGameMode::AMosesMatchGameMode()
 	PlayerStateClass = AMosesPlayerState::StaticClass();
 	PlayerControllerClass = AMosesPlayerController::StaticClass();
 
+	// [MOD] DefaultPawnClass를 하드 고정하지 않고,
+	//       GetDefaultPawnClassForController(SelectedId->Catalog) + SpawnDefaultPawnFor 오버라이드로 결정한다.
 	DefaultPawnClass = nullptr;
 	FallbackPawnClass = nullptr;
 
@@ -33,6 +36,7 @@ AMosesMatchGameMode::AMosesMatchGameMode()
 
 void AMosesMatchGameMode::InitGame(const FString& MapName, const FString& Options, FString& ErrorMessage)
 {
+	// [유지] Match 레벨은 옵션에 Experience가 없으면 Exp_Match로 강제
 	FString FinalOptions = Options;
 	if (!UGameplayStatics::HasOption(Options, TEXT("Experience")))
 	{
@@ -57,8 +61,15 @@ void AMosesMatchGameMode::BeginPlay()
 	DumpAllDODPlayerStates(TEXT("MatchGM:BeginPlay"));
 	DumpPlayerStates(TEXT("[MatchGM][BeginPlay]"));
 
-	UE_LOG(LogMosesSpawn, Warning, TEXT("[TEST] MatchGM BeginPlay World=%s"), *GetNameSafe(GetWorld()));
+	// [MOD] 여기서 수동 Spawn/Possess를 하지 않는다.
+	// 이유:
+	// - Base(GameModeBase)가 Experience READY 후 SpawnGate를 해제하면서
+	//   Super::HandleStartingNewPlayer → RestartPlayer → SpawnDefaultPawnAtTransform 흐름으로
+	//   "정석 스폰 파이프라인"을 이미 보장한다.
+	//
+	// 즉, BeginPlay/PostLogin에서 직접 Spawn하면 "중복 스폰" 위험이 생긴다.
 
+	// (선택) 자동 로비 복귀 테스트 타이머는 기존 유지
 	if (AutoReturnToLobbySeconds > 0.f && HasAuthority())
 	{
 		GetWorldTimerManager().SetTimer(
@@ -69,17 +80,6 @@ void AMosesMatchGameMode::BeginPlay()
 			false);
 
 		UE_LOG(LogMosesSpawn, Warning, TEXT("[MatchGM] AutoReturnToLobby in %.2f sec"), AutoReturnToLobbySeconds);
-	}
-
-	if (HasAuthority())
-	{
-		for (FConstPlayerControllerIterator It = GetWorld()->GetPlayerControllerIterator(); It; ++It)
-		{
-			if (APlayerController* PC = It->Get())
-			{
-				SpawnAndPossessMatchPawn(PC);
-			}
-		}
 	}
 }
 
@@ -97,16 +97,171 @@ void AMosesMatchGameMode::PostLogin(APlayerController* NewPlayer)
 		PS ? PS->GetPlayerId() : -1,
 		PS ? *PS->GetPlayerName() : TEXT("None"));
 
-	if (HasAuthority())
-	{
-		SpawnAndPossessMatchPawn(NewPlayer);
-	}
+	// [MOD] 수동 Spawn/Possess 제거
+	// - Experience READY 전에는 SpawnGate가 막고 있음
+	// - READY 후에는 FlushPendingPlayers에서 정석 스폰됨
 }
 
 void AMosesMatchGameMode::Logout(AController* Exiting)
 {
 	ReleaseReservedStart(Exiting);
 	Super::Logout(Exiting);
+}
+
+// =========================================================
+// Experience READY Hook (Server authoritative match flow)
+// =========================================================
+
+void AMosesMatchGameMode::HandleDoD_AfterExperienceReady(const UMosesExperienceDefinition* CurrentExperience)
+{
+	Super::HandleDoD_AfterExperienceReady(CurrentExperience);
+
+	// [MOD] ExperienceDefinition 타입이 UObject가 아닐 수도 있으므로 이름 출력 생략(빌드 안정 우선)
+	UE_LOG(LogMosesExp, Warning, TEXT("[MatchGM][DOD] AfterExperienceReady -> StartMatchFlow"));
+
+
+	// [ADD] Experience READY가 된 안전 시점에서만 매치 흐름을 시작한다.
+	StartMatchFlow_AfterExperienceReady();
+}
+
+void AMosesMatchGameMode::StartMatchFlow_AfterExperienceReady()
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	// [ADD] 혹시 SeamlessTravel/특수 케이스로 Pawn이 없는 PC가 있으면 RestartPlayer로 보정
+	for (FConstPlayerControllerIterator It = GetWorld()->GetPlayerControllerIterator(); It; ++It)
+	{
+		APlayerController* PC = It->Get();
+		if (!PC)
+		{
+			continue;
+		}
+
+		// Pawn이 없으면 서버 권위로 다시 스폰(베이스 GM이 READY를 이미 보장한 상태)
+		if (!IsValid(PC->GetPawn()))
+		{
+			UE_LOG(LogMosesSpawn, Warning, TEXT("[MatchGM][READY] RestartPlayer (NoPawn) PC=%s"), *GetNameSafe(PC));
+			RestartPlayer(PC);
+		}
+	}
+
+	// [ADD] 페이즈 시작: Warmup
+	SetMatchPhase(EMosesMatchPhase::Warmup);
+}
+
+void AMosesMatchGameMode::SetMatchPhase(EMosesMatchPhase NewPhase)
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	// 같은 페이즈 중복 진입 방지
+	if (CurrentPhase == NewPhase)
+	{
+		return;
+	}
+
+	CurrentPhase = NewPhase;
+
+	// [ADD] 타이머 초기화
+	GetWorldTimerManager().ClearTimer(PhaseTimerHandle);
+
+	const float Duration = GetPhaseDurationSeconds(CurrentPhase);
+	PhaseEndTimeSeconds = (Duration > 0.f) ? (GetWorld()->GetTimeSeconds() + Duration) : 0.0;
+
+	UE_LOG(LogMosesExp, Warning, TEXT("[MatchGM][PHASE] -> %s (Duration=%.2f EndTime=%.2f)"),
+		*UEnum::GetValueAsString(CurrentPhase),
+		Duration,
+		PhaseEndTimeSeconds);
+
+	// [ADD] 엔진 MatchState와의 연결(원하면 더 엄격히 분리해도 됨)
+	// - Warmup: 아직 StartMatch() 안 함
+	// - Combat: StartMatch()
+	// - Result: EndMatch()
+// [MOD] AGameModeBase에는 StartMatch/EndMatch가 없으므로 로그만 남긴다.
+	if (CurrentPhase == EMosesMatchPhase::Combat)
+	{
+		UE_LOG(LogMosesExp, Warning, TEXT("[MatchGM][PHASE] Combat START"));
+	}
+	else if (CurrentPhase == EMosesMatchPhase::Result)
+	{
+		UE_LOG(LogMosesExp, Warning, TEXT("[MatchGM][PHASE] Result START"));
+	}
+
+
+	// [확장 포인트]
+	// - "클라 HUD 표시"는 GameState에 Replicated Phase/RemainingTime을 내려주는 방식이 정석
+	// - 예: AMosesGameState에 SetMatchPhase(CurrentPhase, PhaseEndTimeSeconds) 같은 API 추가
+
+	// [ADD] 타이머 예약(WaitingForPlayers는 타이머 없음)
+	if (Duration > 0.f)
+	{
+		GetWorldTimerManager().SetTimer(
+			PhaseTimerHandle,
+			this,
+			&ThisClass::HandlePhaseTimerExpired,
+			Duration,
+			false);
+	}
+}
+
+void AMosesMatchGameMode::HandlePhaseTimerExpired()
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	UE_LOG(LogMosesExp, Warning, TEXT("[MatchGM][PHASE] TimerExpired Phase=%s"), *UEnum::GetValueAsString(CurrentPhase));
+
+	AdvancePhase();
+}
+
+void AMosesMatchGameMode::AdvancePhase()
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	switch (CurrentPhase)
+	{
+	case EMosesMatchPhase::WaitingForPlayers:
+		SetMatchPhase(EMosesMatchPhase::Warmup);
+		break;
+
+	case EMosesMatchPhase::Warmup:
+		SetMatchPhase(EMosesMatchPhase::Combat);
+		break;
+
+	case EMosesMatchPhase::Combat:
+		SetMatchPhase(EMosesMatchPhase::Result);
+		break;
+
+	case EMosesMatchPhase::Result:
+	default:
+		// [ADD] 결과 페이즈 종료 = 로비 복귀
+		UE_LOG(LogMosesExp, Warning, TEXT("[MatchGM][PHASE] ResultFinished -> TravelToLobby"));
+		TravelToLobby();
+		break;
+	}
+}
+
+float AMosesMatchGameMode::GetPhaseDurationSeconds(EMosesMatchPhase Phase) const
+{
+	switch (Phase)
+	{
+	case EMosesMatchPhase::Warmup: return WarmupSeconds;
+	case EMosesMatchPhase::Combat:  return CombatSeconds;
+	case EMosesMatchPhase::Result:  return ResultSeconds;
+	default: break;
+	}
+
+	return 0.f;
 }
 
 // =========================================================
@@ -120,6 +275,7 @@ AActor* AMosesMatchGameMode::ChoosePlayerStart_Implementation(AController* Playe
 		return Super::ChoosePlayerStart_Implementation(Player);
 	}
 
+	// 이미 할당된 Start가 있으면 그대로 재사용(중복 방지)
 	if (const TWeakObjectPtr<APlayerStart>* Assigned = AssignedStartByController.Find(Player))
 	{
 		if (Assigned->IsValid())
@@ -208,9 +364,7 @@ bool AMosesMatchGameMode::CanDoServerTravel() const
 	}
 
 	const ENetMode NM = World->GetNetMode();
-	const bool bIsClient = (NM == NM_Client);
-
-	if (bIsClient)
+	if (NM == NM_Client)
 	{
 		UE_LOG(LogMosesSpawn, Warning, TEXT("[DOD][Travel] REJECT (Client)"));
 		return false;
@@ -228,6 +382,7 @@ bool AMosesMatchGameMode::CanDoServerTravel() const
 
 FString AMosesMatchGameMode::GetLobbyMapURL() const
 {
+	// [유지] 필요시 "?listen?Experience=Exp_Lobby" 같은 옵션을 추가해도 됨
 	return TEXT("/Game/Map/L_Lobby");
 }
 
@@ -240,20 +395,44 @@ void AMosesMatchGameMode::GetSeamlessTravelActorList(bool bToTransition, TArray<
 		bToTransition, ActorList.Num());
 }
 
+void AMosesMatchGameMode::HandleSeamlessTravelPlayer(AController*& C)
+{
+	Super::HandleSeamlessTravelPlayer(C);
+
+	// [MOD] SeamlessTravel 직후 "Pawn이 없는 경우"만 보정
+	// - 중복 Spawn을 막기 위해 조건적으로만 RestartPlayer
+	APlayerController* PC = Cast<APlayerController>(C);
+	if (!PC || !HasAuthority())
+	{
+		return;
+	}
+
+	if (!IsValid(PC->GetPawn()))
+	{
+		UE_LOG(LogMosesSpawn, Warning, TEXT("[MatchGM][Seamless] RestartPlayer (NoPawn) PC=%s"), *GetNameSafe(PC));
+		RestartPlayer(PC);
+	}
+
+	if (AMosesPlayerState* PS = PC->GetPlayerState<AMosesPlayerState>())
+	{
+		PS->DOD_PS_Log(this, TEXT("GM:HandleSeamlessTravelPlayer"));
+	}
+}
+
 APawn* AMosesMatchGameMode::SpawnDefaultPawnFor_Implementation(AController* NewPlayer, AActor* StartSpot)
 {
-	// 1) 기본 방어
+	// 서버만 스폰
 	if (!HasAuthority() || !NewPlayer || !StartSpot)
 	{
 		return Super::SpawnDefaultPawnFor_Implementation(NewPlayer, StartSpot);
 	}
 
-	// [DAY2-MOD] ✅ 핵심: "선택된 캐릭터 PawnClass"로 스폰한다.
+	// ✅ 핵심: "선택된 캐릭터 PawnClass"로 스폰한다.
 	TSubclassOf<APawn> PawnClassToSpawn = GetDefaultPawnClassForController(NewPlayer);
 
 	if (!PawnClassToSpawn)
 	{
-		UE_LOG(LogMosesSpawn, Warning, TEXT("[MatchGM][DAY2] SpawnDefaultPawnFor fallback -> Super (No PawnClass resolved)"));
+		UE_LOG(LogMosesSpawn, Warning, TEXT("[MatchGM] SpawnDefaultPawnFor fallback -> Super (No PawnClass resolved)"));
 		return Super::SpawnDefaultPawnFor_Implementation(NewPlayer, StartSpot);
 	}
 
@@ -271,7 +450,7 @@ APawn* AMosesMatchGameMode::SpawnDefaultPawnFor_Implementation(AController* NewP
 		return nullptr;
 	}
 
-	UE_LOG(LogMosesSpawn, Warning, TEXT("[MatchGM][DAY2] Spawned Pawn=%s Class=%s Start=%s"),
+	UE_LOG(LogMosesSpawn, Warning, TEXT("[MatchGM] Spawned Pawn=%s Class=%s Start=%s"),
 		*GetNameSafe(NewPawn),
 		*GetNameSafe(PawnClassToSpawn),
 		*GetNameSafe(StartSpot));
@@ -279,20 +458,65 @@ APawn* AMosesMatchGameMode::SpawnDefaultPawnFor_Implementation(AController* NewP
 	return NewPawn;
 }
 
-void AMosesMatchGameMode::HandleSeamlessTravelPlayer(AController*& C)
+UClass* AMosesMatchGameMode::GetDefaultPawnClassForController_Implementation(AController* InController)
 {
-	Super::HandleSeamlessTravelPlayer(C);
+	const AMosesPlayerState* PS = InController ? InController->GetPlayerState<AMosesPlayerState>() : nullptr;
+	const int32 SelectedId = PS ? PS->GetSelectedCharacterId() : 0;
 
-	APlayerController* PC = Cast<APlayerController>(C);
-	if (PC)
+	if (UClass* Resolved = ResolvePawnClassFromSelectedId(SelectedId))
 	{
-		SpawnAndPossessMatchPawn(PC);
-
-		if (AMosesPlayerState* PS = PC->GetPlayerState<AMosesPlayerState>())
-		{
-			PS->DOD_PS_Log(this, TEXT("GM:HandleSeamlessTravelPlayer"));
-		}
+		UE_LOG(LogMosesSpawn, Log, TEXT("[MatchGM] ResolvePawnClass OK Controller=%s SelectedId=%d PawnClass=%s"),
+			*GetNameSafe(InController),
+			SelectedId,
+			*GetNameSafe(Resolved));
+		return Resolved;
 	}
+
+	if (FallbackPawnClass)
+	{
+		UE_LOG(LogMosesSpawn, Warning, TEXT("[MatchGM] ResolvePawnClass FAIL -> Fallback. Controller=%s SelectedId=%d Fallback=%s"),
+			*GetNameSafe(InController),
+			SelectedId,
+			*GetNameSafe(FallbackPawnClass));
+		return FallbackPawnClass.Get();
+	}
+
+	UE_LOG(LogMosesSpawn, Warning, TEXT("[MatchGM] ResolvePawnClass FAIL -> Super. Controller=%s SelectedId=%d"),
+		*GetNameSafe(InController),
+		SelectedId);
+
+	return Super::GetDefaultPawnClassForController_Implementation(InController);
+}
+
+UClass* AMosesMatchGameMode::ResolvePawnClassFromSelectedId(int32 SelectedId) const
+{
+	if (!CharacterCatalog)
+	{
+		UE_LOG(LogMosesSpawn, Error, TEXT("[MatchGM] CharacterCatalog is NULL."));
+		return nullptr;
+	}
+
+	// [유지/주의] 지금은 1~2만 존재한다고 가정해서 Clamp
+	// - 캐릭터가 늘어나면 Catalog 크기에 맞춰 Clamp 범위를 바꿔야 한다.
+	const int32 SafeSelectedId = FMath::Clamp(SelectedId, 1, 2);
+
+	FMSCharacterEntry Entry;
+	if (!CharacterCatalog->FindByIndex(SafeSelectedId, Entry))
+	{
+		UE_LOG(LogMosesSpawn, Warning, TEXT("[MatchGM] Invalid SelectedId=%d (Catalog FindByIndex failed)"), SafeSelectedId);
+		return nullptr;
+	}
+
+	UClass* PawnClass = Entry.PawnClass.LoadSynchronous();
+	if (!PawnClass)
+	{
+		UE_LOG(LogMosesSpawn, Error, TEXT("[MatchGM] PawnClass Load FAIL. SelectedId=%d CharacterId=%s"),
+			SafeSelectedId,
+			*Entry.CharacterId.ToString());
+		return nullptr;
+	}
+
+	return PawnClass;
 }
 
 // =========================================================
@@ -453,126 +677,3 @@ void AMosesMatchGameMode::DumpReservedStarts(const TCHAR* Where) const
 			*GetNameSafe(PS));
 	}
 }
-
-bool AMosesMatchGameMode::ShouldRespawnPawn(APlayerController* PC) const
-{
-	if (!PC)
-	{
-		return false;
-	}
-
-	APawn* ExistingPawn = PC->GetPawn();
-	if (!IsValid(ExistingPawn))
-	{
-		return true;
-	}
-
-	return false;
-}
-
-void AMosesMatchGameMode::SpawnAndPossessMatchPawn(APlayerController* PC)
-{
-	if (!HasAuthority() || !PC)
-	{
-		return;
-	}
-
-	if (!ShouldRespawnPawn(PC))
-	{
-		UE_LOG(LogMosesSpawn, Verbose, TEXT("[MatchGM] SpawnAndPossess SKIP (AlreadyHasPawn) PC=%s Pawn=%s"),
-			*GetNameSafe(PC), *GetNameSafe(PC->GetPawn()));
-		return;
-	}
-
-	if (APawn* OldPawn = PC->GetPawn())
-	{
-		UE_LOG(LogMosesSpawn, Warning, TEXT("[MatchGM] UnPossess old pawn PC=%s OldPawn=%s"),
-			*GetNameSafe(PC), *GetNameSafe(OldPawn));
-
-		PC->UnPossess();
-		OldPawn->Destroy();
-	}
-
-	AActor* StartSpot = ChoosePlayerStart(PC);
-	if (!StartSpot)
-	{
-		UE_LOG(LogMosesSpawn, Warning, TEXT("[MatchGM] Spawn FAIL (NoStartSpot) PC=%s"), *GetNameSafe(PC));
-		return;
-	}
-
-	APawn* NewPawn = SpawnDefaultPawnFor(PC, StartSpot);
-	if (!NewPawn)
-	{
-		UE_LOG(LogMosesSpawn, Error, TEXT("[MatchGM] Spawn FAIL (SpawnDefaultPawnFor returned null) PC=%s"),
-			*GetNameSafe(PC));
-		return;
-	}
-
-	PC->Possess(NewPawn);
-
-	UE_LOG(LogMosesSpawn, Warning, TEXT("[MatchGM] Possess OK PC=%s Pawn=%s Start=%s"),
-		*GetNameSafe(PC),
-		*GetNameSafe(NewPawn),
-		*GetNameSafe(StartSpot));
-}
-
-UClass* AMosesMatchGameMode::GetDefaultPawnClassForController_Implementation(AController* InController)
-{
-	const AMosesPlayerState* PS = InController ? InController->GetPlayerState<AMosesPlayerState>() : nullptr;
-	const int32 SelectedId = PS ? PS->GetSelectedCharacterId() : 0;
-
-	if (UClass* Resolved = ResolvePawnClassFromSelectedId(SelectedId))
-	{
-		UE_LOG(LogMosesSpawn, Log, TEXT("[MatchGM] ResolvePawnClass OK Controller=%s SelectedId=%d PawnClass=%s"),
-			*GetNameSafe(InController),
-			SelectedId,
-			*GetNameSafe(Resolved));
-		return Resolved;
-	}
-
-	if (FallbackPawnClass)
-	{
-		UE_LOG(LogMosesSpawn, Warning, TEXT("[MatchGM] ResolvePawnClass FAIL -> Fallback. Controller=%s SelectedId=%d Fallback=%s"),
-			*GetNameSafe(InController),
-			SelectedId,
-			*GetNameSafe(FallbackPawnClass));
-		return FallbackPawnClass.Get();
-	}
-
-	UE_LOG(LogMosesSpawn, Warning, TEXT("[MatchGM] ResolvePawnClass FAIL -> Super. Controller=%s SelectedId=%d"),
-		*GetNameSafe(InController),
-		SelectedId);
-
-	return Super::GetDefaultPawnClassForController_Implementation(InController);
-}
-
-UClass* AMosesMatchGameMode::ResolvePawnClassFromSelectedId(int32 SelectedId) const
-{
-	if (!CharacterCatalog)
-	{
-		UE_LOG(LogMosesSpawn, Error, TEXT("[MatchGM] CharacterCatalog is NULL."));
-		return nullptr;
-	}
-
-	// [ADD] 안전장치: 선택값이 0/쓰레기값이면 1로 고정
-	const int32 SafeSelectedId = FMath::Clamp(SelectedId, 1, 2);
-
-	FMSCharacterEntry Entry;
-	if (!CharacterCatalog->FindByIndex(SafeSelectedId, Entry))
-	{
-		UE_LOG(LogMosesSpawn, Warning, TEXT("[MatchGM] Invalid SelectedId=%d (Catalog FindByIndex failed)"), SafeSelectedId);
-		return nullptr;
-	}
-
-	UClass* PawnClass = Entry.PawnClass.LoadSynchronous();
-	if (!PawnClass)
-	{
-		UE_LOG(LogMosesSpawn, Error, TEXT("[MatchGM] PawnClass Load FAIL. SelectedId=%d CharacterId=%s"),
-			SafeSelectedId,
-			*Entry.CharacterId.ToString());
-		return nullptr;
-	}
-
-	return PawnClass;
-}
-

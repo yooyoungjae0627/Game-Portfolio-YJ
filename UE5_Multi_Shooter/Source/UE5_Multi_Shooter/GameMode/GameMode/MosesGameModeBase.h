@@ -1,10 +1,8 @@
-﻿// Fill out your copyright notice in the Description page of Project Settings.
-
-#pragma once
+﻿#pragma once
 
 #include "CoreMinimal.h"
 #include "GameFramework/GameModeBase.h"
-#include "UObject/PrimaryAssetId.h"     // FPrimaryAssetId
+#include "UObject/PrimaryAssetId.h"     
 #include "MosesGameModeBase.generated.h"
 
 class UMosesExperienceDefinition;
@@ -39,8 +37,6 @@ protected:
 	/** 접속 시점 추적용(로그/디버깅) */
 	virtual void PostLogin(APlayerController* NewPlayer) override;
 
-
-
 	/** 컨트롤러별 PawnClass 결정(PawnData의 PawnClass 우선) */
 	virtual UClass* GetDefaultPawnClassForController_Implementation(AController* InController);
 
@@ -53,7 +49,6 @@ protected:
 
 	/** Defer Spawn으로 PawnData를 먼저 주입한 뒤 FinishSpawning */
 	virtual APawn* SpawnDefaultPawnAtTransform_Implementation(AController* NewPlayer, const FTransform& SpawnTransform) final;
-
 
 	/**
 	 * RestartPlayer는 최종 스폰 지점.
@@ -99,7 +94,6 @@ private:
 	/** Experience READY → SpawnGate 해제(NextTick Flush 예약) */
 	void OnExperienceReady_SpawnGateRelease();
 
-
 protected:
 	/** DoD: Experience READY 이후(=안전 시점)에 파생 GM이 ROOM/PHASE를 확정하도록 훅 제공 */
 	virtual void HandleDoD_AfterExperienceReady(const UMosesExperienceDefinition* CurrentExperience);
@@ -114,5 +108,4 @@ private:
 
 	/** DoD: Experience Selected 로그를 1회만 찍기 위한 가드 */
 	bool bDoD_ExperienceSelectedLogged = false;
-
 };
