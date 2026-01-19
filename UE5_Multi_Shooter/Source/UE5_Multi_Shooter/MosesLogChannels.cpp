@@ -1,14 +1,18 @@
-// Fill out your copyright notice in the Description page of Project Settings.
+#include "UE5_Multi_Shooter/MosesLogChannels.h"
 
-#include "MosesLogChannels.h"
-
-DEFINE_LOG_CATEGORY(LogMosesExp);
+// 한 줄이라도 빠지면 그 카테고리 UE_LOG에서 C2065가 난다.
 DEFINE_LOG_CATEGORY(LogMosesSpawn);
-DEFINE_LOG_CATEGORY(LogMosesTravel);
-DEFINE_LOG_CATEGORY(LogMosesAuth);
-DEFINE_LOG_CATEGORY(LogMosesRoom);
-DEFINE_LOG_CATEGORY(LogMosesPhase);
-DEFINE_LOG_CATEGORY(LogMosesPlayer);
-DEFINE_LOG_CATEGORY(LogMosesGAS);
 DEFINE_LOG_CATEGORY(LogMosesMove);
 DEFINE_LOG_CATEGORY(LogMosesPickup);
+DEFINE_LOG_CATEGORY(LogMosesGAS);
+DEFINE_LOG_CATEGORY(LogMosesAI);
+
+DEFINE_LOG_CATEGORY(LogMosesCombat);
+DEFINE_LOG_CATEGORY(LogMosesCamera);
+
+DEFINE_LOG_CATEGORY(LogMosesExp);
+
+DEFINE_LOG_CATEGORY(LogMosesPlayer);
+DEFINE_LOG_CATEGORY(LogMosesAuth);
+DEFINE_LOG_CATEGORY(LogMosesPhase);
+DEFINE_LOG_CATEGORY(LogMosesRoom);
