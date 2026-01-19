@@ -1,42 +1,28 @@
-﻿#include "MosesExperienceManagerComponent.h"
+﻿// MosesExperienceManagerComponent.cpp
 
-#include "MosesExperienceDefinition.h"
+#include "UE5_Multi_Shooter/GameMode/Experience/MosesExperienceManagerComponent.h"
+
+#include "UE5_Multi_Shooter/GameMode/Experience/MosesExperienceDefinition.h"
 #include "UE5_Multi_Shooter/System/MosesAssetManager.h"
-#include "UE5_Multi_Shooter/MosesLogChannels.h"
 
-#include "GameFeaturePluginOperationResult.h" 
+#include "GameFeaturesSubsystem.h"
+#include "GameFeaturePluginOperationResult.h"
+
 #include "Net/UnrealNetwork.h"
-#include "Engine/AssetManager.h"
-#include "Engine/StreamableManager.h"
-#include "Engine/Engine.h" 
-
-// Plugin path 만들기
 #include "Interfaces/IPluginManager.h"
 #include "Misc/Paths.h"
-
-// ------------------------------
-// OnScreen Helper
-// ------------------------------
-static void ScreenMsg(const FColor& Color, const FString& Msg, float Time = 8.f)
-{
-
-}
 
 UMosesExperienceManagerComponent::UMosesExperienceManagerComponent(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
 {
 	SetIsReplicatedByDefault(true);
 
-	// (가능하면 .h에서 기본값 초기화도 추천)
-	// 여기서 최소한의 안전 초기화
 	LoadState = EMosesExperienceLoadState::Unloaded;
-	bNotifiedReadyOnce = false;
 	PendingGFCount = 0;
 	CompletedGFCount = 0;
 	bAnyGFFailed = false;
-	CurrentExperience = nullptr;
-	PendingExperienceId = FPrimaryAssetId();
-	CurrentExperienceId = FPrimaryAssetId();
+
+	ActivatedGFURLs.Reset();
 }
 
 void UMosesExperienceManagerComponent::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
@@ -45,98 +31,49 @@ void UMosesExperienceManagerComponent::GetLifetimeReplicatedProps(TArray<FLifeti
 	DOREPLIFETIME(UMosesExperienceManagerComponent, CurrentExperienceId);
 }
 
-// ------------------------------
-// SERVER: set experience id (authoritative)
-// 서버에서 Experience를 확정하고,
-// 서버/클라이언트 모두에게 Experience 초기화(OnRep)를 트리거한다.
-// (중복 적용 방지 포함)
-// ------------------------------
 void UMosesExperienceManagerComponent::ServerSetCurrentExperience_Implementation(FPrimaryAssetId ExperienceId)
 {
-	// 안전장치: 소유자(보통 GameState)가 있어야 함
 	check(GetOwner());
-
-	// 안전장치: 이 함수는 "서버에서만" 실행되어야 함 (권한 강제)
 	check(GetOwner()->HasAuthority());
 
-	// 우리가 기대하는 PrimaryAssetType 이름은 "Experience"
 	static const FPrimaryAssetType ExperienceType(TEXT("Experience"));
 
-	// 디버그: 서버가 어떤 ExperienceId를 받았고 현재 로딩 상태가 뭔지 찍기
-	ScreenMsg(FColor::Orange,
-		FString::Printf(TEXT("[EXP-MGR][ServerSet] In=%s State=%d"), *ExperienceId.ToString(), (int32)LoadState));
-
-	// 방어: 들어온 ExperienceId가 비정상이면 바로 실패 처리
 	if (!ExperienceId.IsValid())
 	{
 		FailExperienceLoad(TEXT("ServerSetCurrentExperience: Invalid ExperienceId"));
 		return;
 	}
 
-	// 방어: 혹시 다른 타입(예: Map, Item 등)으로 들어오면
-	// "Experience" 타입으로 강제로 맞춰준다 (이름은 그대로, 타입만 교정)
+	// 실수 방지: Type을 강제 교정
 	if (ExperienceId.PrimaryAssetType != ExperienceType)
 	{
-		ScreenMsg(FColor::Orange,
-			FString::Printf(TEXT("[EXP-MGR][ServerSet] FixType -> Experience:%s"), *ExperienceId.PrimaryAssetName.ToString()));
-
-		// 타입을 Experience로 고정해서 다시 만든다
 		ExperienceId = FPrimaryAssetId(ExperienceType, ExperienceId.PrimaryAssetName);
 	}
 
-	// 중복 방지:
-	// 이미 같은 Experience를 로딩 중이거나(또는 로딩 완료) 상태면
-	// 또 다시 시작하지 않고 무시한다
+	// 동일 Experience 중복 실행 방지
 	if (CurrentExperienceId == ExperienceId && LoadState != EMosesExperienceLoadState::Unloaded)
 	{
-		ScreenMsg(FColor::Silver,
-			FString::Printf(TEXT("[EXP-MGR][ServerSet] Ignore duplicate. Id=%s State=%d"),
-				*ExperienceId.ToString(), (int32)LoadState));
 		return;
 	}
 
-	/*******************  플레이 하면 여기 밑을 바로 탄다. ********************/ 
-	// 이전 로딩 상태 리셋
-	// (주의: 콜백 리스트는 지우면 안 되므로 ResetExperienceLoadState 구현에서 그 부분을 보존해야 함)
-	ResetExperienceLoadState();
+	// Experience 교체 시작(이전 GF 내리기 포함)
+	ResetForNewExperience();
 
-	// 서버가 "이번 매치 Experience는 이거다"라고 확정 저장
 	CurrentExperienceId = ExperienceId;
 
-	// 로그: 서버 확정 결과 출력
-	UE_LOG(LogMosesExp, Log, TEXT("[SERVER] Chose ExperienceId=%s"), *CurrentExperienceId.ToString());
-	ScreenMsg(FColor::Orange, FString::Printf(TEXT("[EXP-MGR][ServerSet] Chosen=%s"), *CurrentExperienceId.ToString()));
-
-	// ⭐ 핵심:
-	// 원래 OnRep_* 는 "클라에서 값 복제되면 자동 호출"되는 함수인데,
-	// 서버도 클라와 "같은 코드 경로"로 로딩을 돌리고 싶어서
-	// 서버에서 직접 OnRep를 호출한다.
-	//
-	// 즉,
-	// - 서버: 값을 바꾸고 -> OnRep를 직접 호출해서 로딩 시작
-	// - 클라: 값이 복제되면 -> OnRep가 자동 호출되어 로딩 시작
+	// 서버도 클라와 같은 루트로 로딩시키기 위해 OnRep 직접 호출
 	OnRep_CurrentExperienceId();
 }
 
-// ------------------------------
-// Experience가 이미 로딩 완료면: 지금 바로 Delegate 실행
-// 아직 로딩 중이면: 나중에 실행하기 위해 콜백 리스트에 등록
-// 로딩 완료 시: 등록된 모든 Delegate가 한 번씩 호출됨
-// ------------------------------
-void UMosesExperienceManagerComponent::CallOrRegister_OnExperienceLoaded(FMosesExperienceLoadedDelegate&& Delegate)
+void UMosesExperienceManagerComponent::CallOrRegister_OnExperienceLoaded(FMosesExperienceLoadedDelegate Delegate)
 {
-	// 이미 로딩 완료면 즉시 실행
 	if (IsExperienceLoaded())
 	{
-		ScreenMsg(FColor::Green, TEXT("[EXP-MGR][Register] Already READY -> ExecuteImmediately"));
 		Delegate.ExecuteIfBound(CurrentExperience);
 		return;
 	}
 
-	// 로딩 전/중이면 콜백 등록
-	OnExperienceLoadedCallbacks.Add(MoveTemp(Delegate));
-	ScreenMsg(FColor::Cyan,
-		FString::Printf(TEXT("[EXP-MGR][Register] Added callback. Count=%d"), OnExperienceLoadedCallbacks.Num()));
+	PendingReadyCallbacks.Add(Delegate);
 }
 
 const UMosesExperienceDefinition* UMosesExperienceManagerComponent::GetCurrentExperienceChecked() const
@@ -146,44 +83,29 @@ const UMosesExperienceDefinition* UMosesExperienceManagerComponent::GetCurrentEx
 	return CurrentExperience;
 }
 
-// ------------------------------
-// RepNotify: 서버가 CurrentExperienceId를 바꾸면 클라에서 호출됨
-// 목적: "서버가 지정한 Experience"를 클라 쪽에서 로딩 시작 트리거로 사용
-// ------------------------------
 void UMosesExperienceManagerComponent::OnRep_CurrentExperienceId()
 {
-	// [Debug] 현재 받은 ExperienceId + 로딩 상태 출력
-	ScreenMsg(FColor::Yellow,
-		FString::Printf(TEXT("[EXP-MGR][OnRep] CurrentId=%s State=%d"),
-			*CurrentExperienceId.ToString(), (int32)LoadState));
-
-	// [Guard 1] 서버가 보낸 Id가 비정상이면 즉시 실패 처리
-	if (CurrentExperienceId.IsValid() == false)
+	if (!CurrentExperienceId.IsValid())
 	{
-		FailExperienceLoad(TEXT("OnRep_CurrentExperienceId: Invalid CurrentExperienceId"));
+		FailExperienceLoad(TEXT("OnRep_CurrentExperienceId: Invalid Id"));
 		return;
 	}
 
-	// [Guard 2] RepNotify는 여러 번 올 수 있음(재전송/재복제/상태변화 등)
-	//          -> 이미 로딩을 시작했거나 끝난 상태면 중복 로딩 방지
+	// 핵심: 전환 지원
 	if (LoadState != EMosesExperienceLoadState::Unloaded)
 	{
-		ScreenMsg(FColor::Silver,
-			FString::Printf(TEXT("[EXP-MGR][OnRep] Ignore (State != Unloaded). State=%d"), (int32)LoadState));
-		return;
+		ResetForNewExperience();
 	}
 
-	// [State] 이제부터 "이 Experience를 로딩 중" 상태로 전이
 	PendingExperienceId = CurrentExperienceId;
-	LoadState = EMosesExperienceLoadState::Loading;
+	StartLoadExperienceAssets();
+}
 
-	// [Debug] 로딩 시작 로그
-	UE_LOG(LogMosesExp, Log, TEXT("[EXP] Begin Load=%s"), *CurrentExperienceId.ToString());
-	ScreenMsg(FColor::Yellow, FString::Printf(TEXT("[EXP-MGR][Load] Begin %s"), *CurrentExperienceId.ToString()));
+void UMosesExperienceManagerComponent::StartLoadExperienceAssets()
+{
+	LoadState = EMosesExperienceLoadState::LoadingAssets;
 
-	// [Load] AssetManager를 통해 ExperienceDefinition(Primary Asset) 로딩 시작
-	//        - 여기서는 bundle 없이 "정의(Definition)만" 먼저 당겨오고,
-	//        - 로딩 완료 콜백(OnExperienceAssetsLoaded)에서 다음 단계 진행
+	// PrimaryAsset 로드(서버/클라 동일)
 	UMosesAssetManager& AssetManager = UMosesAssetManager::Get();
 
 	TArray<FPrimaryAssetId> AssetIds;
@@ -191,87 +113,40 @@ void UMosesExperienceManagerComponent::OnRep_CurrentExperienceId()
 
 	AssetManager.LoadPrimaryAssets(
 		AssetIds,
-		{}, // bundles 미사용(필요하면 "Client" / "Server" 등 번들로 확장 가능)
+		{},
 		FStreamableDelegate::CreateUObject(this, &ThisClass::OnExperienceAssetsLoaded)
 	);
 }
 
-// ------------------------------
-// ExperienceDefinition loaded (PrimaryAsset 로딩 완료 콜백)
-// ------------------------------
 void UMosesExperienceManagerComponent::OnExperienceAssetsLoaded()
 {
-	// [비동기 로딩에서 가장 흔한 버그 방지]
-	// Experience 로딩은 비동기(Async)로 끝나기 때문에,
-	// 로딩 도중 CurrentExperienceId가 바뀌면 "이 콜백이 오래된(stale) 결과"일 수 있음.
-	//
-	// 예)
-	// - Pending=A 로딩 시작
-	// - 중간에 Current=B로 변경
-	// - A 로딩 콜백이 늦게 도착 → 여기서 그대로 적용하면 상태 꼬임
-	//
-	// 그래서 "내가 기다리던 ID == 현재 ID"인지 검증하고 아니면 무시.
+	// stale 방지: 로딩 중 Experience가 바뀐 경우 무시
 	if (PendingExperienceId != CurrentExperienceId)
 	{
-		UE_LOG(LogMosesExp, Warning,
-			TEXT("[EXP] AssetsLoaded stale. Pending=%s Current=%s"),
-			*PendingExperienceId.ToString(),
-			*CurrentExperienceId.ToString()
-		);
-
-		ScreenMsg(FColor::Silver,
-			FString::Printf(TEXT("[EXP-MGR][AssetsLoaded] STALE Pending=%s Current=%s"),
-				*PendingExperienceId.ToString(),
-				*CurrentExperienceId.ToString()
-			)
-		);
 		return;
 	}
 
-	// AssetManager를 통해 PrimaryAssetObject를 꺼내는 단계
-	// - 여기서 ExperienceDefinition(UPrimaryDataAsset)을 "이미 로딩된 상태"에서 가져옴
 	UMosesAssetManager& AssetManager = UMosesAssetManager::Get();
-
-	const UMosesExperienceDefinition* ExperienceDef =
+	const UMosesExperienceDefinition* LoadedDef =
 		AssetManager.GetPrimaryAssetObject<UMosesExperienceDefinition>(CurrentExperienceId);
 
-	// 로딩 성공 콜백이 왔는데도 null이면,
-	// - AssetManager 스캔 설정 문제
-	// - PrimaryAssetId 잘못됨
-	// - 패키지/경로 문제
-	// 같은 비정상 상황이므로 Fail 처리
-	if (!ExperienceDef)
+	if (!LoadedDef)
 	{
-		FailExperienceLoad(TEXT("OnExperienceAssetsLoaded: ExperienceDef null"));
+		FailExperienceLoad(TEXT("OnExperienceAssetsLoaded: ExperienceDefinition null"));
 		return;
 	}
 
-	// 이제부터 "현재 경험(Experience)"는 이 Definition으로 확정
-	// - 이후 단계(GameFeature, PawnData, AbilitySet 등)는
-	//   CurrentExperience를 기준으로 진행됨
-	CurrentExperience = ExperienceDef;
-
-	UE_LOG(LogMosesExp, Log,
-		TEXT("[EXP] Loaded ExperienceDefinition=%s"),
-		*CurrentExperienceId.ToString()
-	);
-	ScreenMsg(FColor::Yellow,
-		FString::Printf(TEXT("[EXP-MGR][AssetsLoaded] OK %s"),
-			*CurrentExperienceId.ToString()
-		)
-	);
-
-	// 다음 단계:
-	// ExperienceDefinition에 적힌 GameFeaturesToEnable 목록을 활성화(Load+Activate)
-	// ※ 여기서부터도 비동기이며 "모두 완료"되어야 READY가 됨
+	CurrentExperience = LoadedDef;
 	StartLoadGameFeatures();
 }
 
-// ------------------------------
-// GameFeature URL
-// ------------------------------
 FString UMosesExperienceManagerComponent::MakeGameFeaturePluginURL(const FString& PluginName)
 {
+	/**
+	 * 개발자 주석:
+	 * - GameFeaturesSubsystem이 요구하는 표준 URL 포맷: "file:<Descriptor.uplugin 경로>"
+	 * - PluginName만으로 실제 파일 경로를 얻기 위해 IPluginManager를 사용한다.
+	 */
 	TSharedPtr<IPlugin> Plugin = IPluginManager::Get().FindPlugin(PluginName);
 	if (!Plugin.IsValid())
 	{
@@ -284,118 +159,47 @@ FString UMosesExperienceManagerComponent::MakeGameFeaturePluginURL(const FString
 	return FString::Printf(TEXT("file:%s"), *DescriptorFile);
 }
 
-// ------------------------------
-// Activate GameFeatures (GF 플러그인 Load + Activate 단계)
-// ------------------------------
 void UMosesExperienceManagerComponent::StartLoadGameFeatures()
 {
-	// CurrentExperience는 앞 단계에서 세팅되어야만 함.
-	// nullptr이면 로딩 파이프라인 순서가 깨진 것.
 	check(CurrentExperience);
 
-	// 로드 상태 머신:
-	// AssetsLoaded → LoadingGameFeatures → (모두 완료) → READY
 	LoadState = EMosesExperienceLoadState::LoadingGameFeatures;
+	ActivatedGFURLs.Reset();
 
-	// 이 Experience가 활성화해야 할 GameFeature 플러그인 목록
-	// (예: "GF_ShooterCore", "GF_UI", "GF_Weapons" 등)
-	const TArray<FString>& Features = CurrentExperience->GameFeaturesToEnable;
-
-	ScreenMsg(FColor::Cyan,
-		FString::Printf(TEXT("[EXP-MGR][GF] Start. Num=%d"), Features.Num())
-	);
-
-	// [최적화 + 단순화]
-	// 활성화할 GF가 하나도 없으면, 더 기다릴 비동기가 없으므로 즉시 READY로 진행 가능
+	const TArray<FString>& Features = CurrentExperience->GetGameFeaturesToEnable();
 	if (Features.Num() == 0)
 	{
-		UE_LOG(LogMosesExp, Log, TEXT("[GF] None -> READY"));
-		ScreenMsg(FColor::Green, TEXT("[EXP-MGR][GF] None -> READY"));
-
-		// "Experience 전체 로딩 완료" 처리
-		// - 여기서 PendingStartPlayers Flush / OnExperienceLoaded 브로드캐스트 같은 걸 하게 됨
-		OnExperienceFullLoadCompleted();
+		// GF가 없는 Experience도 가능(단순 페이즈 등)
+		FinishExperienceLoad();
 		return;
 	}
 
-	// [비동기 완료 카운팅]
-	// Features 각각은 비동기로 활성화되며,
-	// "모든 요청이 완료"되어야만 다음 단계(READY)로 넘어갈 수 있음.
-	PendingGFCount = Features.Num(); // 총 요청 수
-	CompletedGFCount = 0;              // 완료 콜백 도착 수
-	bAnyGFFailed = false;          // 하나라도 실패했는지
+	PendingGFCount = Features.Num();
+	CompletedGFCount = 0;
+	bAnyGFFailed = false;
+	LastGFFailReason.Reset();
 
-	// GameFeaturesSubsystem은
-	// - 플러그인 로드
-	// - GameFeature Action 적용(컴포넌트 추가, 데이터 등록 등)
-	// 을 담당하는 엔진 시스템
 	UGameFeaturesSubsystem& GFS = UGameFeaturesSubsystem::Get();
 
-	UE_LOG(LogMosesExp, Warning, TEXT("[GF] Enabling %d features..."), PendingGFCount);
-	ScreenMsg(FColor::Cyan, FString::Printf(TEXT("[EXP-MGR][GF] Enabling %d..."), PendingGFCount));
-
-	// 각 GameFeature 플러그인에 대해 Load+Activate 요청
 	for (const FString& PluginName : Features)
 	{
-		// PluginName → URL로 변환
-		// 엔진의 LoadAndActivateGameFeaturePlugin은 "URL" 형태를 요구하는 경우가 많아서
-		// (예: "file:.../GF_ShooterCore.uplugin" 또는 "GameFeaturePlugin:/GF_ShooterCore")
 		const FString URL = MakeGameFeaturePluginURL(PluginName);
-
-		UE_LOG(LogMosesExp, Warning,
-			TEXT("[GF] Request Activate: %s URL=%s"),
-			*PluginName,
-			*URL
-		);
-		ScreenMsg(FColor::Cyan,
-			FString::Printf(TEXT("[EXP-MGR][GF] Req %s"), *PluginName)
-		);
-
 		if (URL.IsEmpty())
 		{
-			// URL 생성 실패는 사실상 "플러그인 못 찾음"이라서 실패로 기록
-			// 그래도 전체 파이프라인을 멈추지 않고 카운트를 진행해야
-			// 나중에 '모든 요청이 끝났는지' 판단 가능함.
 			bAnyGFFailed = true;
 			CompletedGFCount++;
-
-			ScreenMsg(FColor::Red,
-				FString::Printf(TEXT("[EXP-MGR][GF] URL EMPTY %s"), *PluginName)
-			);
-
-			// 주의:
-			// 여기서 "완료 증가"만 하고 끝내면,
-			// 마지막에는 Completed==Pending이 되어 OnExperienceFullLoadCompleted가 호출되도록
-			// OnOneGameFeatureActivated 쪽에서 Completed를 검사하는 로직이 있어야 함.
 			continue;
 		}
 
-		// 비동기 Load + Activate 요청
-		// 완료되면 OnOneGameFeatureActivated(PluginName) 콜백이 호출됨
-		//
-		// 여기서 중요한 점:
-		// - 요청 순서대로 완료되지 않을 수 있음 (완료 순서가 랜덤)
-		// - 일부는 실패할 수 있음
-		// - 그래서 완료 카운팅 + 실패 플래그가 필요
+		// 비동기 Load+Activate 요청
 		GFS.LoadAndActivateGameFeaturePlugin(
 			URL,
-			FGameFeaturePluginLoadComplete::CreateUObject(
-				this,
-				&ThisClass::OnOneGameFeatureActivated, // 각 GF 완료 콜백
-				PluginName                              // 어떤 플러그인 요청이었는지 식별용
-			)
+			FGameFeaturePluginLoadComplete::CreateUObject(this, &ThisClass::OnOneGameFeatureActivated, PluginName)
 		);
 	}
 }
 
-
-// ---------------------------------------------
-// GameFeature 플러그인 하나의 활성화가 끝났을 때 호출되는 콜백
-// ---------------------------------------------
-void UMosesExperienceManagerComponent::OnOneGameFeatureActivated(
-	const UE::GameFeatures::FResult& Result,
-	FString PluginName
-)
+void UMosesExperienceManagerComponent::OnOneGameFeatureActivated(const UE::GameFeatures::FResult& Result, FString PluginName)
 {
 	CompletedGFCount++;
 
@@ -403,145 +207,95 @@ void UMosesExperienceManagerComponent::OnOneGameFeatureActivated(
 	{
 		bAnyGFFailed = true;
 		LastGFFailReason = Result.GetError();
-
-		UE_LOG(LogMosesExp, Error, TEXT("[GF] Failed: %s Error=%s"),
-			*PluginName, *LastGFFailReason);
-
-		ScreenMsg(FColor::Red,
-			FString::Printf(TEXT("[EXP-MGR][GF] FAIL %s"), *PluginName));
 	}
 	else
 	{
-		UE_LOG(LogMosesExp, Log, TEXT("[GF] Activated: %s (%d/%d)"),
-			*PluginName, CompletedGFCount, PendingGFCount);
-
-		ScreenMsg(FColor::Cyan,
-			FString::Printf(TEXT("[EXP-MGR][GF] Done %s (%d/%d)"),
-				*PluginName, CompletedGFCount, PendingGFCount));
+		// 성공한 GF는 나중에 전환 시 내리기 위해 URL 기록
+		const FString URL = MakeGameFeaturePluginURL(PluginName);
+		if (!URL.IsEmpty())
+		{
+			ActivatedGFURLs.AddUnique(URL);
+		}
 	}
 
 	if (CompletedGFCount >= PendingGFCount)
 	{
 		if (bAnyGFFailed)
 		{
-			const FString Reason = FString::Printf(
-				TEXT("One or more GameFeatures failed. LastError=%s"),
-				*LastGFFailReason
-			);
-
-			FailExperienceLoad(Reason);
+			FailExperienceLoad(FString::Printf(TEXT("GameFeature activation failed. Last=%s"), *LastGFFailReason));
 			return;
 		}
 
-		OnExperienceFullLoadCompleted();
+		FinishExperienceLoad();
 	}
 }
 
-// ---------------------------------------------
-// Experience READY (최종 로딩 완료 지점)
-// ---------------------------------------------
-void UMosesExperienceManagerComponent::OnExperienceFullLoadCompleted()
+void UMosesExperienceManagerComponent::FinishExperienceLoad()
 {
-	// 이미 실패 상태면 READY로 올리면 안 됨
-	// (중간에 GF 실패 → 이후 콜백이 와도 무시해야 함)
-	if (LoadState == EMosesExperienceLoadState::Failed)
-	{
-		return;
-	}
-
-	// Experience 로딩 완료 상태로 전환
 	LoadState = EMosesExperienceLoadState::Loaded;
 
-	// READY 처리는 반드시 "한 번만" 실행되어야 함
-	// - GF가 0개일 때
-	// - GF 콜백이 몰려서 여러 경로로 들어올 때
-	// 중복 실행 방지용 가드
-	if (!bNotifiedReadyOnce)
+	// “Experience READY” 브로드캐스트
+	OnExperienceLoaded.Broadcast(CurrentExperience);
+
+	// 등록된 대기 콜백 실행
+	for (FMosesExperienceLoadedDelegate& CB : PendingReadyCallbacks)
 	{
-		bNotifiedReadyOnce = true;
-
-		UE_LOG(LogMosesExp, Log, TEXT("✅ READY: %s"), *CurrentExperienceId.ToString());
-		ScreenMsg(FColor::Green,
-			FString::Printf(TEXT("[EXP-MGR][READY] %s"),
-				*CurrentExperienceId.ToString())
-		);
-
-		// ---------------------------------
-		// 1) Experience READY 이벤트 브로드캐스트
-		// ---------------------------------
-		// - 다른 시스템(GameMode, Subsystem, UI 등)이
-		//   "이제 Experience를 써도 된다"는 신호를 받음
-		OnExperienceLoaded.Broadcast(CurrentExperience);
-
-		// ---------------------------------
-		// 2) READY 이전에 등록된 대기 콜백 실행
-		// ---------------------------------
-		// CallOrRegister_OnExperienceLoaded 로 등록된 작업들:
-		// - Pawn 스폰 재시도
-		// - Input Mapping 적용
-		// - AbilitySet 적용
-		// - Lobby → Game 전환 처리 등
-		ScreenMsg(FColor::Green,
-			FString::Printf(TEXT("[EXP-MGR][READY] ExecCallbacks Count=%d"),
-				OnExperienceLoadedCallbacks.Num())
-		);
-
-		// ★ 핵심 포인트
-		// Experience 로딩 완료를 기다리던 모든 로직이
-		// 이 지점에서 "한 번에" 실행된다
-		for (FMosesExperienceLoadedDelegate& Delegate : OnExperienceLoadedCallbacks)
-		{
-			Delegate.ExecuteIfBound(CurrentExperience);
-		}
-
-		// 재사용 방지
-		OnExperienceLoadedCallbacks.Reset();
+		CB.ExecuteIfBound(CurrentExperience);
 	}
-
-	// 현재 Experience 상태를 로그로 출력 (디버깅용)
-	DebugDump();
-}
-
-// ------------------------------
-// Reset / Fail / Debug
-// ------------------------------
-void UMosesExperienceManagerComponent::ResetExperienceLoadState()
-{
-	LoadState = EMosesExperienceLoadState::Unloaded;
-
-	CurrentExperience = nullptr;
-	bNotifiedReadyOnce = false;
-	PendingExperienceId = FPrimaryAssetId();
-
-	// 🚫 절대 지우면 안 됨:
-	// GameMode(InitGameState)에서 미리 등록한 콜백이 여기서 날아가면 READY가 GameMode로 절대 전달 안 됨
-	// OnExperienceLoadedCallbacks.Reset();
-
-	PendingGFCount = 0;
-	CompletedGFCount = 0;
-	bAnyGFFailed = false;
-
-	ScreenMsg(FColor::Silver, TEXT("[EXP-MGR][Reset] State cleared (callbacks preserved)"));
+	PendingReadyCallbacks.Reset();
 }
 
 void UMosesExperienceManagerComponent::FailExperienceLoad(const FString& Reason)
 {
+	// 실패 시에도 이전 GF가 남아있으면 위험하므로 정리
 	LoadState = EMosesExperienceLoadState::Failed;
+	DeactivatePreviouslyActivatedGameFeatures();
 
-	UE_LOG(LogMosesExp, Error, TEXT("❌ LOAD FAILED: %s"), *Reason);
-	ScreenMsg(FColor::Red, FString::Printf(TEXT("[EXP-MGR][FAIL] %s"), *Reason));
-
-	DebugDump();
+	// 포트폴리오에서는 로그 채널을 붙이면 더 좋다(여기서는 단순화).
+	(void)Reason;
 }
 
-void UMosesExperienceManagerComponent::DebugDump() const
+void UMosesExperienceManagerComponent::ResetForNewExperience()
 {
-	UE_LOG(LogMosesExp, Log, TEXT("Dump ---------------------------"));
-	UE_LOG(LogMosesExp, Log, TEXT("  State: %d"), (int32)LoadState);
-	UE_LOG(LogMosesExp, Log, TEXT("  ExperienceId: %s"), *CurrentExperienceId.ToString());
-	UE_LOG(LogMosesExp, Log, TEXT("  PendingId: %s"), *PendingExperienceId.ToString());
-	UE_LOG(LogMosesExp, Log, TEXT("  Experience: %s"), CurrentExperience ? *CurrentExperience->GetName() : TEXT("null"));
-	UE_LOG(LogMosesExp, Log, TEXT("  GF: Pending=%d Completed=%d AnyFailed=%d"),
-		PendingGFCount, CompletedGFCount, bAnyGFFailed ? 1 : 0);
-	UE_LOG(LogMosesExp, Log, TEXT("----------------------------------------"));
+	// Experience 전환 핵심: 이전 GF 내리기
+	DeactivatePreviouslyActivatedGameFeatures();
+
+	LoadState = EMosesExperienceLoadState::Unloaded;
+	CurrentExperience = nullptr;
+	PendingExperienceId = FPrimaryAssetId();
+
+	PendingGFCount = 0;
+	CompletedGFCount = 0;
+	bAnyGFFailed = false;
+	LastGFFailReason.Reset();
+	PendingReadyCallbacks.Reset();
+}
+
+void UMosesExperienceManagerComponent::DeactivatePreviouslyActivatedGameFeatures()
+{
+	if (ActivatedGFURLs.Num() == 0)
+	{
+		return;
+	}
+
+	UGameFeaturesSubsystem& GFS = UGameFeaturesSubsystem::Get();
+
+	for (const FString& URL : ActivatedGFURLs)
+	{
+		/**
+		 * 개발자 주석:
+		 * - Experience 전환 시 "이전 Experience가 켠 GameFeature"를 내려야 한다.
+		 * - Deactivate(기능 OFF) + Unload(메모리에서 내림)까지 해주면
+		 *   다음 Experience가 올리는 기능만 남아 “조립형”이 완성된다.
+		 *
+		 * 주의:
+		 * - 내부적으로 비동기/상태머신이므로, 포트폴리오 단계에서는
+		 *   "전환 직후 즉시 새 Experience 로딩"을 해도 대부분 문제 없게 설계한다.
+		 * - 더 엄밀히 하려면 Deactivate 완료 콜백까지 기다리고 Unload 하는 방식으로 확장 가능.
+		 */
+		GFS.DeactivateGameFeaturePlugin(URL);
+		GFS.UnloadGameFeaturePlugin(URL);
+	}
+
+	ActivatedGFURLs.Reset();
 }

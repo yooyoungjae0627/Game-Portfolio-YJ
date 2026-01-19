@@ -91,6 +91,18 @@
 		{
 			"Name": "MetaHumanCharacter",
 			"Enabled": true
+		},
+		{
+			"Name": "GF_Combat_GAS",
+			"Enabled": true
+		},
+		{
+			"Name": "GF_Combat_Input",
+			"Enabled": true
+		},
+		{
+			"Name": "GF_Combat_UI",
+			"Enabled": true
 		}
 	]
 }

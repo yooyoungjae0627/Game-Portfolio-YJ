@@ -508,12 +508,12 @@ const UMosesPawnData* AMosesGameModeBase::GetPawnDataForController(const AContro
 	if (ExperienceManagerComponent->IsExperienceLoaded())
 	{
 		const UMosesExperienceDefinition* Experience = ExperienceManagerComponent->GetCurrentExperienceChecked();
-		return Experience ? Experience->DefaultPawnData : nullptr;
+		// [MOD] SoftPtr -> 포인터로 변환해서 반환
+		return Experience ? Experience->GetDefaultPawnDataLoaded() : nullptr;
 	}
 
 	return nullptr;
 }
-
 
 // ------------------------------
 // SpawnGate Release / Flush

@@ -100,9 +100,9 @@ void AMosesLobbyGameMode::PostLogin(APlayerController* NewPlayer)
 // =========================================================
 // Start Game (서버 최종 판정 + Travel)
 // =========================================================
-
 void AMosesLobbyGameMode::HandleStartMatchRequest(AMosesPlayerState* HostPS)
 {
+	// [MOD] 매치 시작은 Warmup Experience로 진입하도록 옵션 포함
 	if (!HasAuthority() || !HostPS)
 	{
 		return;
@@ -121,8 +121,10 @@ void AMosesLobbyGameMode::HandleStartMatchRequest(AMosesPlayerState* HostPS)
 		return;
 	}
 
-	// ✅ 매치맵으로 이동
-	const FString MapPath = TEXT("/Game/Map/MatchLevel?listen");
+	// ✅ [MOD] Warmup Experience로 시작
+	// - 너 GameModeBase는 OptionsString에서 Experience를 파싱해 FPrimaryAssetId("Experience", Name)로 만든다.
+	// - 따라서 여기 옵션은 "Exp_Match_Warmup" 같은 '이름'만 넣으면 된다.
+	const FString MapPath = TEXT("/Game/Map/MatchLevel?listen?Experience=Exp_Match_Warmup"); // [MOD]
 
 	UE_LOG(LogMosesSpawn, Warning, TEXT("[LobbyGM] ServerTravel -> %s"), *MapPath);
 
@@ -143,9 +145,9 @@ void AMosesLobbyGameMode::TravelToMatch()
 // =========================================================
 // Travel (server single function)
 // =========================================================
-
 void AMosesLobbyGameMode::ServerTravelToMatch()
 {
+	// [MOD] 디버그 Travel도 Warmup Experience로 들어가도록 통일
 	UWorld* World = GetWorld();
 	if (!World)
 	{
@@ -154,7 +156,8 @@ void AMosesLobbyGameMode::ServerTravelToMatch()
 
 	bUseSeamlessTravel = bUseSeamlessTravelToMatch;
 
-	const FString MapPath = FString::Printf(TEXT("/Game/Maps/%s?Experience=Exp_Match"),
+	// [MOD] ?listen + ?Experience=Exp_Match_Warmup
+	const FString MapPath = FString::Printf(TEXT("/Game/Maps/%s?listen?Experience=Exp_Match_Warmup"),
 		*MatchLevelName.ToString());
 
 	UE_LOG(LogMosesSpawn, Warning, TEXT("[LobbyGM] ServerTravel -> %s (Seamless=%d)"),

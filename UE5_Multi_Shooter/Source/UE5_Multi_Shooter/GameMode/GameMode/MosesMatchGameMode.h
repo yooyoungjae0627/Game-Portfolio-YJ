@@ -8,15 +8,8 @@ class AController;
 class APlayerController;
 class UMosesPawnData;
 class UMSCharacterCatalog;
+class UMosesExperienceManagerComponent;
 
-/**
- * [ADD] 매치 진행 페이즈(서버 권위로만 결정)
- * - GameMode는 서버에만 존재하므로, 이 값 자체는 "서버 로직"에 쓰고
- * - 클라 UI/HUD 표시용은 GameState에 Replicated 값으로 따로 내려주는 게 정석이다.
- *
- * (이번 파일에서는 "서버 진행 확정"을 먼저 고정하고,
- *  GameState 동기화는 추후 확장 포인트로 주석 처리한다.)
- */
 UENUM(BlueprintType)
 enum class EMosesMatchPhase : uint8
 {
@@ -26,21 +19,6 @@ enum class EMosesMatchPhase : uint8
 	Result            UMETA(DisplayName = "Result"),
 };
 
-/**
- * AMosesMatchGameMode
- *
- * [목표]
- * - Lobby에서 서버가 확정한 PlayerState.SelectedCharacterId를 기반으로
- *   MatchLevel에서 "선택된 캐릭터 PawnClass"를 Spawn/Possess 한다.
- *
- * [정책]
- * - 서버 권위: PawnClass 선택도 서버에서 결정한다.
- * - 클라는 결과(스폰된 Pawn 및 Possess)를 replication으로 받는다.
- *
- * [MOD] 추가 목표(기획 반영)
- * - Experience READY 이후에만 매치 진행(타이머)을 시작한다.
- * - Warmup(2m) → Combat(10m) → Result(30s) → Lobby 복귀
- */
 UCLASS()
 class UE5_MULTI_SHOOTER_API AMosesMatchGameMode : public AMosesGameModeBase
 {
@@ -97,6 +75,27 @@ private:
 	void HandlePhaseTimerExpired();
 
 	float GetPhaseDurationSeconds(EMosesMatchPhase Phase) const;
+
+	// ------------------------------------------------------------
+	// [ADD] Phase -> Experience Switch
+	// ------------------------------------------------------------
+	/** [ADD] Phase에 해당하는 Experience 이름(PrimaryAssetName) 반환 */
+	FName GetExperienceNameForPhase(EMosesMatchPhase Phase);
+
+	/**
+	 * [ADD] 서버 권위로 Experience를 교체한다.
+	 * - Warmup  -> Exp_Match_Warmup
+	 * - Combat  -> Exp_Match_Combat
+	 * - Result  -> Exp_Match_Result
+	 *
+	 * 주의:
+	 * - ExperienceManagerComponent는 GameState에 붙어 있음
+	 * - 서버에서 호출하면 CurrentExperienceId가 복제되어 클라도 따라온다.
+	 */
+	void ServerSwitchExperienceByPhase(EMosesMatchPhase Phase);
+
+	/** [ADD] ExperienceManagerComponent 접근 헬퍼(없으면 nullptr) */
+	UMosesExperienceManagerComponent* GetExperienceManager() const;
 
 private:
 	// ------------------------------------------------------------

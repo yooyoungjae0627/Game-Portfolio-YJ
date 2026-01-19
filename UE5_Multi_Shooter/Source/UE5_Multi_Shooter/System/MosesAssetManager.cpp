@@ -1,6 +1,12 @@
-﻿#include "MosesAssetManager.h"
-#include "UE5_Multi_Shooter/GAS/MosesGameplayTags.h"
+﻿#include "UE5_Multi_Shooter/System/MosesAssetManager.h"
+
+#include "Engine/Engine.h"
+#include "Misc/CommandLine.h"
+#include "Misc/Parse.h"
+
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
+
+#include "UE5_Multi_Shooter/GAS/MosesGameplayTags.h"
 
 UMosesAssetManager::UMosesAssetManager()
 {
@@ -15,9 +21,9 @@ UMosesAssetManager& UMosesAssetManager::Get()
 		return *Singleton;
 	}
 
-	// 여기로 오면 ini 설정이 잘못된 것.
-	// 개발 단계에서 빨리 죽는 게 원인 파악이 쉬움.
+	// ini 설정이 잘못되면 여기로 떨어진다.
 	checkf(false, TEXT("AssetManagerClassName is not UMosesAssetManager. Check DefaultEngine.ini"));
+	// 도달 불가지만 컴파일러 경고 방지
 	return *NewObject<UMosesAssetManager>();
 }
 
@@ -25,13 +31,15 @@ void UMosesAssetManager::StartInitialLoading()
 {
 	Super::StartInitialLoading();
 
-	// 스캔 확인 로그 (A 검증용)
+	InitializeMosesNativeTags();
+
+	// ----------------------------
+	// Experience 스캔 검증 로그
+	// ----------------------------
 	TArray<FPrimaryAssetId> FoundAssets;
 	GetPrimaryAssetIdList(ExperienceType(), FoundAssets);
 
-	InitializeMosesNativeTags();
-
-	UE_LOG(LogMosesExp, Log, TEXT("[AssetManager] Scanned ExperienceDefinitions: %d"), FoundAssets.Num());
+	UE_LOG(LogMosesExp, Log, TEXT("[AssetManager] Scanned Experience assets: %d"), FoundAssets.Num());
 	for (const FPrimaryAssetId& Id : FoundAssets)
 	{
 		UE_LOG(LogMosesExp, Log, TEXT("  - %s"), *Id.ToString());
@@ -40,7 +48,6 @@ void UMosesAssetManager::StartInitialLoading()
 
 bool UMosesAssetManager::ShouldLogAssetLoads()
 {
-	// 커맨드라인에 -LogAssetLoads 가 있으면 true
 	static bool bLogAssetLoads = FParse::Param(FCommandLine::Get(), TEXT("LogAssetLoads"));
 	return bLogAssetLoads;
 }
@@ -52,10 +59,9 @@ UObject* UMosesAssetManager::SynchronousLoadAsset(const FSoftObjectPath& AssetPa
 		return nullptr;
 	}
 
-	// 옵션: 로딩 시간 측정 로그
 	const double Start = FPlatformTime::Seconds();
 
-	// [MOD] UE5: AssetManager는 항상 Construct되므로 IsValid() 대신 IsInitialized() 사용 (C4996 경고 방지)
+	// [MOD] UE5에서는 IsValid 대신 IsInitialized 권장
 	checkf(UAssetManager::IsInitialized(), TEXT("AssetManager must be initialized when loading assets: %s"), *AssetPath.ToString());
 
 	UObject* Loaded = UAssetManager::GetStreamableManager().LoadSynchronous(AssetPath);
@@ -71,7 +77,6 @@ UObject* UMosesAssetManager::SynchronousLoadAsset(const FSoftObjectPath& AssetPa
 	return Loaded;
 }
 
-
 void UMosesAssetManager::AddLoadedAsset(const UObject* Asset)
 {
 	if (!Asset)
@@ -85,5 +90,6 @@ void UMosesAssetManager::AddLoadedAsset(const UObject* Asset)
 
 void UMosesAssetManager::InitializeMosesNativeTags()
 {
+	// 프로젝트에 네이티브 태그 초기화가 있다면 유지
 	FMosesGameplayTags::InitializeNativeTags();
 }

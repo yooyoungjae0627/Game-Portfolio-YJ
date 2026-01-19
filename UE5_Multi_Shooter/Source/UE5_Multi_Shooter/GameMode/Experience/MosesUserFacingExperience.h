@@ -1,47 +1,31 @@
-// Fill out your copyright notice in the Description page of Project Settings.
-
 #pragma once
 
-#include "Engine/DataAsset.h"
+#include "CoreMinimal.h"
+#include "UObject/PrimaryAssetId.h"
 #include "MosesUserFacingExperience.generated.h"
 
 /**
- * 유저가 UI에서 선택하는 "플레이 항목" 데이터 에셋
- * - 어떤 맵을 열지
- * - 어떤 Experience를 적용할지
+ * UMosesUserFacingExperience
  *
- * 역할:
- * - 이 정보들을 TravelURL 옵션으로 변환해
- *   HostSessionSubsystem에 넘길 요청 객체를 생성한다.
+ * [역할]
+ * - 로비 UI에서 유저가 고르는 “플레이 항목(카드)”
+ * - “어느 맵을 열지” + “어느 Experience를 적용할지”만 들고 있는 데이터다.
  *
- * 주의:
- * - 이 클래스는 로딩/조회/판단을 하지 않는다.
- * - 단순히 "선택 결과를 전달하는 용도"다.
+ * [중요]
+ * - ExperienceID는 FPrimaryAssetId 전체(Type:Name)를 유지해야 안전하다.
+ *   예) Experience:Exp_Lobby
  */
-
-//class UCommonSession_HostSessionRequest;
-
-UCLASS()
+UCLASS(BlueprintType)
 class UE5_MULTI_SHOOTER_API UMosesUserFacingExperience : public UPrimaryDataAsset
 {
 	GENERATED_BODY()
-	
-public:
-	///**
-	// * HostSessionSubsystem에 넘길 요청 객체 생성
-	// * - MapID 설정
-	// * - Experience 이름을 TravelURL 옵션으로 추가
-	// */
-	//UFUNCTION(BlueprintCallable)
-	//UCommonSession_HostSessionRequest* CreateHostingRequest() const;
 
-	/** 열고 싶은 맵 (PrimaryAsset: Map) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Experience, meta = (AllowedTypes = "Map"))
+public:
+	/** 열고 싶은 맵 (Primary Asset: Map) */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "UserFacing")
 	FPrimaryAssetId MapID;
 
-	/** 적용할 Experience (PrimaryAsset: YJExperienceDefinition) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Experience, meta = (AllowedTypes = "MosesExperienceDefinition"))
+	/** 적용할 Experience (Primary Asset Type: Experience) */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "UserFacing", meta = (AllowedTypes = "Experience"))
 	FPrimaryAssetId ExperienceID;
-	
-	
 };

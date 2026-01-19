@@ -6,6 +6,7 @@
 #include "UE5_Multi_Shooter/Player/MosesPlayerState.h"
 #include "UE5_Multi_Shooter/Player/MosesPlayerController.h"
 #include "UE5_Multi_Shooter/UI/CharacterSelect/MSCharacterCatalog.h"
+#include "UE5_Multi_Shooter/GameMode/Experience/MosesExperienceManagerComponent.h"
 
 #include "Engine/World.h"
 #include "TimerManager.h"
@@ -33,14 +34,15 @@ AMosesMatchGameMode::AMosesMatchGameMode()
 // =========================================================
 // Engine
 // =========================================================
-
 void AMosesMatchGameMode::InitGame(const FString& MapName, const FString& Options, FString& ErrorMessage)
 {
+	// // [MOD] Match 레벨은 옵션에 Experience가 없으면 Exp_Match_Warmup로 강제
 	// [유지] Match 레벨은 옵션에 Experience가 없으면 Exp_Match로 강제
 	FString FinalOptions = Options;
+
 	if (!UGameplayStatics::HasOption(Options, TEXT("Experience")))
 	{
-		FinalOptions += TEXT("?Experience=Exp_Match");
+		FinalOptions += TEXT("?Experience=Exp_Match_Warmup"); // [MOD]
 	}
 
 	Super::InitGame(MapName, FinalOptions, ErrorMessage);
@@ -150,63 +152,6 @@ void AMosesMatchGameMode::StartMatchFlow_AfterExperienceReady()
 
 	// [ADD] 페이즈 시작: Warmup
 	SetMatchPhase(EMosesMatchPhase::Warmup);
-}
-
-void AMosesMatchGameMode::SetMatchPhase(EMosesMatchPhase NewPhase)
-{
-	if (!HasAuthority())
-	{
-		return;
-	}
-
-	// 같은 페이즈 중복 진입 방지
-	if (CurrentPhase == NewPhase)
-	{
-		return;
-	}
-
-	CurrentPhase = NewPhase;
-
-	// [ADD] 타이머 초기화
-	GetWorldTimerManager().ClearTimer(PhaseTimerHandle);
-
-	const float Duration = GetPhaseDurationSeconds(CurrentPhase);
-	PhaseEndTimeSeconds = (Duration > 0.f) ? (GetWorld()->GetTimeSeconds() + Duration) : 0.0;
-
-	UE_LOG(LogMosesExp, Warning, TEXT("[MatchGM][PHASE] -> %s (Duration=%.2f EndTime=%.2f)"),
-		*UEnum::GetValueAsString(CurrentPhase),
-		Duration,
-		PhaseEndTimeSeconds);
-
-	// [ADD] 엔진 MatchState와의 연결(원하면 더 엄격히 분리해도 됨)
-	// - Warmup: 아직 StartMatch() 안 함
-	// - Combat: StartMatch()
-	// - Result: EndMatch()
-// [MOD] AGameModeBase에는 StartMatch/EndMatch가 없으므로 로그만 남긴다.
-	if (CurrentPhase == EMosesMatchPhase::Combat)
-	{
-		UE_LOG(LogMosesExp, Warning, TEXT("[MatchGM][PHASE] Combat START"));
-	}
-	else if (CurrentPhase == EMosesMatchPhase::Result)
-	{
-		UE_LOG(LogMosesExp, Warning, TEXT("[MatchGM][PHASE] Result START"));
-	}
-
-
-	// [확장 포인트]
-	// - "클라 HUD 표시"는 GameState에 Replicated Phase/RemainingTime을 내려주는 방식이 정석
-	// - 예: AMosesGameState에 SetMatchPhase(CurrentPhase, PhaseEndTimeSeconds) 같은 API 추가
-
-	// [ADD] 타이머 예약(WaitingForPlayers는 타이머 없음)
-	if (Duration > 0.f)
-	{
-		GetWorldTimerManager().SetTimer(
-			PhaseTimerHandle,
-			this,
-			&ThisClass::HandlePhaseTimerExpired,
-			Duration,
-			false);
-	}
 }
 
 void AMosesMatchGameMode::HandlePhaseTimerExpired()
@@ -382,8 +327,7 @@ bool AMosesMatchGameMode::CanDoServerTravel() const
 
 FString AMosesMatchGameMode::GetLobbyMapURL() const
 {
-	// [유지] 필요시 "?listen?Experience=Exp_Lobby" 같은 옵션을 추가해도 됨
-	return TEXT("/Game/Map/L_Lobby");
+	return TEXT("/Game/Map/L_Lobby?Experience=Exp_Lobby");
 }
 
 void AMosesMatchGameMode::GetSeamlessTravelActorList(bool bToTransition, TArray<AActor*>& ActorList)
@@ -675,5 +619,107 @@ void AMosesMatchGameMode::DumpReservedStarts(const TCHAR* Where) const
 			Where,
 			*GetNameSafe(PC),
 			*GetNameSafe(PS));
+	}
+}
+
+FName AMosesMatchGameMode::GetExperienceNameForPhase(EMosesMatchPhase Phase)
+{
+	switch (Phase)
+	{
+	case EMosesMatchPhase::Warmup: return FName(TEXT("Exp_Match_Warmup"));
+	case EMosesMatchPhase::Combat:  return FName(TEXT("Exp_Match_Combat"));
+	case EMosesMatchPhase::Result:  return FName(TEXT("Exp_Match_Result"));
+	default: break;
+	}
+
+	return NAME_None;
+}
+
+UMosesExperienceManagerComponent* AMosesMatchGameMode::GetExperienceManager() const
+{
+	return GameState ? GameState->FindComponentByClass<UMosesExperienceManagerComponent>() : nullptr;
+}
+
+// [ADD] 서버 권위로 Experience를 교체한다.
+void AMosesMatchGameMode::ServerSwitchExperienceByPhase(EMosesMatchPhase Phase)
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	const FName ExpName = GetExperienceNameForPhase(Phase);
+	if (ExpName.IsNone())
+	{
+		return;
+	}
+
+	static const FPrimaryAssetType ExperienceType(TEXT("Experience"));
+	const FPrimaryAssetId NewExperienceId(ExperienceType, ExpName);
+
+	UMosesExperienceManagerComponent* ExperienceManagerComponent = GetExperienceManager(); // [MOD]
+
+	if (!ExperienceManagerComponent)
+	{
+		UE_LOG(LogMosesExp, Error, TEXT("[MatchGM][EXP] No ExperienceManagerComponent. Cannot switch Experience."));
+		return;
+	}
+
+	UE_LOG(LogMosesExp, Warning, TEXT("[MatchGM][EXP] Switch -> %s (Phase=%s)"),
+		*NewExperienceId.ToString(),
+		*UEnum::GetValueAsString(Phase));
+
+	// 서버에서 호출하면 즉시 서버 로드가 시작되고, CurrentExperienceId가 복제되어 클라도 따라감
+	ExperienceManagerComponent->ServerSetCurrentExperience(NewExperienceId);
+}
+
+// [MOD] Phase가 바뀔 때 Experience도 함께 교체( Warmup/Combat/Result )
+void AMosesMatchGameMode::SetMatchPhase(EMosesMatchPhase NewPhase)
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	if (CurrentPhase == NewPhase)
+	{
+		return;
+	}
+
+	CurrentPhase = NewPhase;
+
+	// [ADD] Phase 진입 시 Experience도 갈아끼운다.
+	// - Warmup: Exp_Match_Warmup
+	// - Combat : Exp_Match_Combat
+	// - Result : Exp_Match_Result
+	ServerSwitchExperienceByPhase(CurrentPhase); // [ADD]
+
+	GetWorldTimerManager().ClearTimer(PhaseTimerHandle);
+
+	const float Duration = GetPhaseDurationSeconds(CurrentPhase);
+	PhaseEndTimeSeconds = (Duration > 0.f) ? (GetWorld()->GetTimeSeconds() + Duration) : 0.0;
+
+	UE_LOG(LogMosesExp, Warning, TEXT("[MatchGM][PHASE] -> %s (Duration=%.2f EndTime=%.2f)"),
+		*UEnum::GetValueAsString(CurrentPhase),
+		Duration,
+		PhaseEndTimeSeconds);
+
+	if (CurrentPhase == EMosesMatchPhase::Combat)
+	{
+		UE_LOG(LogMosesExp, Warning, TEXT("[MatchGM][PHASE] Combat START"));
+	}
+	else if (CurrentPhase == EMosesMatchPhase::Result)
+	{
+		UE_LOG(LogMosesExp, Warning, TEXT("[MatchGM][PHASE] Result START"));
+	}
+
+	if (Duration > 0.f)
+	{
+		GetWorldTimerManager().SetTimer(
+			PhaseTimerHandle,
+			this,
+			&ThisClass::HandlePhaseTimerExpired,
+			Duration,
+			false);
 	}
 }

@@ -1,11 +1,6 @@
-// Fill out your copyright notice in the Description page of Project Settings.
+#include "UE5_Multi_Shooter/Character/Data/MosesPawnData.h"
 
-
-#include "MosesPawnData.h"
-
-UMosesPawnData::UMosesPawnData(const FObjectInitializer& ObjectInitializer) : Super(ObjectInitializer)
+UMosesPawnData::UMosesPawnData(const FObjectInitializer& ObjectInitializer)
+	: Super(ObjectInitializer)
 {
-
 }
-
-
