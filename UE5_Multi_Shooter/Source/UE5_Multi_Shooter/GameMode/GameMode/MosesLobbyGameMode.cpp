@@ -1,8 +1,4 @@
-﻿// ============================================================================
-// MosesLobbyGameMode.cpp
-// ============================================================================
-
-#include "MosesLobbyGameMode.h"
+﻿#include "MosesLobbyGameMode.h"
 
 #include "UE5_Multi_Shooter/GameMode/GameState/MosesLobbyGameState.h"
 #include "UE5_Multi_Shooter/Player/MosesPlayerController.h"
@@ -63,9 +59,52 @@ void AMosesLobbyGameMode::HandleDoD_AfterExperienceReady(const UMosesExperienceD
 	UE_LOG(LogMosesExp, Log, TEXT("[LobbyGM][READY] Exp=%s"), *GetNameSafe(CurrentExperience));
 }
 
+void AMosesLobbyGameMode::GenericPlayerInitialization(AController* C)
+{
+	Super::GenericPlayerInitialization(C);
+
+	if (!HasAuthority() || !C)
+	{
+		return;
+	}
+
+	AMosesPlayerController* MPC = Cast<AMosesPlayerController>(C);
+	if (!MPC)
+	{
+		return;
+	}
+
+	AMosesPlayerState* PS = MPC->GetPlayerState<AMosesPlayerState>();
+	if (!PS)
+	{
+		return;
+	}
+
+	// SSOT: Pid 보장
+	PS->EnsurePersistentId_Server();
+
+	// [정책] 로비 진입만으로 로그인 금지
+	PS->ServerSetLoggedIn(false);
+
+	// [ADD] SeamlessTravel로 따라온 플레이어도 여기서 DevNick 보장
+	//      (단, LoggedIn은 false 유지)
+	EnsureDevNickname_Server(PS);
+
+	UE_LOG(LogMosesSpawn, Log, TEXT("[LobbyGM][GPI] OK PC=%s Pid=%s Nick='%s' LoggedIn=%d"),
+		*GetNameSafe(MPC),
+		*PS->GetPersistentId().ToString(),
+		*PS->GetPlayerNickName(),
+		PS->IsLoggedIn() ? 1 : 0);
+}
+
 void AMosesLobbyGameMode::PostLogin(APlayerController* NewPlayer)
 {
 	Super::PostLogin(NewPlayer);
+
+	if (!HasAuthority())
+	{
+		return;
+	}
 
 	AMosesPlayerController* MPC = Cast<AMosesPlayerController>(NewPlayer);
 	if (!MPC)
@@ -83,18 +122,17 @@ void AMosesLobbyGameMode::PostLogin(APlayerController* NewPlayer)
 
 	PS->EnsurePersistentId_Server();
 
-	// 개별 로그인 정책: 여기서 자동 로그인 처리 금지
-	PS->SetLoggedIn_Server(false);
+	// [정책] PostLogin에서도 로그인 금지 유지
+	PS->ServerSetLoggedIn(false);
 
-	UE_LOG(LogMosesSpawn, Log, TEXT("[LobbyGM] PostLogin OK PC=%s Pid=%s LoggedIn=%d"),
+	// [MOD] PostLogin에서도 DevNick 보장(중복 호출돼도 안전)
+	EnsureDevNickname_Server(PS);
+
+	UE_LOG(LogMosesSpawn, Log, TEXT("[LobbyGM] PostLogin OK PC=%s Pid=%s Nick='%s' LoggedIn=%d"),
 		*GetNameSafe(MPC),
 		*PS->GetPersistentId().ToString(),
+		*PS->GetPlayerNickName(),
 		PS->IsLoggedIn() ? 1 : 0);
-
-	// ⚠️ 원본 코드에 있던 “PostLogin에서 StartMatchRequest 호출”은 테스트 용도로 보이는데
-	// 실제 로비에선 의도치 않게 시작 요청이 연쇄될 수 있음.
-	// 필요 시 너가 별도의 테스트 플래그로 감싸서 켜는 걸 권장.
-	// HandleStartMatchRequest(PS);
 }
 
 // =========================================================
@@ -283,4 +321,33 @@ int32 AMosesLobbyGameMode::ResolveCharacterId(const FName CharacterId) const
 	}
 
 	return -1;
+}
+
+void AMosesLobbyGameMode::EnsureDevNickname_Server(AMosesPlayerState* PS) const
+{
+	check(HasAuthority());
+
+	if (!PS)
+	{
+		return;
+	}
+
+	const FString CurrentNick = PS->GetPlayerNickName().TrimStartAndEnd();
+	if (!CurrentNick.IsEmpty())
+	{
+		return;
+	}
+
+	// [MOD] 요구사항: 닉 없으면 Dev_Moses_* 주입
+	const int32 Id = PS->GetPlayerId();
+	const FString FinalNick = FString::Printf(TEXT("Dev_Moses_%d"), Id);
+
+	PS->ServerSetPlayerNickName(FinalNick);
+
+	// [MOD] "로비 진입만으로 로그인 금지" 정책 유지
+	PS->ServerSetLoggedIn(false);
+
+	UE_LOG(LogMosesSpawn, Warning, TEXT("[LobbyGM][DevNick] Applied Nick='%s' (LoggedIn=false) PS=%s"),
+		*FinalNick,
+		*GetNameSafe(PS));
 }

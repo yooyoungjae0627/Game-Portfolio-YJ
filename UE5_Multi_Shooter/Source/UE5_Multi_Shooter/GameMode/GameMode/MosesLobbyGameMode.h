@@ -56,6 +56,7 @@ protected:
 	virtual void PostLogin(APlayerController* NewPlayer) override;
 	virtual void InitGame(const FString& MapName, const FString& Options, FString& ErrorMessage) override;
 	virtual void HandleDoD_AfterExperienceReady(const UMosesExperienceDefinition* CurrentExperience) override;
+	virtual void GenericPlayerInitialization(AController* C) override;
 
 private:
 	/*====================================================
@@ -75,6 +76,12 @@ private:
 	= Character catalog resolve
 	====================================================*/
 	int32 ResolveCharacterId(const FName CharacterId) const;
+
+private:
+	// ----------------------------
+	// Dev Nick Policy (Server-only)
+	// ----------------------------
+	void EnsureDevNickname_Server(AMosesPlayerState* PS) const;
 
 private:
 	/*====================================================
@@ -98,4 +105,12 @@ private:
 
 	UPROPERTY(Transient)
 	TMap<TWeakObjectPtr<APlayerController>, float> LastAcceptedTimeByPC;
+
+private:
+	// ----------------------------
+	// Tunables
+	// ----------------------------
+	/** 닉네임이 비어있을 때 강제 주입할 기본 닉네임 */
+	UPROPERTY(EditDefaultsOnly, Category = "Lobby|Dev")
+	FString DevFallbackNickname = TEXT("Dev_Moses");
 };

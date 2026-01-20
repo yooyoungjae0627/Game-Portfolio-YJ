@@ -204,7 +204,8 @@ void UMosesLobbyLocalPlayerSubsystem::NotifyPlayerStateChanged()
 		return;
 	}
 
-	// [ADD] PS가 늦게 붙는 구간(SeamlessTravel 직후) 대비: 한번은 무조건 다음틱에 UI 갱신 시도
+	// [ADD] PS가 늦게 붙는 구간(SeamlessTravel 직후) 대비: 다음 틱에 UI 갱신 시도
+	//      (단, 여기서 "닉 전송" 같은 네트워크 행위는 절대 하지 않는다)
 	if (AMosesPlayerState* MyPS = GetMosesPS_LocalOnly(); !MyPS)
 	{
 		if (UWorld* World = GetWorld())
@@ -213,13 +214,22 @@ void UMosesLobbyLocalPlayerSubsystem::NotifyPlayerStateChanged()
 		}
 	}
 
+	// =========================================================
+	// [MOD] 로그인 의사가 없으면 "닉 자동 생성/자동 전송"을 절대 하지 않는다.
+	// - ServerTravel로 로비에 따라온 B를 보호하기 위한 핵심 게이트.
+	// - 대신 UI만 갱신하고 끝낸다. (서버가 Dev_Moses를 넣어줄 수 있게 닉을 비워둠)
+	// =========================================================
 	if (!bLoginSubmitted_Local)
 	{
+		LobbyPlayerStateChangedEvent.Broadcast();
+		RefreshLobbyPreviewCharacter_LocalOnly();
 		RefreshLobbyUI_FromCurrentState();
 		return;
 	}
 
-	// 로그인 의사가 있을 때만 AutoNick fallback
+	// =========================================================
+	// 로그인 의사가 있을 때만 AutoNick fallback 허용
+	// =========================================================
 	{
 		AMosesPlayerController* PC = GetMosesPC_LocalOnly();
 		AMosesPlayerState* MyPS = GetMosesPS_LocalOnly();
@@ -246,12 +256,17 @@ void UMosesLobbyLocalPlayerSubsystem::NotifyPlayerStateChanged()
 		}
 	}
 
+	// =========================================================
+	// [MOD] 닉 전송은 "로그인 의사"가 있을 때만 수행
+	// =========================================================
 	TrySendPendingLobbyNickname_Local();
 
+	// UI 파이프
 	LobbyPlayerStateChangedEvent.Broadcast();
 	RefreshLobbyPreviewCharacter_LocalOnly();
 	RefreshLobbyUI_FromCurrentState();
 }
+
 
 void UMosesLobbyLocalPlayerSubsystem::NotifyRoomStateChanged()
 {
