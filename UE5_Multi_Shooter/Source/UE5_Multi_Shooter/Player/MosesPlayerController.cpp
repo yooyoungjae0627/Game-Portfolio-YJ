@@ -393,19 +393,21 @@ void AMosesPlayerController::Server_JoinRoom_Implementation(const FGuid& RoomId)
 
 	if (!PS->IsLoggedIn())
 	{
-		FString AutoNick = PS->GetPlayerNickName().TrimStartAndEnd();
-		if (AutoNick.IsEmpty())
-		{
-			const FString Pid4 = PS->GetPersistentId().ToString(EGuidFormats::Digits).Left(4);
-			AutoNick = FString::Printf(TEXT("Guest_%s"), *Pid4);
-		}
+		//FString AutoNick = PS->GetPlayerNickName().TrimStartAndEnd();
+		//if (AutoNick.IsEmpty())
+		//{
+		//	const FString Pid4 = PS->GetPersistentId().ToString(EGuidFormats::Digits).Left(4);
+		//	AutoNick = FString::Printf(TEXT("Guest_%s"), *Pid4);
+		//}
 
-		PS->ServerSetPlayerNickName(AutoNick);
+		const FString PlayerNickName = PS->GetPlayerNickName();
+
+		PS->ServerSetPlayerNickName(PlayerNickName);
 		PS->ServerSetLoggedIn(true);
 
 		UE_LOG(LogMosesSpawn, Warning,
 			TEXT("[LobbyRPC][SV] AutoLoginBeforeJoin Nick=%s Pid=%s PC=%s"),
-			*AutoNick,
+			*PlayerNickName,
 			*PS->GetPersistentId().ToString(),
 			*GetNameSafe(this));
 	}

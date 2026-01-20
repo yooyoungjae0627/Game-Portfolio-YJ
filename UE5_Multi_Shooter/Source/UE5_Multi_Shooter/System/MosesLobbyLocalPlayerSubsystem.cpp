@@ -1,8 +1,4 @@
-﻿// ========// ============================================================================
-// MosesLobbyLocalPlayerSubsystem.cpp
-// ============================================================================
-
-#include "UE5_Multi_Shooter/System/MosesLobbyLocalPlayerSubsystem.h"
+﻿#include "UE5_Multi_Shooter/System/MosesLobbyLocalPlayerSubsystem.h"
 #include "UE5_Multi_Shooter/System/MosesUIRegistrySubsystem.h"
 
 #include "UE5_Multi_Shooter/Player/MosesPlayerController.h"
@@ -20,10 +16,6 @@
 #include "Kismet/GameplayStatics.h"
 #include "TimerManager.h"
 #include "Blueprint/UserWidget.h"
-
-// =========================================================
-// Engine
-// =========================================================
 
 void UMosesLobbyLocalPlayerSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
@@ -239,15 +231,8 @@ void UMosesLobbyLocalPlayerSubsystem::NotifyPlayerStateChanged()
 			const FString CurrentNick = MyPS->GetPlayerNickName().TrimStartAndEnd();
 			if (CurrentNick.IsEmpty() && PendingLobbyNickname_Local.TrimStartAndEnd().IsEmpty())
 			{
-				FString AutoNick = MyPS->GetPlayerName().TrimStartAndEnd();
-				if (AutoNick.IsEmpty())
-				{
-					ULocalPlayer* LP = GetLocalPlayer();
-					const int32 LocalIdx = LP ? LP->GetControllerId() : 0;
-					AutoNick = FString::Printf(TEXT("Guest_%d"), LocalIdx);
-				}
-
-				PendingLobbyNickname_Local = AutoNick;
+				const FString NickName = MyPS->GetPlayerName();
+				PendingLobbyNickname_Local = NickName;
 				bPendingLobbyNicknameSend_Local = true;
 
 				UE_LOG(LogMosesSpawn, Warning, TEXT("[Nick][Auto] Set PendingLobbyNickname_Local='%s' PS=%s"),

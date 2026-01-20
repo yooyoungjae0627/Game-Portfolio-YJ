@@ -1,8 +1,4 @@
-﻿// ============================================================================
-// MosesLobbyGameState.cpp
-// ============================================================================
-
-#include "MosesLobbyGameState.h"
+﻿#include "MosesLobbyGameState.h"
 
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
 #include "UE5_Multi_Shooter/MosesGameInstance.h"

@@ -272,15 +272,6 @@ void UMosesLobbyWidget::RefreshRoomListFromGameState()
 	const bool bInRoomByRep = (PS && PS->GetRoomId().IsValid());
 	const bool bInRoom_UIOnly = bInRoomByRep || bPendingEnterRoom_UIOnly;
 
-	// Overlay는 "방이 존재" + "내가 방 밖"일 때만 노출
-	//if (RoomListViewOverlay)
-	//{
-	//	const bool bShouldShowOverlay = bHasAnyRoom && !bInRoom_UIOnly;
-	//	RoomListViewOverlay->SetVisibility(
-	//		bShouldShowOverlay ? ESlateVisibility::SelfHitTestInvisible : ESlateVisibility::Collapsed
-	//	);
-	//}
-
 	RoomListView->ClearListItems();
 
 	for (const FMosesLobbyRoomItem& Room : LGS->GetRooms())
@@ -307,11 +298,23 @@ void UMosesLobbyWidget::RefreshPanelsByPlayerState()
 	const bool bInRoomByRep = (PS && PS->GetRoomId().IsValid());
 	const bool bInRoom_UIOnly = bInRoomByRep || bPendingEnterRoom_UIOnly;
 
-	const ESlateVisibility NewLeft = bInRoom_UIOnly ? ESlateVisibility::Collapsed : ESlateVisibility::Visible;
-	const ESlateVisibility NewRight = bInRoom_UIOnly ? ESlateVisibility::Visible : ESlateVisibility::Collapsed;
-
+	const ESlateVisibility NewLeft = bInRoom_UIOnly ? ESlateVisibility::Collapsed : ESlateVisibility::SelfHitTestInvisible;
+	const ESlateVisibility NewRight = bInRoom_UIOnly ? ESlateVisibility::SelfHitTestInvisible : ESlateVisibility::Collapsed;
+	
 	if (LeftPanel && LeftPanel->GetVisibility() != NewLeft)
 	{
+		if (Button_CreateRoom)
+		{
+			if (NewLeft == ESlateVisibility::SelfHitTestInvisible)
+			{
+				Button_CreateRoom->SetVisibility(ESlateVisibility::Visible);
+			}
+			else
+			{
+				Button_CreateRoom->SetVisibility(ESlateVisibility::Collapsed);
+			}
+		}
+
 		LeftPanel->SetVisibility(NewLeft);
 	}
 
@@ -651,10 +654,8 @@ void UMosesLobbyWidget::OnRoomItemClicked(UObject* ClickedItem)
 
 		if (LobbyLPS)
 		{
-			const FString AutoNick = FString::Printf(TEXT("Guest_%d"),
-				GetOwningLocalPlayer() ? GetOwningLocalPlayer()->GetControllerId() : 0);
-
-			LobbyLPS->RequestSetLobbyNickname_LocalOnly(AutoNick);
+			const FString NickName = PS->GetPlayerNickName();
+			LobbyLPS->RequestSetLobbyNickname_LocalOnly(NickName);
 		}
 
 		UE_LOG(LogTemp, Warning, TEXT("[LobbyUI] Join deferred until login. Room=%s"), *PendingJoinRoomId.ToString());
