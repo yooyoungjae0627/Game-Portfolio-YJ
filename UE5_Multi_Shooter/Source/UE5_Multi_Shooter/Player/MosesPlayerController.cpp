@@ -393,13 +393,6 @@ void AMosesPlayerController::Server_JoinRoom_Implementation(const FGuid& RoomId)
 
 	if (!PS->IsLoggedIn())
 	{
-		//FString AutoNick = PS->GetPlayerNickName().TrimStartAndEnd();
-		//if (AutoNick.IsEmpty())
-		//{
-		//	const FString Pid4 = PS->GetPersistentId().ToString(EGuidFormats::Digits).Left(4);
-		//	AutoNick = FString::Printf(TEXT("Guest_%s"), *Pid4);
-		//}
-
 		const FString PlayerNickName = PS->GetPlayerNickName();
 
 		PS->ServerSetPlayerNickName(PlayerNickName);
