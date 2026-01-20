@@ -84,9 +84,6 @@ protected:
 	void HandleRoomStateChanged_UI();
 	void HandlePlayerStateChanged_UI();
 
-	// [DIALOGUE/VOICE DISABLED]
-	// void HandleRulesViewModeChanged_UI(bool bEnable);
-
 protected:
 	/*====================================================
 	= Create Room Popup Flow

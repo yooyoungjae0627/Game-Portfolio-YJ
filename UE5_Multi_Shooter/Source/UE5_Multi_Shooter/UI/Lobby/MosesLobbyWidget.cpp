@@ -62,12 +62,12 @@ void UMosesLobbyWidget::NativeConstruct()
 
 	if (LeftPanel)
 	{
-		LeftPanel->SetVisibility(ESlateVisibility::Collapsed);
+		LeftPanel->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
 	}
 
 	if (RoomListViewOverlay)
 	{
-		RoomListViewOverlay->SetVisibility(ESlateVisibility::Collapsed);
+		RoomListViewOverlay->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
 	}
 
 	// Subsystem 캐시 + 바인딩
@@ -273,13 +273,13 @@ void UMosesLobbyWidget::RefreshRoomListFromGameState()
 	const bool bInRoom_UIOnly = bInRoomByRep || bPendingEnterRoom_UIOnly;
 
 	// Overlay는 "방이 존재" + "내가 방 밖"일 때만 노출
-	if (RoomListViewOverlay)
-	{
-		const bool bShouldShowOverlay = bHasAnyRoom && !bInRoom_UIOnly;
-		RoomListViewOverlay->SetVisibility(
-			bShouldShowOverlay ? ESlateVisibility::SelfHitTestInvisible : ESlateVisibility::Collapsed
-		);
-	}
+	//if (RoomListViewOverlay)
+	//{
+	//	const bool bShouldShowOverlay = bHasAnyRoom && !bInRoom_UIOnly;
+	//	RoomListViewOverlay->SetVisibility(
+	//		bShouldShowOverlay ? ESlateVisibility::SelfHitTestInvisible : ESlateVisibility::Collapsed
+	//	);
+	//}
 
 	RoomListView->ClearListItems();
 
