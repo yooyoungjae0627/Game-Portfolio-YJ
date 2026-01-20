@@ -125,7 +125,12 @@ protected:
 	UFUNCTION()
 	void OnClicked_SendChat();
 
+	UFUNCTION()
 	void OnRoomItemClicked(UObject* ClickedItem);
+
+	// ChatEditText(EditableTextBox)에서 Enter 치면 호출되는 커밋 이벤트
+	UFUNCTION()
+	void OnChatTextCommitted(const FText& Text, ETextCommit::Type CommitMethod);
 
 protected:
 	/*====================================================
@@ -133,6 +138,12 @@ protected:
 	====================================================*/
 	FString GetChatInput() const;
 	void RebuildChat(const AMosesLobbyGameState* GS);
+
+	// 전송 공통 처리(버튼/엔터 둘 다 이 함수로 통일)
+	void TrySendChatFromInput();
+
+	// UX: 로컬에서 보내기 전에 최소 게이트(서버에서도 다시 검증함)
+	bool CanSendChat_UIOnly() const;
 
 protected:
 	/*====================================================

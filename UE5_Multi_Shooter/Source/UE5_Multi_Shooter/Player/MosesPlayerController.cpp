@@ -172,6 +172,24 @@ void AMosesPlayerController::SetPendingLobbyNickname_Local(const FString& Nick)
 	TrySendPendingLobbyNickname_Local();
 }
 
+// 이미 존재하는 Server_SendLobbyChat의 구현을 "서버 권위 GameState 위임"으로 통일
+void AMosesPlayerController::Server_SendLobbyChat_Implementation(const FString& Text)
+{
+	AMosesPlayerState* PS = GetPlayerState<AMosesPlayerState>();
+	if (!PS)
+	{
+		return;
+	}
+
+	AMosesLobbyGameState* LGS = GetWorld() ? GetWorld()->GetGameState<AMosesLobbyGameState>() : nullptr;
+	if (!LGS)
+	{
+		return;
+	}
+
+	LGS->Server_AddChatMessage(PS, Text);
+}
+
 void AMosesPlayerController::BeginPlay()
 {
 	Super::BeginPlay();
@@ -520,29 +538,6 @@ void AMosesPlayerController::Server_SetLobbyNickname_Implementation(const FStrin
 		*GetNameSafe(PS),
 		*Clean,
 		*PS->GetPersistentId().ToString());
-}
-
-void AMosesPlayerController::Server_SendLobbyChat_Implementation(const FString& Text)
-{
-	if (!HasAuthority())
-	{
-		return;
-	}
-
-	const FString Clean = Text.TrimStartAndEnd();
-	if (Clean.IsEmpty())
-	{
-		return;
-	}
-
-	AMosesLobbyGameState* MosesLobbyGameState = GetLobbyGameStateChecked_Log(TEXT("Server_SendLobbyChat"));
-	AMosesPlayerState* MosesPlayerState = GetMosesPlayerStateChecked_Log(TEXT("Server_SendLobbyChat"));
-	if (!MosesLobbyGameState || !MosesPlayerState)
-	{
-		return;
-	}
-
-	MosesLobbyGameState->Server_AddChatMessage(MosesPlayerState, Clean);
 }
 
 // =========================================================

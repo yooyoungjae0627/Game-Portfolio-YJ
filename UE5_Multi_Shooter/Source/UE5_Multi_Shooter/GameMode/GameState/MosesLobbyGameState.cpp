@@ -75,7 +75,7 @@ void AMosesLobbyGameState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>&
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 
 	DOREPLIFETIME(AMosesLobbyGameState, RoomList);
-	DOREPLIFETIME(AMosesLobbyGameState, ChatHistory);
+	//DOREPLIFETIME(AMosesLobbyGameState, ChatHistory);
 }
 
 void AMosesLobbyGameState::Tick(float DeltaSeconds)
@@ -119,10 +119,10 @@ void AMosesLobbyGameState::OnRep_RoomList()
 	NotifyRoomStateChanged_LocalPlayers();
 }
 
-void AMosesLobbyGameState::OnRep_ChatHistory()
-{
-	NotifyRoomStateChanged_LocalPlayers();
-}
+//void AMosesLobbyGameState::OnRep_ChatHistory()
+//{
+//	NotifyRoomStateChanged_LocalPlayers();
+//}
 
 // =========================================================
 // FMosesLobbyRoomItem utils
@@ -716,46 +716,46 @@ bool AMosesLobbyGameState::Server_CanStartMatch(const FGuid& RoomId, FString& Ou
 
 void AMosesLobbyGameState::Server_AddChatMessage(AMosesPlayerState* SenderPS, const FString& Text)
 {
-	if (!HasAuthority() || !SenderPS)
-	{
-		return;
-	}
+	//if (!HasAuthority() || !SenderPS)
+	//{
+	//	return;
+	//}
 
-	if (!SenderPS->IsLoggedIn())
-	{
-		return;
-	}
+	//if (!SenderPS->IsLoggedIn())
+	//{
+	//	return;
+	//}
 
-	if (!SenderPS->GetRoomId().IsValid())
-	{
-		return;
-	}
+	//if (!SenderPS->GetRoomId().IsValid())
+	//{
+	//	return;
+	//}
 
-	const FString Clean = Text.TrimStartAndEnd();
-	if (Clean.IsEmpty())
-	{
-		return;
-	}
+	//const FString Clean = Text.TrimStartAndEnd();
+	//if (Clean.IsEmpty())
+	//{
+	//	return;
+	//}
 
-	constexpr int32 MaxLen = 120;
-	const FString FinalText = (Clean.Len() > MaxLen) ? Clean.Left(MaxLen) : Clean;
+	//constexpr int32 MaxLen = 120;
+	//const FString FinalText = (Clean.Len() > MaxLen) ? Clean.Left(MaxLen) : Clean;
 
-	FLobbyChatMessage Msg;
-	Msg.SenderPid = SenderPS->GetPersistentId();
-	Msg.SenderName = SenderPS->GetPlayerNickName().IsEmpty() ? SenderPS->GetName() : SenderPS->GetPlayerNickName();
-	Msg.Message = FinalText;
-	Msg.ServerUnixTimeMs = NowUnixMs();
+	//FLobbyChatMessage Msg;
+	//Msg.SenderPid = SenderPS->GetPersistentId();
+	//Msg.SenderName = SenderPS->GetPlayerNickName().IsEmpty() ? SenderPS->GetName() : SenderPS->GetPlayerNickName();
+	//Msg.Message = FinalText;
+	//Msg.ServerUnixTimeMs = NowUnixMs();
 
-	ChatHistory.Add(Msg);
+	//ChatHistory.Add(Msg);
 
-	constexpr int32 MaxKeep = 50;
-	if (ChatHistory.Num() > MaxKeep)
-	{
-		ChatHistory.RemoveAt(0, ChatHistory.Num() - MaxKeep);
-	}
+	//constexpr int32 MaxKeep = 50;
+	//if (ChatHistory.Num() > MaxKeep)
+	//{
+	//	ChatHistory.RemoveAt(0, ChatHistory.Num() - MaxKeep);
+	//}
 
-	// 서버는 RepNotify 자동 호출 안 됨 → 수동 notify
-	OnRep_ChatHistory();
+	//// 서버는 RepNotify 자동 호출 안 됨 → 수동 notify
+	//OnRep_ChatHistory();
 }
 
 // =========================================================

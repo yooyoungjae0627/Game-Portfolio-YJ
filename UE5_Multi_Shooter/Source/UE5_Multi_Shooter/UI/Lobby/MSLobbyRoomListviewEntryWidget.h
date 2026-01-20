@@ -1,9 +1,8 @@
 #pragma once
 
-#include "CoreMinimal.h"
 #include "Blueprint/UserWidget.h"
 #include "Blueprint/IUserObjectListEntry.h"
-#include "MSLobbyRoomItemWidget.generated.h"
+#include "MSLobbyRoomListviewEntryWidget.generated.h"
 
 class UTextBlock;
 class USizeBox;
@@ -16,54 +15,36 @@ class USizeBox;
  *   UI 전용 Data UObject로 변환해서 ListView에 넣는다.
  */
 
-UENUM(BlueprintType)
-enum class EMSLobbyRoomItemWidgetType : uint8
-{
-	LeftPanel UMETA(DisplayName = "LeftPanel"),
-	RightPanel UMETA(DisplayName = "RightPanel"),
-};
-
 UCLASS()
-class UE5_MULTI_SHOOTER_API UMSLobbyRoomListItemData : public UObject
+class UE5_MULTI_SHOOTER_API UMSLobbyRoomListviewEntryData : public UObject
 {
 	GENERATED_BODY()
 
 public:
-	// ---------------------------
-	// Functions
-	// ---------------------------
 	void Init(
 		const FGuid& InRoomId,
 		const FString& InRoomTitle,
 		const int32 InMaxPlayers,
-		const int32 InCurPlayers,
-		const EMSLobbyRoomItemWidgetType InLobbyRoomItemWidgetType)
+		const int32 InCurPlayers)
 	{
 		RoomId = InRoomId;
 		RoomTitle = InRoomTitle;
 		MaxPlayers = InMaxPlayers;
 		CurPlayers = InCurPlayers;
-		LobbyRoomItemWidgetType = InLobbyRoomItemWidgetType;
 	}
 
 	const FGuid& GetRoomId() const { return RoomId; }
 	const FString& GetRoomTitle() const { return RoomTitle; }
 	int32 GetMaxPlayers() const { return MaxPlayers; }
 	int32 GetCurPlayers() const { return CurPlayers; }
-	EMSLobbyRoomItemWidgetType GetLobbyRoomItemWidgetType() const { return LobbyRoomItemWidgetType; }
 
 private:
-	// ---------------------------
-	// Variables
-	// ---------------------------
 	FGuid RoomId;
 
 	FString RoomTitle;
 
 	int32 MaxPlayers = 0;
 	int32 CurPlayers = 0;
-
-	EMSLobbyRoomItemWidgetType LobbyRoomItemWidgetType;
 };
 
 
@@ -75,7 +56,7 @@ private:
  * - ListView가 넘겨주는 UObject(ItemData)를 받아 텍스트를 갱신한다.
  */
 UCLASS()
-class UE5_MULTI_SHOOTER_API UMSLobbyRoomItemWidget
+class UE5_MULTI_SHOOTER_API UMSLobbyRoomListviewEntryWidget
 	: public UUserWidget
 	, public IUserObjectListEntry
 {
@@ -96,7 +77,7 @@ private:
 	// ---------------------------
 	// Internal helpers
 	// ---------------------------
-	void ApplyRoomData(const UMSLobbyRoomListItemData* Data);
+	void ApplyRoomData(const UMSLobbyRoomListviewEntryData* Data);
 
 private:
 	// ---------------------------
@@ -130,5 +111,5 @@ private:
 	// Cached
 	// ---------------------------
 	UPROPERTY(Transient)
-	TObjectPtr<const UMSLobbyRoomListItemData> CachedRoomItem = nullptr;
+	TObjectPtr<const UMSLobbyRoomListviewEntryData> CachedRoomItem = nullptr;
 };

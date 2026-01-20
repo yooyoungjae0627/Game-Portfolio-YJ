@@ -155,16 +155,6 @@ void UMSCreateRoomPopupWidget::ApplyDefaultValuesIfNeeded()
 		return;
 	}
 
-	//if (EditableText_RoomTitle)
-	//{
-	//	EditableText_RoomTitle->SetText(FText::FromString(DefaultTitle));
-	//}
-
-	//if (EditableText_MaxPlayers)
-	//{
-	//	EditableText_MaxPlayers->SetText(FText::AsNumber(DefaultMaxPlayers));
-	//}
-
 	if (Txt_Error)
 	{
 		Txt_Error->SetVisibility(ESlateVisibility::Collapsed);

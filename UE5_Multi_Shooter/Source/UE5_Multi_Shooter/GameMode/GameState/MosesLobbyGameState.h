@@ -8,7 +8,6 @@
 #include "Net/UnrealNetwork.h"
 
 #include "UE5_Multi_Shooter/GameMode/GameState/MosesGameState.h"
-#include "UE5_Multi_Shooter/UI/Lobby/MosesLobbyChatTypes.h"
 
 #include "MosesLobbyGameState.generated.h"
 
@@ -152,7 +151,7 @@ public:
 	const FMosesLobbyRoomItem* FindRoom(const FGuid& RoomId) const;
 	const TArray<FMosesLobbyRoomItem>& GetRooms() const { return RoomList.Items; }
 
-	const TArray<FLobbyChatMessage>& GetChatHistory() const { return ChatHistory; }
+	//const TArray<FLobbyChatMessage>& GetChatHistory() const { return ChatHistory; }
 
 public:
 	/*====================================================
@@ -167,8 +166,8 @@ protected:
 	UFUNCTION()
 	void OnRep_RoomList();
 
-	UFUNCTION()
-	void OnRep_ChatHistory();
+	//UFUNCTION()
+	//void OnRep_ChatHistory();
 
 private:
 	/*====================================================
@@ -202,6 +201,6 @@ private:
 	UPROPERTY(ReplicatedUsing = OnRep_RoomList)
 	FMosesLobbyRoomList RoomList;
 
-	UPROPERTY(ReplicatedUsing = OnRep_ChatHistory)
-	TArray<FLobbyChatMessage> ChatHistory;
+	//UPROPERTY(ReplicatedUsing = OnRep_ChatHistory)
+	//TArray<FLobbyChatMessage> ChatHistory;
 };

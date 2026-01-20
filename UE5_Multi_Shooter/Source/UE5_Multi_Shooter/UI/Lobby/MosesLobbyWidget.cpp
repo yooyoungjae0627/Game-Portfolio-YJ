@@ -27,9 +27,7 @@
 #include "UE5_Multi_Shooter/System/MosesLobbyLocalPlayerSubsystem.h"
 
 #include "UE5_Multi_Shooter/UI/Lobby/MSCreateRoomPopupWidget.h"
-#include "UE5_Multi_Shooter/UI/Lobby/MSLobbyRoomItemWidget.h"
-#include "UE5_Multi_Shooter/UI/Lobby/MosesLobbyChatRowItem.h"
-#include "UE5_Multi_Shooter/UI/Lobby/MosesLobbyChatTypes.h"
+#include "UE5_Multi_Shooter/UI/Lobby/MSLobbyRoomListviewEntryWidget.h"
 
 namespace MosesLobbyWidget_Internal
 {
@@ -75,6 +73,14 @@ void UMosesLobbyWidget::NativeConstruct()
 	BindLobbyButtons();
 	BindListViewEvents();
 	BindSubsystemEvents();
+
+	// [ADD] 채팅 입력(Enter 전송) 바인딩
+	if (ChatEditableTextBox)
+	{
+		// 중복 바인딩 방지
+		ChatEditableTextBox->OnTextCommitted.RemoveAll(this);
+		ChatEditableTextBox->OnTextCommitted.AddDynamic(this, &ThisClass::OnChatTextCommitted);
+	}
 
 	// 최초 갱신
 	RefreshAll_UI();
@@ -132,6 +138,12 @@ void UMosesLobbyWidget::NativeDestruct()
 	if (BTN_SendChat)
 	{
 		BTN_SendChat->OnClicked.RemoveAll(this);
+	}
+
+	// [ADD] 채팅 커밋 바인딩 해제
+	if (ChatEditableTextBox)
+	{
+		ChatEditableTextBox->OnTextCommitted.RemoveAll(this);
 	}
 
 	LobbyLPS = nullptr;
@@ -276,19 +288,21 @@ void UMosesLobbyWidget::RefreshRoomListFromGameState()
 
 	for (const FMosesLobbyRoomItem& Room : LGS->GetRooms())
 	{
-		UMSLobbyRoomListItemData* Item = NewObject<UMSLobbyRoomListItemData>(this);
-		Item->Init(Room.RoomId, Room.RoomTitle, Room.MaxPlayers, Room.MemberPids.Num(), EMSLobbyRoomItemWidgetType::LeftPanel);
+		UMSLobbyRoomListviewEntryData* Item = NewObject<UMSLobbyRoomListviewEntryData>(this);
+		Item->Init(Room.RoomId, Room.RoomTitle, Room.MaxPlayers, Room.MemberPids.Num());
 		RoomListView->AddItem(Item);
 	}
 
 	const UWorld* World = GetWorld();
 	const APlayerController* PC = GetOwningPlayer();
 
-	UE_LOG(LogTemp, Warning, TEXT("[RoomUI] World=%s NetMode=%s PCAuth=%d Rooms=%d"),
+	UE_LOG(LogTemp, Warning, TEXT("[RoomUI] World=%s NetMode=%s PCAuth=%d Rooms=%d HasAny=%d InRoom_UIOnly=%d"),
 		*GetNameSafe(World),
 		World ? MosesLobbyWidget_Internal::NetModeToString(World->GetNetMode()) : TEXT("None"),
 		(PC && PC->HasAuthority()) ? 1 : 0,
-		LGS->GetRooms().Num());
+		LGS->GetRooms().Num(),
+		bHasAnyRoom ? 1 : 0,
+		bInRoom_UIOnly ? 1 : 0);
 }
 
 void UMosesLobbyWidget::RefreshPanelsByPlayerState()
@@ -300,19 +314,12 @@ void UMosesLobbyWidget::RefreshPanelsByPlayerState()
 
 	const ESlateVisibility NewLeft = bInRoom_UIOnly ? ESlateVisibility::Collapsed : ESlateVisibility::SelfHitTestInvisible;
 	const ESlateVisibility NewRight = bInRoom_UIOnly ? ESlateVisibility::SelfHitTestInvisible : ESlateVisibility::Collapsed;
-	
+
 	if (LeftPanel && LeftPanel->GetVisibility() != NewLeft)
 	{
 		if (Button_CreateRoom)
 		{
-			if (NewLeft == ESlateVisibility::SelfHitTestInvisible)
-			{
-				Button_CreateRoom->SetVisibility(ESlateVisibility::Visible);
-			}
-			else
-			{
-				Button_CreateRoom->SetVisibility(ESlateVisibility::Collapsed);
-			}
+			Button_CreateRoom->SetVisibility((NewLeft == ESlateVisibility::SelfHitTestInvisible) ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
 		}
 
 		LeftPanel->SetVisibility(NewLeft);
@@ -365,14 +372,18 @@ void UMosesLobbyWidget::RefreshRightPanelControlsByRole()
 
 	if (ClientPanel)
 	{
-		if (!bAllowRoleSpecificUI)
-		{
-			ClientPanel->SetVisibility(ESlateVisibility::Collapsed);
-		}
-		else
-		{
-			ClientPanel->SetVisibility(bIsHost ? ESlateVisibility::Collapsed : ESlateVisibility::SelfHitTestInvisible);
-		}
+		ClientPanel->SetVisibility(bAllowRoleSpecificUI ? (bIsHost ? ESlateVisibility::Collapsed : ESlateVisibility::SelfHitTestInvisible) : ESlateVisibility::Collapsed);
+	}
+
+	// [ADD] 채팅 입력/전송 버튼도 “방 안 + Pending 아님”에서만 허용(UX 게이트)
+	const bool bCanChat = bAllowRoleSpecificUI && CanSendChat_UIOnly();
+	if (ChatEditableTextBox)
+	{
+		ChatEditableTextBox->SetIsEnabled(bCanChat);
+	}
+	if (BTN_SendChat)
+	{
+		BTN_SendChat->SetIsEnabled(bCanChat);
 	}
 }
 
@@ -615,25 +626,25 @@ void UMosesLobbyWidget::OnClicked_CharNext()
 
 void UMosesLobbyWidget::OnClicked_SendChat()
 {
-	if (AMosesPlayerController* PC = GetMosesPC())
-	{
-		const FString Text = GetChatInput().TrimStartAndEnd();
-		if (!Text.IsEmpty())
-		{
-			PC->Server_SendLobbyChat(Text);
+	// [MOD] 버튼 전송도 Enter 전송과 동일한 파이프로 통일
+	TrySendChatFromInput();
+}
 
-			// UX: 전송 후 입력창 비우기
-			if (ChatEditableTextBox)
-			{
-				ChatEditableTextBox->SetText(FText::GetEmpty());
-			}
-		}
+void UMosesLobbyWidget::OnChatTextCommitted(const FText& Text, ETextCommit::Type CommitMethod)
+{
+	// [ADD] Enter(=OnEnter)일 때만 전송.
+	// - 포커스 이동/커밋(예: OnUserMovedFocus)으로도 호출될 수 있으니 반드시 필터링한다.
+	if (CommitMethod != ETextCommit::OnEnter)
+	{
+		return;
 	}
+
+	TrySendChatFromInput();
 }
 
 void UMosesLobbyWidget::OnRoomItemClicked(UObject* ClickedItem)
 {
-	const UMSLobbyRoomListItemData* Item = Cast<UMSLobbyRoomListItemData>(ClickedItem);
+	const UMSLobbyRoomListviewEntryData* Item = Cast<UMSLobbyRoomListviewEntryData>(ClickedItem);
 	if (!Item)
 	{
 		return;
@@ -675,6 +686,67 @@ FString UMosesLobbyWidget::GetChatInput() const
 	return ChatEditableTextBox ? ChatEditableTextBox->GetText().ToString() : FString();
 }
 
+bool UMosesLobbyWidget::CanSendChat_UIOnly() const
+{
+	// [ADD] “로컬 UX 게이트” (서버에서도 AMosesLobbyGameState가 다시 검증함)
+	const AMosesPlayerState* PS = GetMosesPS();
+	if (!PS)
+	{
+		return false;
+	}
+
+	if (!PS->IsLoggedIn())
+	{
+		return false;
+	}
+
+	if (!PS->GetRoomId().IsValid())
+	{
+		return false;
+	}
+
+	// Pending 중엔 입력/전송 금지
+	if (bPendingEnterRoom_UIOnly)
+	{
+		return false;
+	}
+
+	return true;
+}
+
+void UMosesLobbyWidget::TrySendChatFromInput()
+{
+	AMosesPlayerController* PC = GetMosesPC();
+	if (!PC)
+	{
+		return;
+	}
+
+	if (!CanSendChat_UIOnly())
+	{
+		UE_LOG(LogTemp, Verbose, TEXT("[Chat][UI] Send blocked (NotReadyToChat)"));
+		return;
+	}
+
+	const FString Text = GetChatInput().TrimStartAndEnd();
+	if (Text.IsEmpty())
+	{
+		return;
+	}
+
+	// ✅ 서버 권위: 클라는 "요청"만 한다.
+	PC->Server_SendLobbyChat(Text);
+
+	// UX: 전송 후 입력창 비우기
+	if (ChatEditableTextBox)
+	{
+		ChatEditableTextBox->SetText(FText::GetEmpty());
+
+		// [ADD] Enter 전송 후에도 계속 타이핑할 수 있게 포커스 유지(선택)
+		ChatEditableTextBox->SetKeyboardFocus();
+	}
+}
+
 void UMosesLobbyWidget::RebuildChat(const AMosesLobbyGameState* GS)
 {
 	if (!ChatListView)
@@ -684,17 +756,27 @@ void UMosesLobbyWidget::RebuildChat(const AMosesLobbyGameState* GS)
 
 	ChatListView->ClearListItems();
 
-	if (!GS)
-	{
-		return;
-	}
+	//if (!GS)
+	//{
+	//	return;
+	//}
 
-	for (const FLobbyChatMessage& Msg : GS->GetChatHistory())
-	{
-		const FString Line = FString::Printf(TEXT("%s: %s"), *Msg.SenderName, *Msg.Message);
-		ChatListView->AddItem(UMosesLobbyChatRowItem::Make(this, Line));
-	}
+	//// [MOD] ChatHistory(서버 복제) → ListView Item(닉/메시지 분리 데이터) 생성
+	//for (const FLobbyChatMessage& Msg : GS->GetChatHistory())
+	//{
+	//	UMosesLobbyChatRowItem* Item = UMosesLobbyChatRowItem::Make(this, Msg);
+	//	if (!Item)
+	//	{
+	//		continue;
+	//	}
+
+	//	ChatListView->AddItem(Item);
+	//}
+
+	// [MOD] UE5.3 UListView에는 ScrollItemIntoView가 없어서 제거.
+	//      (자동 스크롤은 추후, 버전 호환 방식으로 별도 구현)
 }
+
 
 // =====================================================
 // Helpers
