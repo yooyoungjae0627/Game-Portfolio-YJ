@@ -368,12 +368,10 @@ void UMosesLobbyWidget::RefreshRightPanelControlsByRole()
 		Button_LeaveRoom->SetIsEnabled(bAllowRoleSpecificUI);
 	}
 
-	// [MOD] 호스트도 채팅을 쳐야 하므로 ClientPanel을 호스트에게도 숨기지 않는다.
-	// - ClientPanel 안에 "Ready 같은 클라 전용 UI"가 있어도, 위에서 이미 CheckBox_Ready는 Host에겐 숨기고 있음.
-	// - 따라서 Panel 자체는 보여줘도 호스트에게 불필요한 컨트롤은 이미 숨김/비활성화 상태로 유지됨.
 	if (ClientPanel)
 	{
-		ClientPanel->SetVisibility(bAllowRoleSpecificUI ? ESlateVisibility::SelfHitTestInvisible : ESlateVisibility::Collapsed);
+		ClientPanel->SetVisibility(bAllowRoleSpecificUI ? (bIsHost ? ESlateVisibility::Collapsed : ESlateVisibility::SelfHitTestInvisible)
+			: ESlateVisibility::Collapsed);
 	}
 
 	// 채팅 입력/전송 버튼도 “방 안 + Pending 아님”에서만 허용(UX 게이트)
