@@ -1,4 +1,12 @@
-﻿#include "UE5_Multi_Shooter/Player/MosesPlayerController.h"
+﻿// =========================================================
+// MosesPlayerController.cpp (FULL)
+// - [MOD] Lobby 판정 안정화(IsLobbyContext): 맵 이름 기반 1순위
+// - [ADD] IsLobbyMap_Local / IsMatchMap_Local
+// - [MOD] BeginPlay/OnPossess/ClientRestart에서 커서 정책 강제
+// - [ADD] Lobby BeginPlay에서 NextTick 재적용(ReapplyLobbyInputMode_NextTick_LocalOnly)
+// =========================================================
+
+#include "UE5_Multi_Shooter/Player/MosesPlayerController.h"
 
 #include "UE5_Multi_Shooter/Camera/MosesPlayerCameraManager.h"
 #include "UE5_Multi_Shooter/GameMode/GameMode/MosesStartGameMode.h"
@@ -51,10 +59,26 @@ void AMosesPlayerController::ClientRestart_Implementation(APawn* NewPawn)
 		return;
 	}
 
+	// [ADD] 매치 맵이면 커서/입력은 무조건 GameOnly(커서 OFF)로 강제
+	if (IsMatchMap_Local())
+	{
+		RestoreNonLobbyDefaults_LocalOnly();
+		RestoreNonLobbyInputMode_LocalOnly();
+
+		if (NewPawn)
+		{
+			SetViewTarget(NewPawn);
+			AutoManageActiveCameraTarget(NewPawn);
+		}
+		return;
+	}
+
+	// [MOD] 로비 판정은 맵 이름 기반 1순위(IsLobbyContext 내부)
 	if (IsLobbyContext())
 	{
 		bAutoManageActiveCameraTarget = false;
 		ApplyLobbyPreviewCamera();
+		ApplyLobbyInputMode_LocalOnly(); // [ADD] Restart 타이밍에서 입력 덮어쓰기 방지(커서 ON 확정)
 		return;
 	}
 
@@ -157,6 +181,21 @@ void AMosesPlayerController::BeginPlay()
 		return;
 	}
 
+	// [ADD] 매치 맵이면 커서 OFF를 무조건 고정
+	if (IsMatchMap_Local())
+	{
+		RestoreNonLobbyDefaults_LocalOnly();
+		RestoreNonLobbyInputMode_LocalOnly();
+
+		if (APawn* LocalPawn = GetPawn())
+		{
+			SetViewTarget(LocalPawn);
+			AutoManageActiveCameraTarget(LocalPawn);
+		}
+		return;
+	}
+
+	// [MOD] NonLobby 판정(로비가 아니면)에서도 기존대로 복구
 	if (!IsLobbyContext())
 	{
 		RestoreNonLobbyDefaults_LocalOnly();
@@ -183,6 +222,9 @@ void AMosesPlayerController::BeginPlay()
 	ApplyLobbyInputMode_LocalOnly();
 	ApplyLobbyPreviewCamera();
 
+	// [ADD] Travel 직후/Slate 포커스/엔진 덮어쓰기 타이밍에서 커서가 한번 꺼지는 케이스 방지
+	ReapplyLobbyInputMode_NextTick_LocalOnly();
+
 	GetWorldTimerManager().SetTimer(
 		LobbyPreviewCameraTimerHandle,
 		this,
@@ -206,11 +248,32 @@ void AMosesPlayerController::OnPossess(APawn* InPawn)
 		return;
 	}
 
+	// [ADD] 매치 맵이면 커서 OFF 강제
+	if (IsMatchMap_Local())
+	{
+		RestoreNonLobbyDefaults_LocalOnly();
+		RestoreNonLobbyInputMode_LocalOnly();
+
+		if (InPawn)
+		{
+			SetViewTarget(InPawn);
+			AutoManageActiveCameraTarget(InPawn);
+		}
+
+		UE_LOG(LogTemp, Warning, TEXT("[TEST][Cam] (Match) PC=%s Pawn=%s ViewTarget=%s AutoManage=%d"),
+			*GetNameSafe(this),
+			*GetNameSafe(InPawn),
+			*GetNameSafe(GetViewTarget()),
+			bAutoManageActiveCameraTarget ? 1 : 0);
+
+		return;
+	}
+
 	if (IsLobbyContext())
 	{
 		bAutoManageActiveCameraTarget = false;
 		ApplyLobbyPreviewCamera();
-		ApplyLobbyInputMode_LocalOnly();
+		ApplyLobbyInputMode_LocalOnly(); // [MOD] Possess 타이밍에서도 커서 ON 확정
 	}
 	else
 	{
@@ -258,13 +321,9 @@ void AMosesPlayerController::OnRep_PlayerState()
 	AMosesPlayerState* PS = GetPlayerState<AMosesPlayerState>();
 	UE_LOG(LogMosesSpawn, Warning, TEXT("[PC][CL] OnRep_PlayerState PS=%s"), *GetNameSafe(PS));
 
-	// [FIX] 기존 함수는 유지하되, PS를 바로 읽도록 유도(Subsystem 내부에서 PC->PS 읽지 말고 인자로 받은 PS 사용 권장)
 	Subsys->NotifyPlayerStateChanged(); // 기존 유지
-
-	// [ADD] (권장) Subsystem에 새 함수가 있으면 이걸로 바꾸면 더 안전함.
-	// Subsys->NotifyPlayerStateChanged(PS);
+	// Subsys->NotifyPlayerStateChanged(PS); // (권장) Subsystem에 오버로드 있으면 이쪽이 더 안전
 }
-
 
 void AMosesPlayerController::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
 {
@@ -607,7 +666,7 @@ void AMosesPlayerController::DoServerTravelToLobby()
 		return;
 	}
 
-	AGameModeBase* GM = World->GetAuthGameMode();
+	AGameModeBase* GM = GetWorld()->GetAuthGameMode();
 	if (!GM)
 	{
 		UE_LOG(LogMosesSpawn, Warning, TEXT("[DOD][Travel] REJECT (NoGameMode)"));
@@ -624,11 +683,43 @@ void AMosesPlayerController::DoServerTravelToLobby()
 }
 
 // =========================================================
-// Lobby Context / Camera / UI (Local-only)
+// Lobby/Match Context 판정 (Local-only)
 // =========================================================
+
+bool AMosesPlayerController::IsLobbyMap_Local() const
+{
+	const UWorld* World = GetWorld();
+	if (!World)
+	{
+		return false;
+	}
+
+	// [ADD] Travel 직후에도 안정적인 판정: 현재 레벨 이름
+	const FName CurrentMapName = FName(*UGameplayStatics::GetCurrentLevelName(World, true));
+	return (CurrentMapName == LobbyMapName);
+}
+
+bool AMosesPlayerController::IsMatchMap_Local() const
+{
+	const UWorld* World = GetWorld();
+	if (!World)
+	{
+		return false;
+	}
+
+	const FName CurrentMapName = FName(*UGameplayStatics::GetCurrentLevelName(World, true));
+	return (CurrentMapName == MatchMapName);
+}
 
 bool AMosesPlayerController::IsLobbyContext() const
 {
+	// [MOD] 1순위: 맵 이름 기반(Travel/복제 타이밍에 흔들리지 않음)
+	if (IsLobbyMap_Local())
+	{
+		return true;
+	}
+
+	// 2순위(보조): GameState 타입 기반(예: 테스트/PIE 상황에서 맵 이름 다를 때)
 	const UWorld* World = GetWorld();
 	if (!World)
 	{
@@ -637,6 +728,10 @@ bool AMosesPlayerController::IsLobbyContext() const
 
 	return (World->GetGameState<AMosesLobbyGameState>() != nullptr);
 }
+
+// =========================================================
+// Lobby Context / Camera / UI (Local-only)
+// =========================================================
 
 void AMosesPlayerController::ApplyLobbyPreviewCamera()
 {
@@ -745,6 +840,42 @@ void AMosesPlayerController::RestoreNonLobbyInputMode_LocalOnly()
 
 	FInputModeGameOnly Mode;
 	SetInputMode(Mode);
+}
+
+void AMosesPlayerController::ReapplyLobbyInputMode_NextTick_LocalOnly()
+{
+	if (!IsLocalController())
+	{
+		return;
+	}
+
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	// [ADD] 다음 프레임에 "한 번 더" 적용해, Travel 직후 덮어쓰기를 이긴다.
+	World->GetTimerManager().SetTimerForNextTick(FTimerDelegate::CreateWeakLambda(this, [this]()
+		{
+			if (!IsLocalController())
+			{
+				return;
+			}
+
+			// 매치로 이미 넘어갔으면 커서 OFF
+			if (IsMatchMap_Local())
+			{
+				RestoreNonLobbyInputMode_LocalOnly();
+				return;
+			}
+
+			// 로비면 커서 ON 유지
+			if (IsLobbyContext())
+			{
+				ApplyLobbyInputMode_LocalOnly();
+			}
+		}));
 }
 
 // =========================================================

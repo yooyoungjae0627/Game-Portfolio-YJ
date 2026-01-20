@@ -1,4 +1,12 @@
-﻿#pragma once
+﻿// =========================================================
+// MosesPlayerController.h (FULL)
+// - [MOD] Lobby 판정 안정화: GameState 기반 -> 맵 이름 기반 1순위 + GameState 보조
+// - [ADD] Lobby/Match 맵 이름 정책 변수 + 판정 함수
+// - [MOD] BeginPlay/OnPossess/ClientRestart에서 Lobby면 커서 ON, Match면 커서 OFF 강제
+// - [ADD] Lobby BeginPlay에서 NextTick으로 InputMode 1회 재적용 (Travel 직후 덮어쓰기 방지)
+// =========================================================
+
+#pragma once
 
 #include "CoreMinimal.h"
 #include "GameFramework/PlayerController.h"
@@ -26,6 +34,12 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnJoinedRoom, EMosesRoomJoinResult
  * [FIX]
  * - 입력 컴포넌트 강제 생성(CreateInputComponent override) 제거.
  *   입력 바인딩은 Pawn::SetupPlayerInputComponent → HeroComponent 경로에서 확정한다.
+ *
+ * [MOD 핵심]
+ * - Start→Lobby Travel 직후 GameState 생성/복제 타이밍 때문에 IsLobbyContext()가 잠깐 false가 될 수 있음.
+ *   그 순간 RestoreNonLobbyInputMode()가 실행되면 커서 OFF가 되어 "커서가 안 보이는" 현상이 발생한다.
+ * - 따라서 Lobby 여부 판정은 "맵 이름"을 1순위로 사용하고, GameState 체크는 보조로 사용한다.
+ * - Match 맵에서는 커서를 무조건 OFF로 강제한다.
  */
 UCLASS()
 class UE5_MULTI_SHOOTER_API AMosesPlayerController : public APlayerController
@@ -155,9 +169,16 @@ private:
 
 private:
 	/*====================================================
+	= Lobby/Match Context 판정 (Local-only)
+	====================================================*/
+	bool IsLobbyContext() const;        // [MOD] 맵 이름 기반 1순위 판정
+	bool IsLobbyMap_Local() const;      // [ADD]
+	bool IsMatchMap_Local() const;      // [ADD]
+
+private:
+	/*====================================================
 	= Lobby Context / Camera / UI (Local-only)
 	====================================================*/
-	bool IsLobbyContext() const;
 	void ApplyLobbyPreviewCamera();
 
 	void ActivateLobbyUI_LocalOnly();
@@ -165,6 +186,8 @@ private:
 
 	void ApplyLobbyInputMode_LocalOnly();
 	void RestoreNonLobbyInputMode_LocalOnly();
+
+	void ReapplyLobbyInputMode_NextTick_LocalOnly(); // [ADD] Travel 직후 덮어쓰기 방지
 
 private:
 	/*====================================================
@@ -187,6 +210,16 @@ private:
 
 private:
 	/*====================================================
+	= Map Policy (중요)
+	====================================================*/
+	UPROPERTY(EditDefaultsOnly, Category = "Lobby|Policy")
+	FName LobbyMapName = TEXT("L_Lobby");   // [ADD] 실제 로비 맵 이름으로 변경
+
+	UPROPERTY(EditDefaultsOnly, Category = "Match|Policy")
+	FName MatchMapName = TEXT("L_Match");   // [ADD] 실제 매치 맵 이름으로 변경
+
+private:
+	/*====================================================
 	= Local pending nickname
 	====================================================*/
 	UPROPERTY(Transient)
@@ -205,3 +238,4 @@ private:
 	UPROPERTY(Replicated)
 	bool bRep_IsReady = false;
 };
+
