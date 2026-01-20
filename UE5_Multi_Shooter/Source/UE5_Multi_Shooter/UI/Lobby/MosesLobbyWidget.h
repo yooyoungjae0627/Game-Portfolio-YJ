@@ -16,7 +16,7 @@ class UListView;
 class UVerticalBox;
 class UHorizontalBox;
 class UTextBlock;
-class UEditableTextBox;
+class UEditableText;
 class UUserWidget;
 
 class AMosesLobbyGameState;
@@ -145,6 +145,8 @@ protected:
 	// UX: 로컬에서 보내기 전에 최소 게이트(서버에서도 다시 검증함)
 	bool CanSendChat_UIOnly() const;
 
+	void BindChatEvents_NextTick();
+
 protected:
 	/*====================================================
 	= General Helpers
@@ -218,33 +220,13 @@ private:
 	TObjectPtr<UTextBlock> NickNameText = nullptr;
 
 	// ---------------------------
-	// Debug Command Input (중복 선언이 있었음: BP 호환 위해 둘 다 유지)
-	// ---------------------------
-
-	// (Legacy) - BP에서 이 이름으로 바인딩 중일 수 있음
-	UPROPERTY(meta = (BindWidgetOptional))
-	TObjectPtr<UEditableTextBox> EditableTextBox_Command = nullptr;
-
-	// (Legacy) - BP에서 이 이름으로 바인딩 중일 수 있음
-	UPROPERTY(meta = (BindWidgetOptional))
-	TObjectPtr<UButton> Button_SubmitCommand = nullptr;
-
-	// (Current) - 프로젝트 표준 네이밍(권장)
-	UPROPERTY(meta = (BindWidgetOptional))
-	TObjectPtr<UEditableTextBox> ET_CommandInput = nullptr;
-
-	// (Current) - 프로젝트 표준 네이밍(권장)
-	UPROPERTY(meta = (BindWidgetOptional))
-	TObjectPtr<UButton> Btn_SubmitCommand = nullptr;
-
-	// ---------------------------
 	// Chat
 	// ---------------------------
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UListView> ChatListView = nullptr;
 
 	UPROPERTY(meta = (BindWidgetOptional))
-	TObjectPtr<UEditableTextBox> ChatEditableTextBox = nullptr;
+	TObjectPtr<UEditableText> ChatEditText = nullptr;
 
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UButton> BTN_SendChat = nullptr;
@@ -287,4 +269,8 @@ private:
 	====================================================*/
 	FGuid PendingJoinRoomId;
 	bool bPendingJoinAfterLogin = false;
+
+
+	UPROPERTY(Transient)
+	bool bChatEventsBound = false;
 };

@@ -3,7 +3,8 @@
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
 #include "UE5_Multi_Shooter/MosesGameInstance.h"
 #include "UE5_Multi_Shooter/Player/MosesPlayerState.h"
-#include "UE5_Multi_Shooter/System/MosesLobbyLocalPlayerSubsystem.h"
+#include "UE5_Multi_Shooter/System/MosesLobbyLocalPlayerSubsystem.h" 
+#include "UE5_Multi_Shooter/UI/Lobby/MosesLobbyChatTypes.h"
 
 #include "Net/UnrealNetwork.h"
 
@@ -75,7 +76,7 @@ void AMosesLobbyGameState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>&
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 
 	DOREPLIFETIME(AMosesLobbyGameState, RoomList);
-	//DOREPLIFETIME(AMosesLobbyGameState, ChatHistory);
+	DOREPLIFETIME(AMosesLobbyGameState, ChatHistory);
 }
 
 void AMosesLobbyGameState::Tick(float DeltaSeconds)
@@ -119,10 +120,10 @@ void AMosesLobbyGameState::OnRep_RoomList()
 	NotifyRoomStateChanged_LocalPlayers();
 }
 
-//void AMosesLobbyGameState::OnRep_ChatHistory()
-//{
-//	NotifyRoomStateChanged_LocalPlayers();
-//}
+void AMosesLobbyGameState::OnRep_ChatHistory()
+{
+	NotifyRoomStateChanged_LocalPlayers();
+}
 
 // =========================================================
 // FMosesLobbyRoomItem utils
@@ -716,46 +717,50 @@ bool AMosesLobbyGameState::Server_CanStartMatch(const FGuid& RoomId, FString& Ou
 
 void AMosesLobbyGameState::Server_AddChatMessage(AMosesPlayerState* SenderPS, const FString& Text)
 {
-	//if (!HasAuthority() || !SenderPS)
-	//{
-	//	return;
-	//}
+	// [MOD] 서버 권위 게이트 복구
+	if (!HasAuthority() || !SenderPS)
+	{
+		return;
+	}
 
-	//if (!SenderPS->IsLoggedIn())
-	//{
-	//	return;
-	//}
+	if (!SenderPS->IsLoggedIn())
+	{
+		return;
+	}
 
-	//if (!SenderPS->GetRoomId().IsValid())
-	//{
-	//	return;
-	//}
+	if (!SenderPS->GetRoomId().IsValid())
+	{
+		return;
+	}
 
-	//const FString Clean = Text.TrimStartAndEnd();
-	//if (Clean.IsEmpty())
-	//{
-	//	return;
-	//}
+	const FString Clean = Text.TrimStartAndEnd();
+	if (Clean.IsEmpty())
+	{
+		return;
+	}
 
-	//constexpr int32 MaxLen = 120;
-	//const FString FinalText = (Clean.Len() > MaxLen) ? Clean.Left(MaxLen) : Clean;
+	constexpr int32 MaxLen = 120;
+	const FString FinalText = (Clean.Len() > MaxLen) ? Clean.Left(MaxLen) : Clean;
 
-	//FLobbyChatMessage Msg;
-	//Msg.SenderPid = SenderPS->GetPersistentId();
-	//Msg.SenderName = SenderPS->GetPlayerNickName().IsEmpty() ? SenderPS->GetName() : SenderPS->GetPlayerNickName();
-	//Msg.Message = FinalText;
-	//Msg.ServerUnixTimeMs = NowUnixMs();
+	FLobbyChatMessage Msg;
+	Msg.SenderPid = SenderPS->GetPersistentId();
+	Msg.SenderName = SenderPS->GetPlayerNickName().IsEmpty() ? SenderPS->GetName() : SenderPS->GetPlayerNickName();
+	Msg.Message = FinalText;
+	Msg.ServerUnixTimeMs = NowUnixMs();
 
-	//ChatHistory.Add(Msg);
+	ChatHistory.Add(Msg);
 
-	//constexpr int32 MaxKeep = 50;
-	//if (ChatHistory.Num() > MaxKeep)
-	//{
-	//	ChatHistory.RemoveAt(0, ChatHistory.Num() - MaxKeep);
-	//}
+	constexpr int32 MaxKeep = 50;
+	if (ChatHistory.Num() > MaxKeep)
+	{
+		ChatHistory.RemoveAt(0, ChatHistory.Num() - MaxKeep);
+	}
 
-	//// 서버는 RepNotify 자동 호출 안 됨 → 수동 notify
-	//OnRep_ChatHistory();
+	// 서버는 RepNotify 자동 호출 안 됨 → 서버도 UI 갱신 파이프 태우려면 직접 호출
+	OnRep_ChatHistory();
+
+	// 복제 즉시 밀어주기(UX)
+	ForceNetUpdate();
 }
 
 // =========================================================

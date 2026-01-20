@@ -174,6 +174,8 @@ void UMosesLobbyLocalPlayerSubsystem::DeactivateLobbyUI()
 		return;
 	}
 
+	StopLobbyOnlyTimers();
+
 	const bool bWasInViewport = LobbyWidget->IsInViewport();
 	LobbyWidget->RemoveFromParent();
 	LobbyWidget = nullptr;
@@ -327,6 +329,11 @@ void UMosesLobbyLocalPlayerSubsystem::RequestNextCharacterPreview_LocalOnly()
 
 void UMosesLobbyLocalPlayerSubsystem::RefreshLobbyUI_FromCurrentState()
 {
+	if (!IsLobbyContext())
+	{
+		return;
+	}
+
 	if (!LobbyWidget)
 	{
 		return;
