@@ -1,9 +1,9 @@
-﻿// MosesExperienceManagerComponent.cpp
-
+﻿
 #include "UE5_Multi_Shooter/GameMode/Experience/MosesExperienceManagerComponent.h"
 
 #include "UE5_Multi_Shooter/GameMode/Experience/MosesExperienceDefinition.h"
 #include "UE5_Multi_Shooter/System/MosesAssetManager.h"
+#include "UE5_Multi_Shooter/MosesLogChannels.h"
 
 #include "GameFeaturesSubsystem.h"
 #include "GameFeaturePluginOperationResult.h"
@@ -53,8 +53,13 @@ void UMosesExperienceManagerComponent::ServerSetCurrentExperience_Implementation
 	// 동일 Experience 중복 실행 방지
 	if (CurrentExperienceId == ExperienceId && LoadState != EMosesExperienceLoadState::Unloaded)
 	{
+		UE_LOG(LogMosesExp, Verbose, TEXT("[EXP][SV] Ignore duplicate set Id=%s State=%d"),
+			*ExperienceId.ToString(), (int32)LoadState); // [ADD]
 		return;
 	}
+
+	// [ADD] DoD: Load 시작 로그(서버 확정 순간)
+	UE_LOG(LogMosesExp, Warning, TEXT("[EXP][SV] Load %s"), *ExperienceId.ToString());
 
 	// Experience 교체 시작(이전 GF 내리기 포함)
 	ResetForNewExperience();
@@ -91,9 +96,20 @@ void UMosesExperienceManagerComponent::OnRep_CurrentExperienceId()
 		return;
 	}
 
+	const UWorld* World = GetWorld();
+	const ENetMode NM = World ? World->GetNetMode() : NM_Standalone;
+	const TCHAR* NetTag =
+		(NM == NM_DedicatedServer || NM == NM_ListenServer) ? TEXT("SV") :
+		(NM == NM_Client) ? TEXT("CL") : TEXT("ST"); // [ADD]
+
+	UE_LOG(LogMosesExp, Warning, TEXT("[EXP][%s] OnRep_CurrentExperienceId Id=%s State=%d"),
+		NetTag, *CurrentExperienceId.ToString(), (int32)LoadState); // [ADD]
+
 	// 핵심: 전환 지원
 	if (LoadState != EMosesExperienceLoadState::Unloaded)
 	{
+		UE_LOG(LogMosesExp, Verbose, TEXT("[EXP][%s] ResetForNewExperience (PrevState=%d)"),
+			NetTag, (int32)LoadState); // [ADD]
 		ResetForNewExperience();
 	}
 
@@ -104,6 +120,15 @@ void UMosesExperienceManagerComponent::OnRep_CurrentExperienceId()
 void UMosesExperienceManagerComponent::StartLoadExperienceAssets()
 {
 	LoadState = EMosesExperienceLoadState::LoadingAssets;
+
+	const UWorld* World = GetWorld();
+	const ENetMode NM = World ? World->GetNetMode() : NM_Standalone;
+	const TCHAR* NetTag =
+		(NM == NM_DedicatedServer || NM == NM_ListenServer) ? TEXT("SV") :
+		(NM == NM_Client) ? TEXT("CL") : TEXT("ST"); // [ADD]
+
+	UE_LOG(LogMosesExp, Warning, TEXT("[EXP][%s] LoadingAssets -> %s"),
+		NetTag, *CurrentExperienceId.ToString()); // [ADD]
 
 	// PrimaryAsset 로드(서버/클라 동일)
 	UMosesAssetManager& AssetManager = UMosesAssetManager::Get();
@@ -123,6 +148,8 @@ void UMosesExperienceManagerComponent::OnExperienceAssetsLoaded()
 	// stale 방지: 로딩 중 Experience가 바뀐 경우 무시
 	if (PendingExperienceId != CurrentExperienceId)
 	{
+		UE_LOG(LogMosesExp, Warning, TEXT("[EXP] AssetsLoaded STALE Pending=%s Current=%s -> IGNORE"),
+			*PendingExperienceId.ToString(), *CurrentExperienceId.ToString()); // [ADD]
 		return;
 	}
 
@@ -137,6 +164,10 @@ void UMosesExperienceManagerComponent::OnExperienceAssetsLoaded()
 	}
 
 	CurrentExperience = LoadedDef;
+
+	UE_LOG(LogMosesExp, Warning, TEXT("[EXP] AssetsLoaded OK Id=%s -> StartLoadGameFeatures"),
+		*CurrentExperienceId.ToString()); // [ADD]
+
 	StartLoadGameFeatures();
 }
 
@@ -167,6 +198,10 @@ void UMosesExperienceManagerComponent::StartLoadGameFeatures()
 	ActivatedGFURLs.Reset();
 
 	const TArray<FString>& Features = CurrentExperience->GetGameFeaturesToEnable();
+
+	UE_LOG(LogMosesExp, Warning, TEXT("[EXP] LoadingGameFeatures Id=%s Count=%d"),
+		*CurrentExperienceId.ToString(), Features.Num()); // [ADD]
+
 	if (Features.Num() == 0)
 	{
 		// GF가 없는 Experience도 가능(단순 페이즈 등)
@@ -186,10 +221,17 @@ void UMosesExperienceManagerComponent::StartLoadGameFeatures()
 		const FString URL = MakeGameFeaturePluginURL(PluginName);
 		if (URL.IsEmpty())
 		{
+			// [ADD] 실패 사유를 반드시 남겨라(지금까지 silent였던 핵심 원인)
 			bAnyGFFailed = true;
+			LastGFFailReason = FString::Printf(TEXT("MakeGameFeaturePluginURL failed. PluginName=%s"), *PluginName);
+			UE_LOG(LogMosesExp, Error, TEXT("[EXP][GF] URL FAIL Plugin=%s"), *PluginName); // [ADD]
+
 			CompletedGFCount++;
 			continue;
 		}
+
+		UE_LOG(LogMosesExp, Warning, TEXT("[EXP][GF] Activate REQ Plugin=%s URL=%s"),
+			*PluginName, *URL); // [ADD]
 
 		// 비동기 Load+Activate 요청
 		GFS.LoadAndActivateGameFeaturePlugin(
@@ -207,19 +249,28 @@ void UMosesExperienceManagerComponent::OnOneGameFeatureActivated(const UE::GameF
 	{
 		bAnyGFFailed = true;
 		LastGFFailReason = Result.GetError();
+
+		UE_LOG(LogMosesExp, Error, TEXT("[EXP][GF] Activate FAIL Plugin=%s Error=%s (%d/%d)"),
+			*PluginName, *LastGFFailReason, CompletedGFCount, PendingGFCount); // [ADD]
 	}
 	else
 	{
-		// 성공한 GF는 나중에 전환 시 내리기 위해 URL 기록
 		const FString URL = MakeGameFeaturePluginURL(PluginName);
 		if (!URL.IsEmpty())
 		{
 			ActivatedGFURLs.AddUnique(URL);
 		}
+
+		UE_LOG(LogMosesExp, Warning, TEXT("[EXP][GF] Activate OK Plugin=%s (%d/%d)"),
+			*PluginName, CompletedGFCount, PendingGFCount); // [ADD]
 	}
 
 	if (CompletedGFCount >= PendingGFCount)
 	{
+		UE_LOG(LogMosesExp, Warning, TEXT("[EXP][GF] AllCompleted AnyFail=%d LastFail=%s"),
+			bAnyGFFailed ? 1 : 0,
+			LastGFFailReason.IsEmpty() ? TEXT("None") : *LastGFFailReason); // [ADD]
+
 		if (bAnyGFFailed)
 		{
 			FailExperienceLoad(FString::Printf(TEXT("GameFeature activation failed. Last=%s"), *LastGFFailReason));
@@ -234,6 +285,23 @@ void UMosesExperienceManagerComponent::FinishExperienceLoad()
 {
 	LoadState = EMosesExperienceLoadState::Loaded;
 
+	const UWorld* World = GetWorld();
+	const ENetMode NM = World ? World->GetNetMode() : NM_Standalone;
+
+	// [ADD] Day1 DoD: Loaded 로그(서버에서 반드시 보여야 함)
+	if (NM == NM_DedicatedServer || NM == NM_ListenServer)
+	{
+		UE_LOG(LogMosesExp, Warning, TEXT("[EXP][SV] Loaded %s"), *CurrentExperienceId.ToString());
+	}
+	else if (NM == NM_Client)
+	{
+		UE_LOG(LogMosesExp, Warning, TEXT("[EXP][CL] Loaded %s"), *CurrentExperienceId.ToString());
+	}
+	else
+	{
+		UE_LOG(LogMosesExp, Warning, TEXT("[EXP][ST] Loaded %s"), *CurrentExperienceId.ToString());
+	}
+
 	// “Experience READY” 브로드캐스트
 	OnExperienceLoaded.Broadcast(CurrentExperience);
 
@@ -247,18 +315,28 @@ void UMosesExperienceManagerComponent::FinishExperienceLoad()
 
 void UMosesExperienceManagerComponent::FailExperienceLoad(const FString& Reason)
 {
-	// 실패 시에도 이전 GF가 남아있으면 위험하므로 정리
 	LoadState = EMosesExperienceLoadState::Failed;
-	DeactivatePreviouslyActivatedGameFeatures();
 
-	// 포트폴리오에서는 로그 채널을 붙이면 더 좋다(여기서는 단순화).
-	(void)Reason;
+	const UWorld* World = GetWorld();
+	const ENetMode NM = World ? World->GetNetMode() : NM_Standalone;
+	const TCHAR* NetTag =
+		(NM == NM_DedicatedServer || NM == NM_ListenServer) ? TEXT("SV") :
+		(NM == NM_Client) ? TEXT("CL") : TEXT("ST"); // [ADD]
+
+	UE_LOG(LogMosesExp, Error, TEXT("[EXP][%s][FAIL] Id=%s Reason=%s"),
+		NetTag, *CurrentExperienceId.ToString(), *Reason); // [ADD]
+
+	// 실패 시에도 이전 GF가 남아있으면 위험하므로 정리
+	DeactivatePreviouslyActivatedGameFeatures();
 }
 
 void UMosesExperienceManagerComponent::ResetForNewExperience()
 {
 	// Experience 전환 핵심: 이전 GF 내리기
 	DeactivatePreviouslyActivatedGameFeatures();
+
+	UE_LOG(LogMosesExp, Verbose, TEXT("[EXP] ResetForNewExperience PrevId=%s PrevState=%d"),
+		*CurrentExperienceId.ToString(), (int32)LoadState); // [ADD]
 
 	LoadState = EMosesExperienceLoadState::Unloaded;
 	CurrentExperience = nullptr;
@@ -268,6 +346,8 @@ void UMosesExperienceManagerComponent::ResetForNewExperience()
 	CompletedGFCount = 0;
 	bAnyGFFailed = false;
 	LastGFFailReason.Reset();
+
+	// [MOD] 전환 중에도 외부가 등록한 대기 콜백이 꼬이지 않도록 초기화
 	PendingReadyCallbacks.Reset();
 }
 
