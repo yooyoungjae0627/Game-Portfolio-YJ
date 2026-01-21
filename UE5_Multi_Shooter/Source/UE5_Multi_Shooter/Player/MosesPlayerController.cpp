@@ -941,3 +941,132 @@ void AMosesPlayerController::Server_SetSelectedCharacterId_Implementation(int32 
 	UE_LOG(LogMosesSpawn, Log, TEXT("[CharSel][SV] SetSelectedCharacterId=%d PC=%s PS=%s"),
 		SafeId, *GetNameSafe(this), *GetNameSafe(PS));
 }
+
+// =========================================================
+// [ADD] MosesPlayerController.cpp - 함수 전문만
+// =========================================================
+
+void AMosesPlayerController::BeginPlayingState()
+{
+	Super::BeginPlayingState();
+
+	if (!IsLocalController())
+	{
+		return;
+	}
+
+	/**
+	 * 개발자 주석:
+	 * - BeginPlay/ClientRestart/OnPossess는 SeamlessTravel / RestartPlayer 타이밍에서
+	 *   "Pawn이 아직 없는 상태"로 호출될 수 있다.
+	 * - BeginPlayingState는 로컬 플레이어가 실제로 플레이 상태로 들어가는 비교적 안정 타이밍이므로
+	 *   여기서 한 번 더 "매치 카메라 정책"을 강제한다.
+	 */
+	ApplyMatchCameraPolicy_LocalOnly(TEXT("BeginPlayingState"));
+}
+
+void AMosesPlayerController::OnRep_Pawn()
+{
+	Super::OnRep_Pawn();
+
+	if (!IsLocalController())
+	{
+		return;
+	}
+
+	/**
+	 * 개발자 주석(매우 중요):
+	 * - OnPossess는 서버에서 주로 의미가 있고,
+	 *   클라이언트에서는 Pawn이 "복제되어 도착"하는 시점이 더 신뢰할 수 있다.
+	 * - 특히 SeamlessTravel/Restart 흐름에서
+	 *   ClientRestart(NewPawn=nullptr) -> (조금 뒤) OnRep_Pawn() 순으로 오는 케이스가 흔하다.
+	 * - 따라서 여기서 "Pawn 카메라 복구"를 확정하면
+	 *   월드 고정 시점(로비 ViewTarget 잔존 등)이 구조적으로 사라진다.
+	 */
+	ApplyMatchCameraPolicy_LocalOnly(TEXT("OnRep_Pawn"));
+}
+
+void AMosesPlayerController::ApplyMatchCameraPolicy_LocalOnly(const TCHAR* Reason)
+{
+	if (!IsLocalController())
+	{
+		return;
+	}
+
+	// 매치/비로비 컨텍스트에서만 동작 (로비면 건드리지 않는다)
+	// - 현재 프로젝트 정책상 StartGame 레벨은 커서 OFF여도 큰 문제 없으므로,
+	//   "로비가 아니면" NonLobby 정책을 우선 적용한다.
+	const bool bIsLobby = IsLobbyContext();
+	if (bIsLobby)
+	{
+		return;
+	}
+
+	// NonLobby 기본 정책 강제
+	RestoreNonLobbyDefaults_LocalOnly();
+	RestoreNonLobbyInputMode_LocalOnly();
+
+	APawn* LocalPawn = GetPawn();
+	if (IsValid(LocalPawn))
+	{
+		// ✅ 핵심: Pawn이 생긴 순간 무조건 ViewTarget/Pawn으로 복구
+		SetViewTarget(LocalPawn);
+		AutoManageActiveCameraTarget(LocalPawn);
+
+		UE_LOG(LogTemp, Warning,
+			TEXT("[CAM][PC][%s] ApplyMatchCameraPolicy OK Pawn=%s ViewTarget=%s AutoManage=%d Map=%s"),
+			Reason ? Reason : TEXT("None"),
+			*GetNameSafe(LocalPawn),
+			*GetNameSafe(GetViewTarget()),
+			bAutoManageActiveCameraTarget ? 1 : 0,
+			*UGameplayStatics::GetCurrentLevelName(GetWorld(), true));
+
+		// 혹시 남아있는 재시도 타이머가 있으면 정리
+		if (GetWorld())
+		{
+			GetWorldTimerManager().ClearTimer(MatchCameraRetryTimerHandle);
+		}
+		return;
+	}
+
+	// Pawn이 아직 없다면 "다음 틱에 한 번 더" 재시도
+	UE_LOG(LogTemp, Warning,
+		TEXT("[CAM][PC][%s] ApplyMatchCameraPolicy RETRY (Pawn=None) ViewTarget=%s AutoManage=%d Map=%s"),
+		Reason ? Reason : TEXT("None"),
+		*GetNameSafe(GetViewTarget()),
+		bAutoManageActiveCameraTarget ? 1 : 0,
+		*UGameplayStatics::GetCurrentLevelName(GetWorld(), true));
+
+	RetryApplyMatchCameraPolicy_NextTick_LocalOnly();
+}
+
+void AMosesPlayerController::RetryApplyMatchCameraPolicy_NextTick_LocalOnly()
+{
+	if (!IsLocalController())
+	{
+		return;
+	}
+
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	// 다음 프레임에 1회 재시도 (무한 루프 방지: 타이머 핸들을 재사용)
+	World->GetTimerManager().SetTimerForNextTick(FTimerDelegate::CreateWeakLambda(this, [this]()
+		{
+			if (!IsLocalController())
+			{
+				return;
+			}
+
+			// 로비로 돌아간 경우에는 중단
+			if (IsLobbyContext())
+			{
+				return;
+			}
+
+			ApplyMatchCameraPolicy_LocalOnly(TEXT("NextTickRetry"));
+		}));
+}

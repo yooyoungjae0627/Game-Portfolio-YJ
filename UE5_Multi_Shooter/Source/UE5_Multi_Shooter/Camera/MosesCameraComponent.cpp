@@ -26,6 +26,8 @@ void UMosesCameraComponent::OnRegister()
 
 void UMosesCameraComponent::GetCameraView(float DeltaTime, FMinimalViewInfo& DesiredView)
 {
+	UE_LOG(LogMosesCamera, Warning, TEXT("[MosesCamera] GetCameraView CALLED Owner=%s"), *GetNameSafe(GetOwner()));
+
 	check(CameraModeStack);
 
 	// 1) 이번 프레임에 사용할 모드를 스택에 Push
@@ -49,32 +51,45 @@ void UMosesCameraComponent::UpdateCameraModes()
 {
 	check(CameraModeStack);
 
-	const TSubclassOf<UMosesCameraMode> ModeClass = ResolveCameraModeClass();
+	TSubclassOf<UMosesCameraMode> ModeClass = ResolveCameraModeClass();
+
+	// 어떤 이유로든 모드가 없다면, "안전 폴백"을 강제한다.
+	// - DefaultCameraModeClass가 BP에서 세팅되지 않았거나
+	// - Delegate 바인딩이 실패한 타이밍 등에서 카메라가 원점/이상한 값으로 튀는 것을 차단
+	if (!ModeClass)
+	{
+		if (!bLoggedNoModeClassOnce)
+		{
+			UE_LOG(LogMosesCamera, Error,
+				TEXT("[MosesCamera] No CameraModeClass (Delegate + Default are null). Force fallback needed."));
+			bLoggedNoModeClassOnce = true;
+		}
+
+		// [IMPORTANT]
+		// 여기서 바로 특정 클래스(ThirdPerson)를 하드코딩하고 싶으면
+		// 프로젝트 정책상 "에셋 의존"이 생길 수 있으니, 최소한 DefaultCameraModeClass는 반드시 세팅하도록 하고
+		// 이 강제 폴백은 "개발 중 안전장치"로만 둔다.
+		ModeClass = DefaultCameraModeClass;
+	}
+
 	if (ModeClass)
 	{
 		CameraModeStack->PushCameraMode(ModeClass);
-		return;
-	}
-
-	if (!bLoggedNoModeClassOnce)
-	{
-		UE_LOG(LogMosesCamera, Error, TEXT("[MosesCamera] No CameraModeClass (Delegate + Default are null)"));
-		bLoggedNoModeClassOnce = true;
 	}
 }
 
 TSubclassOf<UMosesCameraMode> UMosesCameraComponent::ResolveCameraModeClass() const
 {
-	// Delegate가 있으면 우선 사용
 	if (DetermineCameraModeDelegate.IsBound())
 	{
 		return DetermineCameraModeDelegate.Execute();
 	}
 
-	// 없으면 폴백
 	if (!bLoggedNoDelegateOnce)
 	{
-		UE_LOG(LogMosesCamera, Warning, TEXT("[MosesCamera] Delegate not bound -> fallback DefaultCameraModeClass"));
+		UE_LOG(LogMosesCamera, Warning,
+			TEXT("[MosesCamera] Delegate not bound -> fallback DefaultCameraModeClass=%s"),
+			*GetNameSafe(DefaultCameraModeClass));
 		bLoggedNoDelegateOnce = true;
 	}
 

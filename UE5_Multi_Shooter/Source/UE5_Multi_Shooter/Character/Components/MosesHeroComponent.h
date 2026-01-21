@@ -37,6 +37,8 @@ public:
 	UMosesHeroComponent(const FObjectInitializer& ObjectInitializer);
 
 	void SetupInputBindings(UInputComponent* PlayerInputComponent);
+	
+	void TryBindCameraModeDelegate_LocalOnly();
 
 protected:
 	virtual void BeginPlay() override;

@@ -97,6 +97,41 @@ void UMosesHeroComponent::SetupInputBindings(UInputComponent* PlayerInputCompone
 	BindInputActions(PlayerInputComponent);
 }
 
+void UMosesHeroComponent::TryBindCameraModeDelegate_LocalOnly()
+{
+	// 로컬 Pawn이 아니면 바인딩하지 않는다.
+	if (!IsLocalPlayerPawn())
+	{
+		return;
+	}
+
+	APawn* Pawn = Cast<APawn>(GetOwner());
+	if (!Pawn)
+	{
+		return;
+	}
+
+	UMosesCameraComponent* CamComp = UMosesCameraComponent::FindCameraComponent(Pawn);
+	if (!CamComp)
+	{
+		UE_LOG(LogMosesCamera, Warning, TEXT("[Hero][CamBind] No MosesCameraComponent Pawn=%s"), *GetNameSafe(Pawn));
+		return;
+	}
+
+	// 이미 바인딩 되어 있으면 끝
+	if (CamComp->DetermineCameraModeDelegate.IsBound())
+	{
+		return;
+	}
+
+	CamComp->DetermineCameraModeDelegate.BindUObject(this, &ThisClass::DetermineCameraMode);
+
+	UE_LOG(LogMosesCamera, Warning,
+		TEXT("[Hero][CamBind] Bind DetermineCameraModeDelegate OK Pawn=%s PC=%s"),
+		*GetNameSafe(Pawn),
+		*GetNameSafe(Pawn->GetController()));
+}
+
 void UMosesHeroComponent::AddMappingContextOnce()
 {
 	if (bMappingContextAdded)

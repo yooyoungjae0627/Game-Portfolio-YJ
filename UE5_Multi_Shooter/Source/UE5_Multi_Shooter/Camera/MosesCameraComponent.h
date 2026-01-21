@@ -41,9 +41,10 @@ public:
 
 	AActor* GetTargetActor() const { return GetOwner(); }
 
+	virtual void GetCameraView(float DeltaTime, FMinimalViewInfo& DesiredView) override;
+
 protected:
 	virtual void OnRegister() override final;
-	virtual void GetCameraView(float DeltaTime, FMinimalViewInfo& DesiredView) override final;
 
 private:
 	void UpdateCameraModes();

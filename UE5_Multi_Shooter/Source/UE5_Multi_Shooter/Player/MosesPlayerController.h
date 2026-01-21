@@ -149,10 +149,19 @@ protected:
 	virtual void OnPossess(APawn* InPawn) override;
 	virtual void OnRep_PlayerState() override;
 
+
+protected:
+	virtual void OnRep_Pawn() override;           // Pawn 복제 도착 훅(클라 핵심)
+	virtual void BeginPlayingState() override;    // [플레이 상태 진입 훅
+
 	/*====================================================
 	= Replication
 	====================================================*/
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
+	
+private:
+	void ApplyMatchCameraPolicy_LocalOnly(const TCHAR* Reason);   
+	void RetryApplyMatchCameraPolicy_NextTick_LocalOnly();       
 
 private:
 	/*====================================================
@@ -237,5 +246,8 @@ private:
 
 	UPROPERTY(Replicated)
 	bool bRep_IsReady = false;
+
+private:
+	FTimerHandle MatchCameraRetryTimerHandle;     
 };
 

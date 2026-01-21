@@ -4,6 +4,8 @@
 #include "GameFramework/Controller.h"
 #include "GameFramework/CharacterMovementComponent.h"
 
+#include "Components/CapsuleComponent.h" 
+
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
 #include "UE5_Multi_Shooter/Camera/MosesCameraComponent.h"
 #include "UE5_Multi_Shooter/Character/Components/MosesHeroComponent.h"
@@ -14,9 +16,22 @@ APlayerCharacter::APlayerCharacter()
 	bReplicates = true;
 	PrimaryActorTick.bCanEverTick = false;
 
+	// ViewTarget이 이 Pawn일 때 CameraComponent를 자동 사용하도록
+	bFindCameraComponentWhenViewTarget = true;
+
 	// Player 전용 컴포넌트 구성
 	HeroComponent = CreateDefaultSubobject<UMosesHeroComponent>(TEXT("HeroComponent"));
 	MosesCameraComponent = CreateDefaultSubobject<UMosesCameraComponent>(TEXT("MosesCameraComponent"));
+
+	if (MosesCameraComponent)
+	{
+		// [FIX] Root에 붙여 타입/구조 안정성 보장
+		MosesCameraComponent->SetupAttachment(GetRootComponent());
+
+		MosesCameraComponent->SetRelativeLocation(FVector(0.f, 0.f, 60.f));
+		MosesCameraComponent->SetRelativeRotation(FRotator::ZeroRotator);
+		MosesCameraComponent->bAutoActivate = true;
+	}
 }
 
 void APlayerCharacter::BeginPlay()
@@ -47,6 +62,54 @@ void APlayerCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& Out
 
 	// 스프린트 상태는 서버가 확정하고 복제
 	DOREPLIFETIME(APlayerCharacter, bIsSprinting);
+}
+
+void APlayerCharacter::OnRep_Controller()
+{
+	Super::OnRep_Controller();
+
+	// 클라에서 Controller가 “나중에” 붙는 케이스 대응
+	if (HeroComponent)
+	{
+		HeroComponent->TryBindCameraModeDelegate_LocalOnly();
+	}
+}
+
+void APlayerCharacter::PawnClientRestart()
+{
+	Super::PawnClientRestart();
+
+	// ClientRestart/RestartPlayer 타이밍에서 로컬 초기화 재시도
+	if (HeroComponent)
+	{
+		HeroComponent->TryBindCameraModeDelegate_LocalOnly();
+	}
+}
+
+void APlayerCharacter::PossessedBy(AController* NewController)
+{
+	Super::PossessedBy(NewController);
+
+	// 서버/리슨 포함: Possess 시점에서도 바인딩 시도 (로컬이면 의미 있음)
+	if (HeroComponent)
+	{
+		HeroComponent->TryBindCameraModeDelegate_LocalOnly();
+	}
+}
+
+void APlayerCharacter::CalcCamera(float DeltaTime, FMinimalViewInfo& OutResult)
+{
+	// Super는 기본적으로 ActorLocation 기준 카메라가 나올 수 있다.
+	// 우리는 MosesCameraComponent가 있으면 그 값을 우선한다.
+	if (MosesCameraComponent)
+	{
+		// [ADD] UMosesCameraComponent가 "카메라 뷰를 계산하는 함수"를 제공해야 함.
+		// 아래는 전형적인 패턴 예시:
+		MosesCameraComponent->GetCameraView(DeltaTime, OutResult); // (UMosesCameraComponent가 UCameraComponent면 존재)
+		return;
+	}
+
+	Super::CalcCamera(DeltaTime, OutResult);
 }
 
 bool APlayerCharacter::IsSprinting() const

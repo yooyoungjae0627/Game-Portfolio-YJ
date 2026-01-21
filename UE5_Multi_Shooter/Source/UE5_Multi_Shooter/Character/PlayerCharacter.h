@@ -43,6 +43,27 @@ protected:
 	virtual void SetupPlayerInputComponent(UInputComponent* PlayerInputComponent) override;
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 
+	// MosesCameraComponent가 실제 뷰를 제공하도록 강제
+	virtual void CalcCamera(float DeltaTime, FMinimalViewInfo& OutResult) override;
+
+	/**
+	 * 클라이언트에서 Controller가 나중에 복제되어 붙는 경우 대응
+	 * (SeamlessTravel / Replication 타이밍 이슈)
+	 */
+	virtual void OnRep_Controller() override;
+
+	/**
+	 * ClientRestart / RestartPlayer 이후 로컬 초기화 재시도
+	 * - 카메라 Delegate 바인딩 보장 목적
+	 */
+	virtual void PawnClientRestart() override;
+
+	/**
+	 * 서버/리슨 서버에서 Pawn이 Possess 되는 시점
+	 * - 로컬 플레이어라면 카메라 Delegate 바인딩 재시도
+	 */
+	virtual void PossessedBy(AController* NewController) override;
+
 private:
 	// Sprint
 	void ApplySprintSpeed_LocalPredict(bool bNewSprinting);
