@@ -73,10 +73,6 @@
 			"Enabled": true
 		},
 		{
-			"Name": "GF_Match",
-			"Enabled": true
-		},
-		{
 			"Name": "GF_Lobby_Code",
 			"Enabled": true
 		},

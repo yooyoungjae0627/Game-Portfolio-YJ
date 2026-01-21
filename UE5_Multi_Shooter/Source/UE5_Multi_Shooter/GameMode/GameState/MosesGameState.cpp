@@ -1,6 +1,8 @@
 #include "MosesGameState.h"
 
 #include "Net/UnrealNetwork.h"
+#include "TimerManager.h"
+
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
 #include "UE5_Multi_Shooter/GameMode/Experience/MosesExperienceManagerComponent.h"
 
@@ -10,6 +12,8 @@ AMosesGameState::AMosesGameState(const FObjectInitializer& ObjectInitializer)
 	// Experience 로딩 담당 컴포넌트 생성
 	ExperienceManagerComponent =
 		CreateDefaultSubobject<UMosesExperienceManagerComponent>(TEXT("ExperienceManagerComponent"));
+
+	bReplicates = true;
 
 	/**
 	 * 서버 초기 상태 고정
@@ -31,6 +35,22 @@ void AMosesGameState::BeginPlay()
 		TEXT("[GS] BeginPlay World=%s NetMode=%d"),
 		*GetNameSafe(GetWorld()),
 		(int32)GetNetMode());
+
+	if (HasAuthority())
+	{
+		RemainingSeconds = MatchTotalSeconds;
+		OnRep_RemainingSeconds();
+
+		// 서버가 1초마다 감소(증거/데모용)
+		GetWorldTimerManager().SetTimer(
+			MatchTimeTimerHandle,
+			this,
+			&ThisClass::ServerTickMatchTime,
+			1.0f,
+			true);
+
+		UE_LOG(LogMosesExp, Warning, TEXT("[MatchTime][SV] Start Total=%d"), MatchTotalSeconds);
+	}
 }
 
 void AMosesGameState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
@@ -42,6 +62,7 @@ void AMosesGameState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutL
 	DOREPLIFETIME(AMosesGameState, bSpawnGateOpen);
 	DOREPLIFETIME(AMosesGameState, bStartRequested);
 	DOREPLIFETIME(AMosesGameState, StartRequesterPid);
+	DOREPLIFETIME(AMosesGameState, RemainingSeconds);
 }
 
 void AMosesGameState::OnRep_CurrentPhase()
@@ -57,6 +78,25 @@ void AMosesGameState::OnRep_SpawnGateOpen()
 void AMosesGameState::OnRep_StartRequested()
 {
 	// Start 버튼 UI 비활성화 등 처리 가능
+}
+
+void AMosesGameState::ServerTickMatchTime()
+{
+	check(HasAuthority());
+
+	RemainingSeconds = FMath::Max(0, RemainingSeconds - 1);
+	OnRep_RemainingSeconds();
+
+	if (RemainingSeconds <= 0)
+	{
+		GetWorldTimerManager().ClearTimer(MatchTimeTimerHandle);
+		UE_LOG(LogMosesExp, Warning, TEXT("[MatchTime][SV] Finished"));
+	}
+}
+
+void AMosesGameState::OnRep_RemainingSeconds()
+{
+	OnMatchTimeChanged.Broadcast(RemainingSeconds);
 }
 
 void AMosesGameState::ServerSetPhase(EMosesServerPhase NewPhase)

@@ -1,19 +1,12 @@
-﻿// ============================================================================
-// MosesPlayerState.cpp
-// ============================================================================
+﻿#include "UE5_Multi_Shooter/Player/MosesPlayerState.h"
 
-#include "UE5_Multi_Shooter/Player/MosesPlayerState.h"
-
-// Project
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
 #include "UE5_Multi_Shooter/Combat/MosesCombatComponent.h"
-#include "UE5_Multi_Shooter/System/MosesLobbyLocalPlayerSubsystem.h" // [ADD]
+#include "UE5_Multi_Shooter/System/MosesLobbyLocalPlayerSubsystem.h"
 
-// GAS
 #include "UE5_Multi_Shooter/GAS/Components/MosesAbilitySystemComponent.h"
 #include "UE5_Multi_Shooter/GAS/AttributeSet/MosesAttributeSet.h"
 
-// Engine
 #include "Net/UnrealNetwork.h"
 #include "GameFramework/PlayerController.h"
 #include "Engine/LocalPlayer.h"
@@ -55,11 +48,7 @@ void AMosesPlayerState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& Ou
 	DOREPLIFETIME(AMosesPlayerState, SelectedCharacterId);
 	DOREPLIFETIME(AMosesPlayerState, RoomId);
 	DOREPLIFETIME(AMosesPlayerState, bIsRoomHost);
-}
-
-UAbilitySystemComponent* AMosesPlayerState::GetAbilitySystemComponent() const
-{
-	return MosesAbilitySystemComponent;
+	DOREPLIFETIME(AMosesPlayerState, Deaths);
 }
 
 void AMosesPlayerState::CopyProperties(APlayerState* NewPlayerState)
@@ -80,6 +69,7 @@ void AMosesPlayerState::CopyProperties(APlayerState* NewPlayerState)
 	NewPS->RoomId = RoomId;
 	NewPS->bIsRoomHost = bIsRoomHost;
 	NewPS->PawnData = PawnData;
+	NewPS->Deaths = Deaths; 
 }
 
 void AMosesPlayerState::OverrideWith(APlayerState* OldPlayerState)
@@ -100,6 +90,18 @@ void AMosesPlayerState::OverrideWith(APlayerState* OldPlayerState)
 	RoomId = OldPS->RoomId;
 	bIsRoomHost = OldPS->bIsRoomHost;
 	PawnData = OldPS->PawnData;
+	Deaths = OldPS->Deaths; 
+}
+
+void AMosesPlayerState::OnRep_Score() 
+{
+	Super::OnRep_Score();
+	BroadcastScore();
+}
+
+UAbilitySystemComponent* AMosesPlayerState::GetAbilitySystemComponent() const
+{
+	return MosesAbilitySystemComponent;
 }
 
 void AMosesPlayerState::TryInitASC(AActor* InAvatarActor)
@@ -110,7 +112,6 @@ void AMosesPlayerState::TryInitASC(AActor* InAvatarActor)
 	}
 
 	const bool bAvatarChanged = (CachedAvatar.Get() != InAvatarActor);
-
 	if (bASCInitialized && !bAvatarChanged)
 	{
 		return;
@@ -119,7 +120,27 @@ void AMosesPlayerState::TryInitASC(AActor* InAvatarActor)
 	CachedAvatar = InAvatarActor;
 	bASCInitialized = true;
 
+	// Owner = PS, Avatar = Pawn
 	MosesAbilitySystemComponent->InitAbilityActorInfo(this, InAvatarActor);
+
+	UE_LOG(LogMosesGAS, Warning, TEXT("[GAS][PS] InitAbilityActorInfo Owner=%s Avatar=%s"),
+		*GetNameSafe(this), *GetNameSafe(InAvatarActor));
+
+	// 서버에서 초기 Attribute 확정(속성은 GAS)
+	if (HasAuthority())
+	{
+		MosesAbilitySystemComponent->SetNumericAttributeBase(UMosesAttributeSet::GetMaxHealthAttribute(), 100.f);
+		MosesAbilitySystemComponent->SetNumericAttributeBase(UMosesAttributeSet::GetHealthAttribute(), 100.f);
+
+		MosesAbilitySystemComponent->SetNumericAttributeBase(UMosesAttributeSet::GetMaxShieldAttribute(), 100.f);
+		MosesAbilitySystemComponent->SetNumericAttributeBase(UMosesAttributeSet::GetShieldAttribute(), 100.f);
+	}
+
+	BindASCAttributeDelegates(); 
+	BroadcastVitals_Initial();   
+	BroadcastScore();            
+	BroadcastDeaths();           
+	BroadcastAmmoAndGrenade();   
 }
 
 void AMosesPlayerState::EnsurePersistentId_Server()
@@ -147,7 +168,6 @@ void AMosesPlayerState::ServerSetLoggedIn(bool bInLoggedIn)
 	bLoggedIn = bInLoggedIn;
 	ForceNetUpdate();
 
-	// [ADD] 리슨서버 즉시 UI 갱신
 	NotifyLobbyPlayerStateChanged_Local(TEXT("ServerSetLoggedIn"));
 }
 
@@ -163,7 +183,6 @@ void AMosesPlayerState::ServerSetReady(bool bInReady)
 	bReady = bInReady;
 	ForceNetUpdate();
 
-	// [ADD] 리슨서버 즉시 UI 갱신
 	NotifyLobbyPlayerStateChanged_Local(TEXT("ServerSetReady"));
 }
 
@@ -175,8 +194,6 @@ void AMosesPlayerState::ServerSetSelectedCharacterId_Implementation(int32 InId)
 	ForceNetUpdate();
 
 	BroadcastSelectedCharacterChanged(TEXT("ServerSetSelectedCharacterId"));
-
-	// [ADD] 리슨서버 즉시 UI 갱신
 	NotifyLobbyPlayerStateChanged_Local(TEXT("ServerSetSelectedCharacterId"));
 }
 
@@ -193,8 +210,6 @@ void AMosesPlayerState::ServerSetRoom(const FGuid& InRoomId, bool bInIsHost)
 	bIsRoomHost = bInIsHost;
 
 	ForceNetUpdate();
-
-	// [ADD] 리슨서버 즉시 UI 갱신
 	NotifyLobbyPlayerStateChanged_Local(TEXT("ServerSetRoom"));
 }
 
@@ -216,8 +231,15 @@ void AMosesPlayerState::ServerSetPlayerNickName(const FString& InNickName)
 	PlayerNickName = Clean;
 	ForceNetUpdate();
 
-	// [ADD] 리슨서버 즉시 UI 갱신
 	NotifyLobbyPlayerStateChanged_Local(TEXT("ServerSetPlayerNickName"));
+}
+
+void AMosesPlayerState::ServerAddDeath() 
+{
+	check(HasAuthority());
+	Deaths++;
+	ForceNetUpdate();
+	OnRep_Deaths(); // 리슨서버 즉시 반영
 }
 
 void AMosesPlayerState::OnRep_PersistentId()
@@ -226,7 +248,6 @@ void AMosesPlayerState::OnRep_PersistentId()
 		*PersistentId.ToString(EGuidFormats::DigitsWithHyphens),
 		*GetNameSafe(this));
 
-	// [ADD]
 	NotifyLobbyPlayerStateChanged_Local(TEXT("OnRep_PersistentId"));
 }
 
@@ -236,7 +257,6 @@ void AMosesPlayerState::OnRep_LoggedIn()
 		bLoggedIn ? 1 : 0,
 		*GetNameSafe(this));
 
-	// [ADD]
 	NotifyLobbyPlayerStateChanged_Local(TEXT("OnRep_LoggedIn"));
 }
 
@@ -246,7 +266,6 @@ void AMosesPlayerState::OnRep_Ready()
 		bReady ? 1 : 0,
 		*GetNameSafe(this));
 
-	// [ADD] ✅ Ready 체크박스 갱신 트리거
 	NotifyLobbyPlayerStateChanged_Local(TEXT("OnRep_Ready"));
 }
 
@@ -257,8 +276,6 @@ void AMosesPlayerState::OnRep_SelectedCharacterId()
 		*GetNameSafe(this));
 
 	BroadcastSelectedCharacterChanged(TEXT("OnRep_SelectedCharacterId"));
-
-	// [ADD]
 	NotifyLobbyPlayerStateChanged_Local(TEXT("OnRep_SelectedCharacterId"));
 }
 
@@ -269,7 +286,6 @@ void AMosesPlayerState::OnRep_Room()
 		bIsRoomHost ? 1 : 0,
 		*GetNameSafe(this));
 
-	// [ADD] ✅ 방 진입/퇴장/호스트 변경 UI 트리거 (Pending 해제의 핵심)
 	NotifyLobbyPlayerStateChanged_Local(TEXT("OnRep_Room"));
 }
 
@@ -280,8 +296,22 @@ void AMosesPlayerState::OnRep_PlayerNickName()
 		*GetNameSafe(this),
 		*PersistentId.ToString(EGuidFormats::DigitsWithHyphens));
 
-	// [ADD] ✅ 닉 변경도 동일 파이프
 	NotifyLobbyPlayerStateChanged_Local(TEXT("OnRep_PlayerNickName"));
+}
+
+void AMosesPlayerState::OnRep_Deaths() 
+{
+	BroadcastDeaths();
+}
+
+void AMosesPlayerState::BroadcastSelectedCharacterChanged(const TCHAR* Reason)
+{
+	const int32 NewId = SelectedCharacterId;
+	OnSelectedCharacterChangedNative.Broadcast(NewId);
+	OnSelectedCharacterChangedBP.Broadcast(NewId);
+
+	UE_LOG(LogMosesSpawn, Verbose, TEXT("[PS] SelectedCharacterChanged Reason=%s Id=%d"),
+		Reason ? Reason : TEXT("None"), NewId);
 }
 
 void AMosesPlayerState::NotifyLobbyPlayerStateChanged_Local(const TCHAR* Reason) const
@@ -304,18 +334,11 @@ void AMosesPlayerState::NotifyLobbyPlayerStateChanged_Local(const TCHAR* Reason)
 		return;
 	}
 
-	UE_LOG(LogMosesSpawn, Verbose, TEXT("[LPS][NotifyFromPS] Reason=%s PS=%s"), Reason ? Reason : TEXT("None"), *GetNameSafe(this));
+	UE_LOG(LogMosesSpawn, Verbose, TEXT("[LPS][NotifyFromPS] Reason=%s PS=%s"),
+		Reason ? Reason : TEXT("None"),
+		*GetNameSafe(this));
 
-	// 기존 파이프 재사용
 	LPS->NotifyPlayerStateChanged();
-}
-
-// ---- 아래 함수들은 네가 이미 가진 구현 유지(여기서는 생략해도 됨) ----
-void AMosesPlayerState::BroadcastSelectedCharacterChanged(const TCHAR* Reason)
-{
-	const int32 NewId = SelectedCharacterId;
-	OnSelectedCharacterChangedNative.Broadcast(NewId);
-	OnSelectedCharacterChangedBP.Broadcast(NewId);
 }
 
 void AMosesPlayerState::BindCombatDelegatesOnce()
@@ -331,22 +354,143 @@ void AMosesPlayerState::BindCombatDelegatesOnce()
 	CombatComponent->OnCombatDataChangedBP.AddDynamic(this, &ThisClass::HandleCombatDataChanged_BP);
 }
 
-void AMosesPlayerState::HandleCombatDataChanged_Native(const TCHAR* Reason)
-{
-}
-
 void AMosesPlayerState::HandleCombatDataChanged_BP(FString Reason)
 {
+	// BP용 이벤트가 필요하면 여기서 처리 가능(현재는 Native가 HUD용)
 }
 
-// [ADD] 링커 에러 해결: 선언만 있고 정의가 없던 함수 구현
+void AMosesPlayerState::HandleCombatDataChanged_Native(const TCHAR* Reason)
+{
+	// [ADD] Combat 변경 -> HUD 브릿지
+	BroadcastAmmoAndGrenade();
+}
+
+void AMosesPlayerState::BroadcastAmmoAndGrenade()
+{
+	if (!CombatComponent)
+	{
+		return;
+	}
+
+	const TArray<FAmmoState>& AmmoStates = CombatComponent->GetAmmoStates();
+	if (AmmoStates.Num() <= 0)
+	{
+		return;
+	}
+
+	// [정책] 아직 "현재 무기" 개념이 없으므로 Rifle(0)로 표시 (Day2 완료 후 확장)
+	{
+		const FAmmoState& Rifle = AmmoStates[0];
+		OnAmmoChanged.Broadcast(Rifle.MagAmmo, Rifle.ReserveAmmo);
+	}
+
+	// Grenade는 enum 3번(ReserveAmmo를 "보유 개수"로 사용)
+	if (AmmoStates.Num() > 3)
+	{
+		const FAmmoState& Grenade = AmmoStates[3];
+		OnGrenadeChanged.Broadcast(Grenade.ReserveAmmo);
+	}
+}
+
+void AMosesPlayerState::BroadcastScore() 
+{
+	const int32 IntScore = FMath::RoundToInt(GetScore());
+	OnScoreChanged.Broadcast(IntScore);
+}
+
+void AMosesPlayerState::BroadcastDeaths() 
+{
+	OnDeathsChanged.Broadcast(Deaths);
+}
+
+void AMosesPlayerState::BindASCAttributeDelegates() 
+{
+	if (bASCDelegatesBound || !MosesAbilitySystemComponent)
+	{
+		return;
+	}
+
+	bASCDelegatesBound = true;
+
+	MosesAbilitySystemComponent->GetGameplayAttributeValueChangeDelegate(UMosesAttributeSet::GetHealthAttribute())
+		.AddUObject(this, &ThisClass::HandleHealthChanged_Internal);
+
+	MosesAbilitySystemComponent->GetGameplayAttributeValueChangeDelegate(UMosesAttributeSet::GetMaxHealthAttribute())
+		.AddUObject(this, &ThisClass::HandleMaxHealthChanged_Internal);
+
+	MosesAbilitySystemComponent->GetGameplayAttributeValueChangeDelegate(UMosesAttributeSet::GetShieldAttribute())
+		.AddUObject(this, &ThisClass::HandleShieldChanged_Internal);
+
+	MosesAbilitySystemComponent->GetGameplayAttributeValueChangeDelegate(UMosesAttributeSet::GetMaxShieldAttribute())
+		.AddUObject(this, &ThisClass::HandleMaxShieldChanged_Internal);
+
+	UE_LOG(LogMosesGAS, Verbose, TEXT("[GAS][PS] Bound AttributeChange delegates PS=%s"), *GetNameSafe(this));
+}
+
+void AMosesPlayerState::BroadcastVitals_Initial() 
+{
+	if (!MosesAbilitySystemComponent)
+	{
+		return;
+	}
+
+	const float CurHP = MosesAbilitySystemComponent->GetNumericAttribute(UMosesAttributeSet::GetHealthAttribute());
+	const float MaxHP = MosesAbilitySystemComponent->GetNumericAttribute(UMosesAttributeSet::GetMaxHealthAttribute());
+
+	const float CurShield = MosesAbilitySystemComponent->GetNumericAttribute(UMosesAttributeSet::GetShieldAttribute());
+	const float MaxShield = MosesAbilitySystemComponent->GetNumericAttribute(UMosesAttributeSet::GetMaxShieldAttribute());
+
+	OnHealthChanged.Broadcast(CurHP, MaxHP);
+	OnShieldChanged.Broadcast(CurShield, MaxShield);
+}
+
+void AMosesPlayerState::HandleHealthChanged_Internal(const FOnAttributeChangeData& Data)
+{
+	const float Cur = Data.NewValue;
+	const float Max = MosesAbilitySystemComponent
+		? MosesAbilitySystemComponent->GetNumericAttribute(UMosesAttributeSet::GetMaxHealthAttribute())
+		: Cur;
+
+	OnHealthChanged.Broadcast(Cur, Max);
+}
+
+void AMosesPlayerState::HandleMaxHealthChanged_Internal(const FOnAttributeChangeData& Data) 
+{
+	const float Max = Data.NewValue;
+	const float Cur = MosesAbilitySystemComponent
+		? MosesAbilitySystemComponent->GetNumericAttribute(UMosesAttributeSet::GetHealthAttribute())
+		: Max;
+
+	OnHealthChanged.Broadcast(Cur, Max);
+}
+
+void AMosesPlayerState::HandleShieldChanged_Internal(const FOnAttributeChangeData& Data) 
+{
+	const float Cur = Data.NewValue;
+	const float Max = MosesAbilitySystemComponent
+		? MosesAbilitySystemComponent->GetNumericAttribute(UMosesAttributeSet::GetMaxShieldAttribute())
+		: Cur;
+
+	OnShieldChanged.Broadcast(Cur, Max);
+}
+
+void AMosesPlayerState::HandleMaxShieldChanged_Internal(const FOnAttributeChangeData& Data) 
+{
+	const float Max = Data.NewValue;
+	const float Cur = MosesAbilitySystemComponent
+		? MosesAbilitySystemComponent->GetNumericAttribute(UMosesAttributeSet::GetShieldAttribute())
+		: Max;
+
+	OnShieldChanged.Broadcast(Cur, Max);
+}
+
 void AMosesPlayerState::DOD_PS_Log(const UObject* Caller, const TCHAR* Phase) const
 {
 	const TCHAR* CallerName = Caller ? *Caller->GetName() : TEXT("None");
 	const TCHAR* PhaseStr = Phase ? Phase : TEXT("None");
 
 	UE_LOG(LogMosesPlayer, Warning,
-		TEXT("[PS][DOD][%s] PS=%s Caller=%s Nick=%s Pid=%s RoomId=%s Host=%d Ready=%d LoggedIn=%d SelChar=%d"),
+		TEXT("[PS][DOD][%s] PS=%s Caller=%s Nick=%s Pid=%s RoomId=%s Host=%d Ready=%d LoggedIn=%d SelChar=%d Deaths=%d Score=%d"),
 		PhaseStr,
 		*GetNameSafe(this),
 		CallerName,
@@ -356,5 +500,7 @@ void AMosesPlayerState::DOD_PS_Log(const UObject* Caller, const TCHAR* Phase) co
 		bIsRoomHost ? 1 : 0,
 		bReady ? 1 : 0,
 		bLoggedIn ? 1 : 0,
-		SelectedCharacterId);
+		SelectedCharacterId,
+		Deaths,
+		FMath::RoundToInt(GetScore()));
 }

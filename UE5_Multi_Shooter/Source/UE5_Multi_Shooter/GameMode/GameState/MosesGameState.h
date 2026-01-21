@@ -43,13 +43,15 @@ enum class EMosesServerPhase : uint8
  * 2. 클라이언트는 복제된 값만 '본다'
  * 3. Ready ≠ Spawn (시작 요청과 스폰은 절대 같은 개념이 아님)
  */
+
+DECLARE_MULTICAST_DELEGATE_OneParam(FOnMosesMatchTimeChangedNative, int32 /*RemainingSeconds*/);
+
 UCLASS()
 class UE5_MULTI_SHOOTER_API AMosesGameState : public AGameStateBase
 {
 	GENERATED_BODY()
 
 protected:
-	AMosesGameState(const FObjectInitializer& ObjectInitializer);
 	virtual void BeginPlay() override;
 
 	/**
@@ -57,6 +59,11 @@ protected:
 	 * → 어떤 변수를 클라이언트로 동기화할지 정의
 	 */
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
+
+public:
+	AMosesGameState(const FObjectInitializer& ObjectInitializer);
+	FOnMosesMatchTimeChangedNative OnMatchTimeChanged;
+	int32 GetRemainingSeconds() const { return RemainingSeconds; }
 
 private:
 	/**
@@ -77,6 +84,12 @@ private:
 	 */
 	UFUNCTION()
 	void OnRep_StartRequested();
+
+private:
+	void ServerTickMatchTime(); 
+
+	UFUNCTION()
+	void OnRep_RemainingSeconds(); 
 
 public:
 	/**
@@ -160,4 +173,14 @@ protected:
 	 */
 	UPROPERTY(ReplicatedUsing = OnRep_CurrentPhase)
 	EMosesServerPhase CurrentPhase = EMosesServerPhase::None;
+
+private:
+	UPROPERTY(ReplicatedUsing = OnRep_RemainingSeconds)
+	int32 RemainingSeconds = 0; 
+
+	UPROPERTY(EditDefaultsOnly, Category = "Moses|Match")
+	int32 MatchTotalSeconds = 600; 
+
+	FTimerHandle MatchTimeTimerHandle; 
+
 };

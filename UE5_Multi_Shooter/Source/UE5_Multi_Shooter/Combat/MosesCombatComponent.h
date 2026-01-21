@@ -6,7 +6,7 @@
 
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
-#include "MosesWeaponTypes.h" // [FIX] 네가 올린 실제 타입 사용(EMosesWeaponType, FAmmoState, FWeaponSlotState)
+#include "MosesWeaponTypes.h" 
 #include "MosesCombatComponent.generated.h"
 
 // ---------------------------
@@ -67,23 +67,23 @@ private:
 	// RepNotifies
 	// ------------------------------------------------------------
 	UFUNCTION()
-	void OnRep_AmmoStates(); // [ADD]
+	void OnRep_AmmoStates(); 
+	
+	UFUNCTION()
+	void OnRep_WeaponSlots(); 
 
 	UFUNCTION()
-	void OnRep_WeaponSlots(); // [ADD]
-
-	UFUNCTION()
-	void OnRep_ServerInitialized_Day2(); // [ADD]
+	void OnRep_ServerInitialized_Day2();
 
 private:
 	// ------------------------------------------------------------
 	// Internal helpers
 	// ------------------------------------------------------------
-	void BroadcastCombatDataChanged(const TCHAR* Reason); // [ADD]
-	void EnsureArraysSized();                             // [ADD]
-	int32 WeaponTypeToIndex(EMosesWeaponType WeaponType) const; // [ADD]
+	void BroadcastCombatDataChanged(const TCHAR* Reason); 
+	void EnsureArraysSized();                             
+	int32 WeaponTypeToIndex(EMosesWeaponType WeaponType) const;
 
-	void ForceReplication(); // [ADD] ForceReplication() 에러 해결용: 우리가 직접 구현
+	void ForceReplication(); // ForceReplication() 에러 해결용: 우리가 직접 구현
 
 private:
 	// ------------------------------------------------------------
@@ -93,13 +93,13 @@ private:
 
 private:
 	// ------------------------------------------------------------
-	// Replicated data (Day2)
+	// Replicated data 
 	// ------------------------------------------------------------
 	UPROPERTY(ReplicatedUsing = OnRep_AmmoStates)
-	TArray<FAmmoState> AmmoStates; // [FIX] FAmmoState 사용
+	TArray<FAmmoState> AmmoStates; // FAmmoState 사용
 
 	UPROPERTY(ReplicatedUsing = OnRep_WeaponSlots)
-	TArray<FWeaponSlotState> WeaponSlots; // [FIX] FWeaponSlotState 사용
+	TArray<FWeaponSlotState> WeaponSlots; // FWeaponSlotState 사용
 
 	UPROPERTY(ReplicatedUsing = OnRep_ServerInitialized_Day2)
 	bool bServerInitialized_Day2 = false;
