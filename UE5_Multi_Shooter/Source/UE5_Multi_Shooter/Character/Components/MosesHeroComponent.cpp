@@ -29,20 +29,6 @@ void UMosesHeroComponent::BeginPlay()
 	{
 		return;
 	}
-
-	// 카메라 컴포넌트를 찾아 현재 모드 결정 Delegate를 바인딩한다.
-	if (APawn* Pawn = Cast<APawn>(GetOwner()))
-	{
-		if (UMosesCameraComponent* CamComp = UMosesCameraComponent::FindCameraComponent(Pawn))
-		{
-			// Delegate가 비어 있으면 바인딩
-			if (!CamComp->DetermineCameraModeDelegate.IsBound())
-			{
-				CamComp->DetermineCameraModeDelegate.BindUObject(this, &ThisClass::DetermineCameraMode);
-				UE_LOG(LogMosesCamera, Log, TEXT("[Hero] Bind DetermineCameraModeDelegate OK Pawn=%s"), *GetNameSafe(Pawn));
-			}
-		}
-	}
 }
 
 bool UMosesHeroComponent::IsLocalPlayerPawn() const

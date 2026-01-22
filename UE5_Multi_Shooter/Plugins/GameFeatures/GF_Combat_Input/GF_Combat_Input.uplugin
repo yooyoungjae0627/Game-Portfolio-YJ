@@ -12,11 +12,17 @@
   "CanContainContent": true,
 
   "ExplicitlyLoaded": true,
-  "BuiltInInitialFeatureState": "Active",
+  "BuiltInInitialFeatureState": "Registered",
 
   "Plugins": [
-    { "Name": "GameFeatures", "Enabled": true },
-    { "Name": "EnhancedInput", "Enabled": true }
+    {
+      "Name": "GameFeatures",
+      "Enabled": true
+    },
+    {
+      "Name": "EnhancedInput",
+      "Enabled": true
+    }
   ],
 
   "Modules": [

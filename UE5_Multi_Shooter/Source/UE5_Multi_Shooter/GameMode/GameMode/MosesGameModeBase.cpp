@@ -305,37 +305,51 @@ void AMosesGameModeBase::HandleMatchAssignmentIfNotExpectingOne()
 	static const FPrimaryAssetType ExperienceType(TEXT("Experience"));
 
 	FPrimaryAssetId ExperienceId;
-	const FString MapName = GetWorld() ? GetWorld()->GetMapName() : TEXT("WorldNone");
+	const FString FullMapName = GetWorld() ? GetWorld()->GetMapName() : TEXT("WorldNone");
 
-	// 1) 옵션으로 Experience 지정 가능: ?Experience=Exp_Lobby (또는 Exp_Match)
+	// 1) 옵션 지정 우선
 	if (UGameplayStatics::HasOption(OptionsString, TEXT("Experience")))
 	{
 		const FString ExperienceFromOptions = UGameplayStatics::ParseOption(OptionsString, TEXT("Experience"));
 		ExperienceId = FPrimaryAssetId(ExperienceType, FName(*ExperienceFromOptions));
 
 		UE_LOG(LogMosesExp, Warning, TEXT("[EXP][Pick] FromOptions Experience=%s (Map=%s)"),
-			*ExperienceId.ToString(), *MapName);
+			*ExperienceId.ToString(), *FullMapName);
 	}
 
-	// 2) 옵션이 없으면 맵 이름으로 Start/Lobby/Match 판단해서 기본값 선택
-	if (ExperienceId.IsValid() == false)
+	// 2) 없으면 맵 이름으로 확정 매핑
+	if (!ExperienceId.IsValid())
 	{
-		// PIE/경로 오염 방지: MapName을 "짧은 이름"으로 정규화해서 판정한다.
-		const FString FullMapName = GetWorld() ? GetWorld()->GetMapName() : FString();
-		FString Normalized = FPackageName::GetShortName(FullMapName).ToLower();
+		const FString MapShort = FPackageName::GetShortName(FullMapName);
 
-		// PIE Prefix 제거(여러 인덱스 대응)
+		// PIE prefix 제거 (범용)
+		FString Normalized = MapShort;
+		Normalized = Normalized.ToLower();
 		Normalized.RemoveFromStart(TEXT("uedpie_0_"));
 		Normalized.RemoveFromStart(TEXT("uedpie_1_"));
 		Normalized.RemoveFromStart(TEXT("uedpie_2_"));
 
-		const bool bIsStartLike = Normalized.Contains(TEXT("start"));
-		const bool bIsLobbyLike = Normalized.Contains(TEXT("lobby"));
+		FName DefaultExpName = NAME_None;
 
-		const FName DefaultExpName =
-			bIsStartLike ? FName(TEXT("Exp_Start")) :
-			bIsLobbyLike ? FName(TEXT("Exp_Lobby")) :
-			FName(TEXT("Exp_Match"));
+		// ✅ "Contains" 대신 명시적 매핑 추천
+		if (Normalized == TEXT("startgamelevel"))
+		{
+			DefaultExpName = TEXT("Exp_Start");
+		}
+		else if (Normalized == TEXT("lobbylevel"))
+		{
+			DefaultExpName = TEXT("Exp_Lobby");
+		}
+		else if (Normalized == TEXT("matchlevel"))
+		{
+			// ✅ 네 실제 에셋 이름으로!
+			DefaultExpName = TEXT("Exp_Match_Warmup");
+		}
+		else
+		{
+			// ✅ 안전한 최후 fallback도 "실존 에셋"로
+			DefaultExpName = TEXT("Exp_Start");
+		}
 
 		ExperienceId = FPrimaryAssetId(ExperienceType, DefaultExpName);
 
@@ -344,9 +358,9 @@ void AMosesGameModeBase::HandleMatchAssignmentIfNotExpectingOne()
 	}
 
 	check(ExperienceId.IsValid());
-
 	OnMatchAssignmentGiven(ExperienceId);
 }
+
 
 
 bool AMosesGameModeBase::IsExperienceLoaded() const

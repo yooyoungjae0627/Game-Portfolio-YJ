@@ -94,6 +94,63 @@ const UMosesExperienceDefinition* UMosesExperienceManagerComponent::GetCurrentEx
 	return CurrentExperience;
 }
 
+UMosesExperienceDefinition* UMosesExperienceManagerComponent::ResolveAndLoadExperienceDefinition_Debug(const FPrimaryAssetId& ExperienceId) const
+{
+	// ------------------------------------------------------------
+		// [중요] 이 함수는 "Travel 옵션은 정상인데 ExperienceDefinition null"을
+		//        1초만에 원인 분리하기 위한 함수다.
+		//
+		// 케이스 분기:
+		// 1) Path가 비어있다(Empty) -> AssetManager에 Type/Scan 등록이 안 됨(= ini/타입 불일치)
+		// 2) Path는 있는데 Load가 null -> 마운트 타이밍(GF 미마운트), Redirector/중복 ID 가능성
+		// ------------------------------------------------------------
+
+	if (!ExperienceId.IsValid())
+	{
+		UE_LOG(LogMosesExp, Error, TEXT("[EXP][DBG] Invalid ExperienceId"));
+		return nullptr;
+	}
+
+	UAssetManager& AM = UAssetManager::Get();
+
+	// (1) PrimaryAssetId -> SoftObjectPath Resolve
+	const FSoftObjectPath ResolvedPath = AM.GetPrimaryAssetPath(ExperienceId);
+
+	UE_LOG(LogMosesExp, Warning, TEXT("[EXP][DBG] Resolve Id=%s Type=%s Name=%s Path=%s"),
+		*ExperienceId.ToString(),
+		*ExperienceId.PrimaryAssetType.ToString(),
+		*ExperienceId.PrimaryAssetName.ToString(),
+		*ResolvedPath.ToString());
+
+	if (!ResolvedPath.IsValid())
+	{
+		UE_LOG(LogMosesExp, Error,
+			TEXT("[EXP][DBG][FAIL] PrimaryAssetPath EMPTY -> AssetManager Scan/Type mismatch likely. Id=%s (Type must match ini PrimaryAssetTypesToScan)"),
+			*ExperienceId.ToString());
+		return nullptr;
+	}
+
+	// (2) SoftObjectPath -> TryLoad
+	UObject* LoadedObj = ResolvedPath.TryLoad();
+	UMosesExperienceDefinition* LoadedExp = Cast<UMosesExperienceDefinition>(LoadedObj);
+
+	UE_LOG(LogMosesExp, Warning, TEXT("[EXP][DBG] LoadResult Id=%s Obj=%s Class=%s CastToExp=%s"),
+		*ExperienceId.ToString(),
+		*GetNameSafe(LoadedObj),
+		LoadedObj ? *LoadedObj->GetClass()->GetName() : TEXT("None"),
+		*GetNameSafe(LoadedExp));
+
+	if (!LoadedExp)
+	{
+		UE_LOG(LogMosesExp, Error,
+			TEXT("[EXP][DBG][FAIL] TryLoad returned null or wrong class. (GF mount timing / redirector / duplicate PrimaryAssetID) Id=%s Path=%s"),
+			*ExperienceId.ToString(),
+			*ResolvedPath.ToString());
+	}
+
+	return LoadedExp;
+}
+
 void UMosesExperienceManagerComponent::OnRep_CurrentExperienceId()
 {
 	if (!CurrentExperienceId.IsValid())
@@ -120,6 +177,15 @@ void UMosesExperienceManagerComponent::OnRep_CurrentExperienceId()
 	}
 
 	PendingExperienceId = CurrentExperienceId;
+
+	// - "ExperienceDefinition null"의 원인이
+	//   (1) AssetManager 타입/스캔 문제인지(Path Empty)
+	//   (2) GF 마운트 타이밍/리다이렉트 문제인지(Path OK but Load null)
+	//   를 1초만에 분리한다.
+#if !UE_BUILD_SHIPPING
+	ResolveAndLoadExperienceDefinition_Debug(PendingExperienceId);
+#endif
+
 	StartLoadExperienceAssets();
 }
 

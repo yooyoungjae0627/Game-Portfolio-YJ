@@ -152,7 +152,6 @@ protected:
 
 protected:
 	virtual void OnRep_Pawn() override;           // Pawn 복제 도착 훅(클라 핵심)
-	virtual void BeginPlayingState() override;    // [플레이 상태 진입 훅
 
 	/*====================================================
 	= Replication

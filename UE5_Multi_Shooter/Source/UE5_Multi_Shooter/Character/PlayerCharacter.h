@@ -43,9 +43,6 @@ protected:
 	virtual void SetupPlayerInputComponent(UInputComponent* PlayerInputComponent) override;
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 
-	// MosesCameraComponent가 실제 뷰를 제공하도록 강제
-	virtual void CalcCamera(float DeltaTime, FMinimalViewInfo& OutResult) override;
-
 	/**
 	 * 클라이언트에서 Controller가 나중에 복제되어 붙는 경우 대응
 	 * (SeamlessTravel / Replication 타이밍 이슈)

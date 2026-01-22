@@ -942,29 +942,6 @@ void AMosesPlayerController::Server_SetSelectedCharacterId_Implementation(int32 
 		SafeId, *GetNameSafe(this), *GetNameSafe(PS));
 }
 
-// =========================================================
-// [ADD] MosesPlayerController.cpp - 함수 전문만
-// =========================================================
-
-void AMosesPlayerController::BeginPlayingState()
-{
-	Super::BeginPlayingState();
-
-	if (!IsLocalController())
-	{
-		return;
-	}
-
-	/**
-	 * 개발자 주석:
-	 * - BeginPlay/ClientRestart/OnPossess는 SeamlessTravel / RestartPlayer 타이밍에서
-	 *   "Pawn이 아직 없는 상태"로 호출될 수 있다.
-	 * - BeginPlayingState는 로컬 플레이어가 실제로 플레이 상태로 들어가는 비교적 안정 타이밍이므로
-	 *   여기서 한 번 더 "매치 카메라 정책"을 강제한다.
-	 */
-	ApplyMatchCameraPolicy_LocalOnly(TEXT("BeginPlayingState"));
-}
-
 void AMosesPlayerController::OnRep_Pawn()
 {
 	Super::OnRep_Pawn();

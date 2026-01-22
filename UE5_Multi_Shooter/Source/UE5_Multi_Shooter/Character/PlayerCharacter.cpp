@@ -97,21 +97,6 @@ void APlayerCharacter::PossessedBy(AController* NewController)
 	}
 }
 
-void APlayerCharacter::CalcCamera(float DeltaTime, FMinimalViewInfo& OutResult)
-{
-	// Super는 기본적으로 ActorLocation 기준 카메라가 나올 수 있다.
-	// 우리는 MosesCameraComponent가 있으면 그 값을 우선한다.
-	if (MosesCameraComponent)
-	{
-		// [ADD] UMosesCameraComponent가 "카메라 뷰를 계산하는 함수"를 제공해야 함.
-		// 아래는 전형적인 패턴 예시:
-		MosesCameraComponent->GetCameraView(DeltaTime, OutResult); // (UMosesCameraComponent가 UCameraComponent면 존재)
-		return;
-	}
-
-	Super::CalcCamera(DeltaTime, OutResult);
-}
-
 bool APlayerCharacter::IsSprinting() const
 {
 	// 로컬은 즉시 반응(예측), 원격은 서버 복제값

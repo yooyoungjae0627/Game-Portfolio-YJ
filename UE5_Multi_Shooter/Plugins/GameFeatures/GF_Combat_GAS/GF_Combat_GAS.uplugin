@@ -11,9 +11,12 @@
   "IsExperimentalVersion": false,
   "Installed": false,
   "ExplicitlyLoaded": true,
-  "BuiltInInitialFeatureState": "Active",
+  "BuiltInInitialFeatureState": "Registered",
   "Plugins": [
-    { "Name": "GameFeatures", "Enabled": true }
+    {
+      "Name": "GameFeatures",
+      "Enabled": true
+    }
   ],
   "Modules": [
     {

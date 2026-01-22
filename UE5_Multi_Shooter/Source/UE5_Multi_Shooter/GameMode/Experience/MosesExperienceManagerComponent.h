@@ -70,6 +70,14 @@ public:
 
 	const UMosesExperienceDefinition* GetCurrentExperienceChecked() const;
 
+	// ================================
+	// [DEV] Experience Resolve/Load Debug Helper
+	// - PrimaryAssetId("Experience:Exp_Match_Warmup")를 AssetManager로 해석하고
+	// - SoftObjectPath를 TryLoad해서 실제 ExperienceDefinition 로드 성공/실패를 로그로 증명한다.
+	// ================================
+private:
+	class UMosesExperienceDefinition* ResolveAndLoadExperienceDefinition_Debug(const FPrimaryAssetId& ExperienceId) const;
+
 public:
 	/** Experience READY 이벤트(외부가 구독) */
 	FOnMosesExperienceLoaded OnExperienceLoaded;

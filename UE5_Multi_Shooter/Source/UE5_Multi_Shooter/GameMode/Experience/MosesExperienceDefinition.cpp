@@ -9,7 +9,7 @@ FPrimaryAssetId UMosesExperienceDefinition::GetPrimaryAssetId() const
 {
 	// PrimaryAssetType 이름은 프로젝트 정책에 맞춰 고정.
 	// (AssetManager 스캔/로딩에 사용)
-	static const FPrimaryAssetType AssetType(TEXT("MosesExperience"));
+	static const FPrimaryAssetType AssetType(TEXT("Experience"));
 	return FPrimaryAssetId(AssetType, GetFName());
 }
 
