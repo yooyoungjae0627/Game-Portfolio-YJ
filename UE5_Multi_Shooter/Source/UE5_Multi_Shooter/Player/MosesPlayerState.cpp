@@ -22,6 +22,7 @@ AMosesPlayerState::AMosesPlayerState(const FObjectInitializer& ObjectInitializer
 	MosesAbilitySystemComponent->SetReplicationMode(EGameplayEffectReplicationMode::Mixed);
 
 	AttributeSet = CreateDefaultSubobject<UMosesAttributeSet>(TEXT("MosesAttributeSet"));
+
 	CombatComponent = CreateDefaultSubobject<UMosesCombatComponent>(TEXT("MosesCombatComponent"));
 }
 
@@ -29,6 +30,7 @@ void AMosesPlayerState::PostInitializeComponents()
 {
 	Super::PostInitializeComponents();
 
+	// Day2: Combat 초기값은 서버에서만 확정.
 	if (HasAuthority() && CombatComponent)
 	{
 		CombatComponent->Server_EnsureInitialized_Day2();
@@ -69,7 +71,7 @@ void AMosesPlayerState::CopyProperties(APlayerState* NewPlayerState)
 	NewPS->RoomId = RoomId;
 	NewPS->bIsRoomHost = bIsRoomHost;
 	NewPS->PawnData = PawnData;
-	NewPS->Deaths = Deaths; 
+	NewPS->Deaths = Deaths;
 }
 
 void AMosesPlayerState::OverrideWith(APlayerState* OldPlayerState)
@@ -90,10 +92,10 @@ void AMosesPlayerState::OverrideWith(APlayerState* OldPlayerState)
 	RoomId = OldPS->RoomId;
 	bIsRoomHost = OldPS->bIsRoomHost;
 	PawnData = OldPS->PawnData;
-	Deaths = OldPS->Deaths; 
+	Deaths = OldPS->Deaths;
 }
 
-void AMosesPlayerState::OnRep_Score() 
+void AMosesPlayerState::OnRep_Score()
 {
 	Super::OnRep_Score();
 	BroadcastScore();
@@ -136,11 +138,11 @@ void AMosesPlayerState::TryInitASC(AActor* InAvatarActor)
 		MosesAbilitySystemComponent->SetNumericAttributeBase(UMosesAttributeSet::GetShieldAttribute(), 100.f);
 	}
 
-	BindASCAttributeDelegates(); 
-	BroadcastVitals_Initial();   
-	BroadcastScore();            
-	BroadcastDeaths();           
-	BroadcastAmmoAndGrenade();   
+	BindASCAttributeDelegates();
+	BroadcastVitals_Initial();
+	BroadcastScore();
+	BroadcastDeaths();
+	BroadcastAmmoAndGrenade();
 }
 
 void AMosesPlayerState::EnsurePersistentId_Server()
@@ -234,7 +236,7 @@ void AMosesPlayerState::ServerSetPlayerNickName(const FString& InNickName)
 	NotifyLobbyPlayerStateChanged_Local(TEXT("ServerSetPlayerNickName"));
 }
 
-void AMosesPlayerState::ServerAddDeath() 
+void AMosesPlayerState::ServerAddDeath()
 {
 	check(HasAuthority());
 	Deaths++;
@@ -299,7 +301,7 @@ void AMosesPlayerState::OnRep_PlayerNickName()
 	NotifyLobbyPlayerStateChanged_Local(TEXT("OnRep_PlayerNickName"));
 }
 
-void AMosesPlayerState::OnRep_Deaths() 
+void AMosesPlayerState::OnRep_Deaths()
 {
 	BroadcastDeaths();
 }
@@ -307,15 +309,17 @@ void AMosesPlayerState::OnRep_Deaths()
 void AMosesPlayerState::BroadcastSelectedCharacterChanged(const TCHAR* Reason)
 {
 	const int32 NewId = SelectedCharacterId;
+
 	OnSelectedCharacterChangedNative.Broadcast(NewId);
 	OnSelectedCharacterChangedBP.Broadcast(NewId);
 
-	UE_LOG(LogMosesSpawn, Verbose, TEXT("[PS] SelectedCharacterChanged Reason=%s Id=%d"),
+	UE_LOG(LogMosesPlayer, Verbose, TEXT("[PS] SelectedCharacterChanged Reason=%s Id=%d"),
 		Reason ? Reason : TEXT("None"), NewId);
 }
 
 void AMosesPlayerState::NotifyLobbyPlayerStateChanged_Local(const TCHAR* Reason) const
 {
+	// PlayerState의 Owner는 보통 PlayerController가 맞지만, 안전하게 검사한다.
 	APlayerController* PC = Cast<APlayerController>(GetOwner());
 	if (!PC || !PC->IsLocalController())
 	{
@@ -334,7 +338,7 @@ void AMosesPlayerState::NotifyLobbyPlayerStateChanged_Local(const TCHAR* Reason)
 		return;
 	}
 
-	UE_LOG(LogMosesSpawn, Verbose, TEXT("[LPS][NotifyFromPS] Reason=%s PS=%s"),
+	UE_LOG(LogMosesPlayer, Verbose, TEXT("[LPS][NotifyFromPS] Reason=%s PS=%s"),
 		Reason ? Reason : TEXT("None"),
 		*GetNameSafe(this));
 
@@ -356,12 +360,12 @@ void AMosesPlayerState::BindCombatDelegatesOnce()
 
 void AMosesPlayerState::HandleCombatDataChanged_BP(FString Reason)
 {
-	// BP용 이벤트가 필요하면 여기서 처리 가능(현재는 Native가 HUD용)
+	// BP로 처리할 게 있으면 여기서 확장 가능 (현재는 Native 경유로 HUD 브릿지 처리)
 }
 
 void AMosesPlayerState::HandleCombatDataChanged_Native(const TCHAR* Reason)
 {
-	// [ADD] Combat 변경 -> HUD 브릿지
+	// Combat 변경 -> HUD 브릿지
 	BroadcastAmmoAndGrenade();
 }
 
@@ -378,13 +382,13 @@ void AMosesPlayerState::BroadcastAmmoAndGrenade()
 		return;
 	}
 
-	// [정책] 아직 "현재 무기" 개념이 없으므로 Rifle(0)로 표시 (Day2 완료 후 확장)
+	// [정책] 현재 무기 개념이 없으므로 Rifle(0) 기준으로 표시 (Day2 완료 후 확장)
 	{
 		const FAmmoState& Rifle = AmmoStates[0];
 		OnAmmoChanged.Broadcast(Rifle.MagAmmo, Rifle.ReserveAmmo);
 	}
 
-	// Grenade는 enum 3번(ReserveAmmo를 "보유 개수"로 사용)
+	// Grenade는 enum 3번, ReserveAmmo를 보유 개수로 사용 중인 정책 유지
 	if (AmmoStates.Num() > 3)
 	{
 		const FAmmoState& Grenade = AmmoStates[3];
@@ -392,18 +396,18 @@ void AMosesPlayerState::BroadcastAmmoAndGrenade()
 	}
 }
 
-void AMosesPlayerState::BroadcastScore() 
+void AMosesPlayerState::BroadcastScore()
 {
 	const int32 IntScore = FMath::RoundToInt(GetScore());
 	OnScoreChanged.Broadcast(IntScore);
 }
 
-void AMosesPlayerState::BroadcastDeaths() 
+void AMosesPlayerState::BroadcastDeaths()
 {
 	OnDeathsChanged.Broadcast(Deaths);
 }
 
-void AMosesPlayerState::BindASCAttributeDelegates() 
+void AMosesPlayerState::BindASCAttributeDelegates()
 {
 	if (bASCDelegatesBound || !MosesAbilitySystemComponent)
 	{
@@ -427,7 +431,7 @@ void AMosesPlayerState::BindASCAttributeDelegates()
 	UE_LOG(LogMosesGAS, Verbose, TEXT("[GAS][PS] Bound AttributeChange delegates PS=%s"), *GetNameSafe(this));
 }
 
-void AMosesPlayerState::BroadcastVitals_Initial() 
+void AMosesPlayerState::BroadcastVitals_Initial()
 {
 	if (!MosesAbilitySystemComponent)
 	{
@@ -454,7 +458,7 @@ void AMosesPlayerState::HandleHealthChanged_Internal(const FOnAttributeChangeDat
 	OnHealthChanged.Broadcast(Cur, Max);
 }
 
-void AMosesPlayerState::HandleMaxHealthChanged_Internal(const FOnAttributeChangeData& Data) 
+void AMosesPlayerState::HandleMaxHealthChanged_Internal(const FOnAttributeChangeData& Data)
 {
 	const float Max = Data.NewValue;
 	const float Cur = MosesAbilitySystemComponent
@@ -464,7 +468,7 @@ void AMosesPlayerState::HandleMaxHealthChanged_Internal(const FOnAttributeChange
 	OnHealthChanged.Broadcast(Cur, Max);
 }
 
-void AMosesPlayerState::HandleShieldChanged_Internal(const FOnAttributeChangeData& Data) 
+void AMosesPlayerState::HandleShieldChanged_Internal(const FOnAttributeChangeData& Data)
 {
 	const float Cur = Data.NewValue;
 	const float Max = MosesAbilitySystemComponent
@@ -474,7 +478,7 @@ void AMosesPlayerState::HandleShieldChanged_Internal(const FOnAttributeChangeDat
 	OnShieldChanged.Broadcast(Cur, Max);
 }
 
-void AMosesPlayerState::HandleMaxShieldChanged_Internal(const FOnAttributeChangeData& Data) 
+void AMosesPlayerState::HandleMaxShieldChanged_Internal(const FOnAttributeChangeData& Data)
 {
 	const float Max = Data.NewValue;
 	const float Cur = MosesAbilitySystemComponent

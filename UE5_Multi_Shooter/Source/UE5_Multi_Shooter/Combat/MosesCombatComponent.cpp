@@ -1,8 +1,4 @@
-﻿// ============================================================================
-// MosesCombatComponent.cpp
-// ============================================================================
-
-#include "UE5_Multi_Shooter/Combat/MosesCombatComponent.h"
+﻿#include "UE5_Multi_Shooter/Combat/MosesCombatComponent.h"
 
 #include "Net/UnrealNetwork.h"
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
@@ -13,19 +9,18 @@ UMosesCombatComponent::UMosesCombatComponent(const FObjectInitializer& ObjectIni
 	PrimaryComponentTick.bCanEverTick = false;
 	SetIsReplicatedByDefault(true);
 
-	EnsureArraysSized(); // [ADD] 배열 크기 보장(서버/클라 모두)
+	EnsureArraysSized();
 }
 
 void UMosesCombatComponent::BeginPlay()
 {
 	Super::BeginPlay();
 
-	// 서버에서 Day2 기본값 확정(SSOT)
 	if (AActor* Owner = GetOwner())
 	{
 		if (Owner->HasAuthority())
 		{
-			Server_EnsureInitialized_Day2(); // [ADD]
+			Server_EnsureInitialized_Day2();
 		}
 	}
 }
@@ -52,7 +47,6 @@ void UMosesCombatComponent::Server_EnsureInitialized_Day2()
 		const int32 PistolIdx = WeaponTypeToIndex(EMosesWeaponType::Pistol);
 		AmmoStates[PistolIdx] = FAmmoState(DefaultPistolMag, DefaultPistolReserve, DefaultPistolMaxMag, DefaultPistolMaxReserve);
 
-		// Melee/Grenade는 프로젝트 정책에 맞게 채우면 됨(일단 0)
 		const int32 MeleeIdx = WeaponTypeToIndex(EMosesWeaponType::Melee);
 		AmmoStates[MeleeIdx] = FAmmoState(0, 0, 0, 0);
 
@@ -68,16 +62,14 @@ void UMosesCombatComponent::Server_EnsureInitialized_Day2()
 		WeaponSlots[WeaponTypeToIndex(EMosesWeaponType::Pistol)].WeaponType = EMosesWeaponType::Pistol;
 		WeaponSlots[WeaponTypeToIndex(EMosesWeaponType::Melee)].WeaponType = EMosesWeaponType::Melee;
 		WeaponSlots[WeaponTypeToIndex(EMosesWeaponType::Grenade)].WeaponType = EMosesWeaponType::Grenade;
-
-		// WeaponId 기본값은 0으로 되어있던데(네 구조), “미장착”이면 0 유지 or INDEX_NONE로 바꿔도 됨.
 	}
 
 	bServerInitialized_Day2 = true;
 
-	ForceReplication(); // [FIX] 기존 ForceReplication() 식별자 에러 해결
-	UE_LOG(LogMosesPlayer, Warning, TEXT("[Combat][SV] Day2 Defaults Initialized Owner=%s"), *GetNameSafe(Owner));
+	ForceReplication();
+	UE_LOG(LogMosesCombat, Warning, TEXT("[Combat][SV] Day2 Defaults Initialized Owner=%s"), *GetNameSafe(Owner));
 
-	BroadcastCombatDataChanged(TEXT("ServerInit_Day2")); // 리슨 서버 UI/로그 즉시 갱신
+	BroadcastCombatDataChanged(TEXT("ServerInit_Day2"));
 }
 
 void UMosesCombatComponent::Server_SetAmmoState(EMosesWeaponType WeaponType, const FAmmoState& NewState)
@@ -96,7 +88,6 @@ void UMosesCombatComponent::Server_SetAmmoState(EMosesWeaponType WeaponType, con
 	FAmmoState& State = AmmoStates[Index];
 	State = NewState;
 
-	// 안전 클램프
 	State.MaxMag = FMath::Max(0, State.MaxMag);
 	State.MaxReserve = FMath::Max(0, State.MaxReserve);
 	State.MagAmmo = FMath::Clamp(State.MagAmmo, 0, State.MaxMag);
@@ -104,7 +95,7 @@ void UMosesCombatComponent::Server_SetAmmoState(EMosesWeaponType WeaponType, con
 
 	ForceReplication();
 
-	UE_LOG(LogMosesPlayer, Log, TEXT("[Combat][SV] SetAmmoState Type=%s Mag=%d/%d Res=%d/%d Owner=%s"),
+	UE_LOG(LogMosesCombat, Log, TEXT("[Combat][SV] SetAmmoState Type=%s Mag=%d/%d Res=%d/%d Owner=%s"),
 		*UEnum::GetValueAsString(WeaponType),
 		State.MagAmmo, State.MaxMag,
 		State.ReserveAmmo, State.MaxReserve,
@@ -174,11 +165,11 @@ void UMosesCombatComponent::Server_SetWeaponSlot(EMosesWeaponType SlotType, cons
 	}
 
 	WeaponSlots[Index] = NewState;
-	WeaponSlots[Index].WeaponType = SlotType; // [ADD] 서버에서 강제 일관성
+	WeaponSlots[Index].WeaponType = SlotType;
 
 	ForceReplication();
 
-	UE_LOG(LogMosesPlayer, Log, TEXT("[Combat][SV] SetSlot Slot=%s WeaponId=%d Owner=%s"),
+	UE_LOG(LogMosesCombat, Log, TEXT("[Combat][SV] SetSlot Slot=%s WeaponId=%d Owner=%s"),
 		*UEnum::GetValueAsString(SlotType),
 		WeaponSlots[Index].WeaponId,
 		*GetNameSafe(Owner));
@@ -208,15 +199,14 @@ void UMosesCombatComponent::BroadcastCombatDataChanged(const TCHAR* Reason)
 	const FString ReasonStr = Reason ? FString(Reason) : FString(TEXT("Unknown"));
 	OnCombatDataChangedBP.Broadcast(ReasonStr);
 
-	UE_LOG(LogMosesPlayer, Verbose, TEXT("[Combat] DataChanged Reason=%s Owner=%s"),
+	UE_LOG(LogMosesCombat, Verbose, TEXT("[Combat] DataChanged Reason=%s Owner=%s"),
 		*ReasonStr, *GetNameSafe(GetOwner()));
 }
 
 void UMosesCombatComponent::EnsureArraysSized()
 {
-	// EMosesWeaponType 은 Max 가 없으니, 슬롯 수를 “정의된 개수”로 맞춘다.
 	// 현재 enum: Rifle/Pistol/Melee/Grenade (4개)
-	constexpr int32 WeaponTypeCount = 4; // [ADD] 필요하면 여기만 수정
+	constexpr int32 WeaponTypeCount = 4;
 
 	if (AmmoStates.Num() != WeaponTypeCount)
 	{
@@ -231,15 +221,12 @@ void UMosesCombatComponent::EnsureArraysSized()
 
 int32 UMosesCombatComponent::WeaponTypeToIndex(EMosesWeaponType WeaponType) const
 {
-	// 현재 enum 순서가 0..3 이어야 한다는 전제.
-	// (Rifle=0, Pistol=1, Melee=2, Grenade=3)
 	return static_cast<int32>(WeaponType);
 }
 
 void UMosesCombatComponent::ForceReplication()
 {
-	// [ADD] UActorComponent에는 ForceReplication()이 없음.
-	// 가장 간단하고 안전한 방식: Owner의 NetUpdate를 강제로 올려서 Replication flush를 유도.
+	// UActorComponent에는 ForceReplication()이 없으므로 Owner의 ForceNetUpdate를 사용한다.
 	if (AActor* Owner = GetOwner())
 	{
 		Owner->ForceNetUpdate();

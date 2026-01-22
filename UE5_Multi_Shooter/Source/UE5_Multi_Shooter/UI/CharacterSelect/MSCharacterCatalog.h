@@ -1,10 +1,11 @@
 ﻿#pragma once
 
+#include "CoreMinimal.h"
 #include "Engine/DataAsset.h"
 #include "UObject/SoftObjectPtr.h"
 #include "MSCharacterCatalog.generated.h"
 
-class AMosesCharacter;
+class APawn;
 
 /**
  * FMSCharacterEntry
@@ -13,9 +14,13 @@ class AMosesCharacter;
  * - 로비: CharacterId 기반으로 선택/프리뷰
  * - 매치: SelectedCharacterId(1-base) 기반으로 PawnClass를 스폰
  *
- * [중요]
- * - PawnClass는 AMosesCharacter 파생 BP(캐릭터 2종)를 지정해야 한다.
- * - SoftClassPtr를 사용하면 패키지 로딩/참조 의존을 완화할 수 있다.
+ * [DAY2/구조 원칙]
+ * - Catalog는 "PawnClass"만 안다. (AMosesCharacter에 의존하지 않는다)
+ * - GameMode/Experience가 특정 캐릭터 구현체에 강결합되지 않게 한다.
+ *
+ * [주의]
+ * - 실제로는 AMosesCharacter 파생 BP를 넣어도 된다.
+ *   다만 타입은 APawn으로 둬서 의존성을 끊는다.
  */
 USTRUCT(BlueprintType)
 struct FMSCharacterEntry
@@ -27,13 +32,20 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
 	FName CharacterId;
 
-	/** ✅ MatchLevel에서 실제로 스폰할 캐릭터 Pawn BP (AMosesCharacter 파생) */
+	/** MatchLevel에서 실제로 스폰할 Pawn BP (대부분 AMosesCharacter 파생 BP가 들어오게 됨) */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
-	TSoftClassPtr<AMosesCharacter> PawnClass;
+	TSoftClassPtr<APawn> PawnClass;
 };
 
 /**
  * UMSCharacterCatalog (DataAsset)
+ *
+ * [역할]
+ * - 캐릭터 선택 -> PawnClass 매핑 데이터
+ *
+ * [정책]
+ * - SelectedCharacterId는 1-base(1..N)
+ * - Entries 배열은 0-base
  */
 UCLASS(BlueprintType)
 class UE5_MULTI_SHOOTER_API UMSCharacterCatalog : public UDataAsset
@@ -44,11 +56,8 @@ public:
 	/** CharacterId(FName)로 엔트리 조회: 로비 프리뷰/선택에 사용 */
 	bool FindById(FName InId, FMSCharacterEntry& OutEntry) const;
 
-	/**
-	 * SelectedCharacterId(1-base)로 엔트리 조회: 매치 스폰에 사용
-	 * - InSelectedId: 1..N
-	 */
-	bool FindByIndex(int32 InSelectedId, FMSCharacterEntry& OutEntry) const; // [FIX] 의미를 명확히: SelectedId(1-base)
+	/** SelectedCharacterId(1-base)로 엔트리 조회: 매치 스폰에 사용 */
+	bool FindByIndex(int32 InSelectedId, FMSCharacterEntry& OutEntry) const;
 
 	const TArray<FMSCharacterEntry>& GetEntries() const { return Entries; }
 

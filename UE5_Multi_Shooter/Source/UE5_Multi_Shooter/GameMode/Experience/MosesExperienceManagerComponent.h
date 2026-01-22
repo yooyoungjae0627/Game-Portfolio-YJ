@@ -1,6 +1,8 @@
 ﻿#pragma once
 
-#include "CoreMinimal.h"
+#include "Components/ActorComponent.h"
+#include "UObject/SoftObjectPtr.h"
+#include "UObject/SoftObjectPath.h"
 #include "Components/GameStateComponent.h"
 #include "UObject/PrimaryAssetId.h"                 // [MOD] PrimaryAssetId 안정 경로
 #include "Delegates/Delegate.h"                     // [ADD] DECLARE_DELEGATE_*
@@ -9,6 +11,7 @@
 #include "MosesExperienceManagerComponent.generated.h"
 
 class UMosesExperienceDefinition;
+class UAbilitySystemComponent;
 
 UENUM()
 enum class EMosesExperienceLoadState : uint8
@@ -97,6 +100,13 @@ private:
 	void DeactivatePreviouslyActivatedGameFeatures();
 
 	static FString MakeGameFeaturePluginURL(const FString& PluginName);
+
+private:
+	// ------------------------------------------------------------
+	// Server-side payload apply (GAS)
+	// ------------------------------------------------------------
+	void ApplyServerSideExperiencePayload();
+	void ApplyServerSideAbilitySet(const FSoftObjectPath& AbilitySetPath);
 
 private:
 	// ----------------------------

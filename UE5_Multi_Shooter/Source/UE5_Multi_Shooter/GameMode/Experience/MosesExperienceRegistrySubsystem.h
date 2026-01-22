@@ -1,6 +1,5 @@
 #pragma once
 
-#include "CoreMinimal.h"
 #include "Subsystems/GameInstanceSubsystem.h"
 #include "UObject/SoftObjectPath.h"
 #include "MosesExperienceRegistrySubsystem.generated.h"
@@ -8,6 +7,7 @@
 class UUserWidget;
 class UInputMappingContext;
 class UMosesExperienceDefinition;
+class UMosesUserFacingExperience;
 
 /**
  * UMosesExperienceRegistrySubsystem
@@ -30,6 +30,8 @@ class UE5_MULTI_SHOOTER_API UMosesExperienceRegistrySubsystem : public UGameInst
 	GENERATED_BODY()
 
 public:
+	virtual void Initialize(FSubsystemCollectionBase& Collection) override;
+
 	// ----------------------------
 	// Registry API
 	// ----------------------------
@@ -47,6 +49,8 @@ public:
 
 	FSoftObjectPath GetAbilitySetPath() const { return AbilitySetPath; }
 
+	const TArray<TSoftObjectPtr<UMosesUserFacingExperience>>& GetAllUserFacingExperiences() const { return UserFacingExperiences; }
+
 private:
 	// ----------------------------
 	// Payload 저장(Soft 참조)
@@ -58,4 +62,11 @@ private:
 	int32 InputPriority = 100;
 
 	FSoftObjectPath AbilitySetPath;
+
+	/**
+	 * UserFacingExperiences
+	 * - 에디터에서 목록을 넣어두면 된다.
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "Moses|Registry")
+	TArray<TSoftObjectPtr<UMosesUserFacingExperience>> UserFacingExperiences;
 };

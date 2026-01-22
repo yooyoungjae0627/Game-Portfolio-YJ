@@ -1,23 +1,20 @@
-﻿// ============================================================================
-// MosesCombatComponent.h
-// ============================================================================
-
-#pragma once
+﻿#pragma once
 
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
-#include "MosesWeaponTypes.h" 
+#include "MosesWeaponTypes.h"
 #include "MosesCombatComponent.generated.h"
 
 // ---------------------------
 // Delegates (UI/HUD bind)
 // ---------------------------
-
 DECLARE_MULTICAST_DELEGATE_OneParam(FOnMosesCombatDataChangedNative, const TCHAR* /*Reason*/);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnMosesCombatDataChangedBP, FString, Reason);
 
 /**
  * UMosesCombatComponent
+ *
+ * [정책]
  * - PlayerState 소유 (SSOT)
  * - 서버에서만 초기값/변경 확정
  * - 클라는 RepNotify -> Delegate로 UI 갱신 (Tick 금지)
@@ -52,12 +49,12 @@ public:
 	// Server-only init / server authoritative setters
 	// (서버에서만 호출한다는 전제 - RPC 아님)
 	// ------------------------------------------------------------
-	void Server_EnsureInitialized_Day2(); // [ADD]
+	void Server_EnsureInitialized_Day2();
 
-	void Server_SetAmmoState(EMosesWeaponType WeaponType, const FAmmoState& NewState); // [ADD]
-	void Server_AddReserveAmmo(EMosesWeaponType WeaponType, int32 DeltaReserve);      // [ADD] Pickup_Ammo.cpp 에서 필요
-	void Server_AddMagAmmo(EMosesWeaponType WeaponType, int32 DeltaMag);              // [ADD] (선택) 필요하면 사용
-	void Server_SetWeaponSlot(EMosesWeaponType SlotType, const FWeaponSlotState& NewState); // [ADD]
+	void Server_SetAmmoState(EMosesWeaponType WeaponType, const FAmmoState& NewState);
+	void Server_AddReserveAmmo(EMosesWeaponType WeaponType, int32 DeltaReserve);
+	void Server_AddMagAmmo(EMosesWeaponType WeaponType, int32 DeltaMag);
+	void Server_SetWeaponSlot(EMosesWeaponType SlotType, const FWeaponSlotState& NewState);
 
 protected:
 	virtual void BeginPlay() override;
@@ -67,10 +64,10 @@ private:
 	// RepNotifies
 	// ------------------------------------------------------------
 	UFUNCTION()
-	void OnRep_AmmoStates(); 
-	
+	void OnRep_AmmoStates();
+
 	UFUNCTION()
-	void OnRep_WeaponSlots(); 
+	void OnRep_WeaponSlots();
 
 	UFUNCTION()
 	void OnRep_ServerInitialized_Day2();
@@ -79,11 +76,11 @@ private:
 	// ------------------------------------------------------------
 	// Internal helpers
 	// ------------------------------------------------------------
-	void BroadcastCombatDataChanged(const TCHAR* Reason); 
-	void EnsureArraysSized();                             
+	void BroadcastCombatDataChanged(const TCHAR* Reason);
+	void EnsureArraysSized();
 	int32 WeaponTypeToIndex(EMosesWeaponType WeaponType) const;
 
-	void ForceReplication(); // ForceReplication() 에러 해결용: 우리가 직접 구현
+	void ForceReplication();
 
 private:
 	// ------------------------------------------------------------
@@ -93,13 +90,13 @@ private:
 
 private:
 	// ------------------------------------------------------------
-	// Replicated data 
+	// Replicated data
 	// ------------------------------------------------------------
 	UPROPERTY(ReplicatedUsing = OnRep_AmmoStates)
-	TArray<FAmmoState> AmmoStates; // FAmmoState 사용
+	TArray<FAmmoState> AmmoStates;
 
 	UPROPERTY(ReplicatedUsing = OnRep_WeaponSlots)
-	TArray<FWeaponSlotState> WeaponSlots; // FWeaponSlotState 사용
+	TArray<FWeaponSlotState> WeaponSlots;
 
 	UPROPERTY(ReplicatedUsing = OnRep_ServerInitialized_Day2)
 	bool bServerInitialized_Day2 = false;

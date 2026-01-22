@@ -1,10 +1,16 @@
 ﻿#include "UE5_Multi_Shooter/GameMode/Experience/MosesExperienceDefinition.h"
 #include "UE5_Multi_Shooter/Character/Data/MosesPawnData.h" 
 
+UMosesExperienceDefinition::UMosesExperienceDefinition()
+{
+}
+
 FPrimaryAssetId UMosesExperienceDefinition::GetPrimaryAssetId() const
 {
-	static const FPrimaryAssetType Type(TEXT("Experience"));
-	return FPrimaryAssetId(Type, GetFName());
+	// PrimaryAssetType 이름은 프로젝트 정책에 맞춰 고정.
+	// (AssetManager 스캔/로딩에 사용)
+	static const FPrimaryAssetType AssetType(TEXT("MosesExperience"));
+	return FPrimaryAssetId(AssetType, GetFName());
 }
 
 const UMosesPawnData* UMosesExperienceDefinition::GetDefaultPawnDataLoaded() const // [ADD]

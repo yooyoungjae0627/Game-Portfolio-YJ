@@ -1,8 +1,12 @@
 #pragma once
 
-#include "CoreMinimal.h"
+#include "Engine/DataAsset.h"
+#include "UObject/SoftObjectPtr.h"
 #include "UObject/PrimaryAssetId.h"
+#include "UE5_Multi_Shooter/GameMode/Experience/MosesExperienceDefinition.h"
 #include "MosesUserFacingExperience.generated.h"
+
+class UMosesExperienceDefinition;
 
 /**
  * UMosesUserFacingExperience
@@ -11,9 +15,9 @@
  * - 로비 UI에서 유저가 고르는 “플레이 항목(카드)”
  * - “어느 맵을 열지” + “어느 Experience를 적용할지”만 들고 있는 데이터다.
  *
- * [중요]
- * - ExperienceID는 FPrimaryAssetId 전체(Type:Name)를 유지해야 안전하다.
- *   예) Experience:Exp_Lobby
+ * [주의]
+ * - "고정 Experience 1개”로도 충분하다.
+ * - 하지만 포폴 설득(확장성) 목적이면 이 구조가 깔끔하다.
  */
 UCLASS(BlueprintType)
 class UE5_MULTI_SHOOTER_API UMosesUserFacingExperience : public UPrimaryDataAsset
@@ -21,11 +25,15 @@ class UE5_MULTI_SHOOTER_API UMosesUserFacingExperience : public UPrimaryDataAsse
 	GENERATED_BODY()
 
 public:
-	/** 열고 싶은 맵 (Primary Asset: Map) */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "UserFacing")
-	FPrimaryAssetId MapID;
+	const FText& GetDisplayName() const { return DisplayName; }
+	UMosesExperienceDefinition* GetExperience() const { return Experience.Get(); }
+	TSoftObjectPtr<UMosesExperienceDefinition> GetExperiencePtr() const { return Experience; }
 
-	/** 적용할 Experience (Primary Asset Type: Experience) */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "UserFacing", meta = (AllowedTypes = "Experience"))
-	FPrimaryAssetId ExperienceID;
+private:
+	UPROPERTY(EditDefaultsOnly, Category = "Moses|UserFacing")
+	FText DisplayName;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Moses|UserFacing")
+	TSoftObjectPtr<UMosesExperienceDefinition> Experience;
+
 };

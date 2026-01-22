@@ -3,7 +3,7 @@
 #include "CoreMinimal.h"
 #include "AbilitySystemInterface.h"
 #include "GameFramework/PlayerState.h"
-#include "GameplayEffectTypes.h" 
+#include "GameplayEffectTypes.h"
 #include "MosesPlayerState.generated.h"
 
 class UAbilitySystemComponent;
@@ -20,7 +20,7 @@ DECLARE_MULTICAST_DELEGATE_OneParam(FOnMosesSelectedCharacterChangedNative, int3
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnMosesSelectedCharacterChangedBP, int32, NewId);
 
 // -------------------------
-// HUD delegates 
+// HUD delegates
 // -------------------------
 DECLARE_MULTICAST_DELEGATE_TwoParams(FOnMosesVitalChangedNative, float /*Current*/, float /*Max*/);
 DECLARE_MULTICAST_DELEGATE_TwoParams(FOnMosesAmmoChangedNative, int32 /*Mag*/, int32 /*Reserve*/);
@@ -56,7 +56,7 @@ public:
 	virtual void CopyProperties(APlayerState* NewPlayerState) override;
 	virtual void OverrideWith(APlayerState* OldPlayerState) override;
 
-	// Score는 기본 APlayerState::Score를 쓰고, Rep 시점에 브로드캐스트만 한다.  // [ADD]
+	// Score는 기본 APlayerState::Score를 쓰고, Rep 시점에 브로드캐스트만 한다.
 	virtual void OnRep_Score() override;
 
 	// ----------------------------
@@ -94,7 +94,7 @@ public:
 	FOnMosesSelectedCharacterChangedBP OnSelectedCharacterChangedBP;
 
 	// ----------------------------
-	// HUD delegates 
+	// HUD delegates
 	// ----------------------------
 	FOnMosesVitalChangedNative OnHealthChanged;
 	FOnMosesVitalChangedNative OnShieldChanged;
@@ -130,9 +130,9 @@ public:
 	void SetPawnData(const UMosesPawnData* InPawnData) { PawnData = InPawnData; }
 
 	// ----------------------------
-	// Deaths(Defeats)  
+	// Deaths(Defeats)
 	// ----------------------------
-	void ServerAddDeath(); // 서버에서만 호출
+	void ServerAddDeath();
 
 	// ----------------------------
 	// Debug
@@ -149,8 +149,6 @@ private:
 	UFUNCTION() void OnRep_SelectedCharacterId();
 	UFUNCTION() void OnRep_Room();
 	UFUNCTION() void OnRep_PlayerNickName();
-
-	// Deaths RepNotify 
 	UFUNCTION() void OnRep_Deaths();
 
 	// ----------------------------
@@ -160,7 +158,7 @@ private:
 	void NotifyLobbyPlayerStateChanged_Local(const TCHAR* Reason) const;
 
 	// ----------------------------
-	// Combat delegates (existing + HUD bridge) 
+	// Combat delegates -> HUD bridge
 	// ----------------------------
 	void BindCombatDelegatesOnce();
 
@@ -169,13 +167,12 @@ private:
 
 	void HandleCombatDataChanged_Native(const TCHAR* Reason);
 
-	// HUD bridge helpers  
 	void BroadcastAmmoAndGrenade();
 	void BroadcastScore();
 	void BroadcastDeaths();
 
 	// ----------------------------
-	// GAS attribute delegates -> HUD delegate bridge 
+	// GAS attribute delegates -> HUD bridge
 	// ----------------------------
 	void BindASCAttributeDelegates();
 	void BroadcastVitals_Initial();
@@ -210,7 +207,6 @@ private:
 	UPROPERTY(ReplicatedUsing = OnRep_PlayerNickName)
 	FString PlayerNickName;
 
-	// Defeats(Deaths)  
 	UPROPERTY(ReplicatedUsing = OnRep_Deaths)
 	int32 Deaths = 0;
 
@@ -247,6 +243,6 @@ private:
 	UPROPERTY(Transient)
 	bool bCombatDelegatesBound = false;
 
-	UPROPERTY(Transient) 
+	UPROPERTY(Transient)
 	bool bASCDelegatesBound = false;
 };

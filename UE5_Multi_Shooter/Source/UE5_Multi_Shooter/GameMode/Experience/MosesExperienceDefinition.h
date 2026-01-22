@@ -12,23 +12,25 @@ class UMosesPawnData;
 /**
  * UMosesExperienceDefinition
  *
- * [한 줄 역할]
- * - “이번 플레이에서 무엇을 켤지”를 적어둔 **데이터 설계도(DataAsset)**
+ * [정의]
+ * - 현재 “게임 단계(로비/매치 등)”에서 활성화되어야 하는 기능 세트를 묶는 DataAsset.
  *
- * [중요 원칙]
- * - 이 클래스는 "데이터"만 가진다.
- * - HUD 생성/입력 적용/Ability 부여 같은 "실제 적용"은 다른 레이어가 한다.
- *
- * [포트폴리오 관점]
- * - Warmup/Combat/Result처럼 페이즈가 바뀌면 Experience를 교체할 수 있다.
- * - Experience는 GF 목록 + PawnData + UI/Input/GAS Payload를 함께 정의한다.
+ * [원칙]
+ * - GameMode는 “흐름(이동/스폰 통제)”만 결정한다.
+ * - Experience는 “해당 단계에서 필요한 기능 세트”를 정의한다.
+ * - 실제 적용은:
+ *   - (클라) UI/IMC = ApplicatorSubsystem
+ *   - (서버) AbilitySet = ExperienceManagerComponent
  */
+
 UCLASS(BlueprintType)
 class UE5_MULTI_SHOOTER_API UMosesExperienceDefinition : public UPrimaryDataAsset
 {
 	GENERATED_BODY()
 
 public:
+	UMosesExperienceDefinition();
+
 	// ----------------------------
 	// UPrimaryDataAsset
 	// ----------------------------
@@ -37,6 +39,31 @@ public:
 #if WITH_EDITORONLY_DATA
 	virtual void UpdateAssetBundleData() override;
 #endif
+
+	// ---------------------------
+	// Read-only Accessors
+	// ---------------------------
+public:
+	const TArray<FString>& GetGameFeaturePluginURLs() const { return GameFeaturePluginURLs; }
+	const FSoftClassPath& GetHUDWidgetClassPath() const { return HUDWidgetClassPath; }
+	const FSoftObjectPath& GetInputMappingContextPath() const { return InputMappingContextPath; }
+	const FSoftObjectPath& GetAbilitySetPath() const { return AbilitySetPath; }
+
+public:
+	// ----------------------------
+	// Getter (외부는 읽기만)
+	// ----------------------------
+	const TArray<FString>& GetGameFeaturesToEnable() const { return GameFeaturesToEnable; }
+	TSoftObjectPtr<const UMosesPawnData> GetDefaultPawnData() const { return DefaultPawnData; }
+
+	TSoftClassPtr<UUserWidget> GetStartWidgetClass() const { return StartWidgetClass; }
+	TSoftClassPtr<UUserWidget> GetHUDWidgetClass() const { return HUDWidgetClass; }
+
+	TSoftObjectPtr<UInputMappingContext> GetInputMapping() const { return InputMapping; }
+	int32 GetInputPriority() const { return InputPriority; }
+
+	// 스폰 단계에서 바로 쓰기 위한 "동기 로드 포인터 Getter"
+	const UMosesPawnData* GetDefaultPawnDataLoaded() const;
 
 public:
 	// ============================================================
@@ -92,29 +119,35 @@ public:
 	int32 InputPriority = 100;
 
 	/**
-	 * AbilitySet 경로(SoftObjectPath)
-	 * - GAS가 이미 정리되어 있다면 “GF_Combat_GAS” 같은 GameFeature가 이 값을 보고 주입하도록 확장 가능
-	 * - 지금 단계에서는 Registry에 “경로 보관”까지만 해도 포트폴리오 가치가 충분하다.
+	 * GameFeaturePluginURLs
+	 * - GameFeature 플러그인을 “URL 형태”로 보관할 수 있다.
+	 * -“켜졌다/꺼졌다” 로그 증명만으로도 충분.
+	 * - 실제 로딩은 너 프로젝트 ExperienceManager/Registry 정책에 따라 확장 가능.
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "Moses|Experience")
+	TArray<FString> GameFeaturePluginURLs;
+
+	/**
+	 * HUDWidgetClassPath
+	 * - 적용(생성/AddToViewport)은 ApplicatorSubsystem가 담당한다.
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "Moses|UI")
+	FSoftClassPath HUDWidgetClassPath;
+
+	/**
+	 * InputMappingContextPath
+	 * - EnhancedInput IMC 경로
+	 * - 적용은 ApplicatorSubsystem가 담당한다.
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "Moses|Input")
+	FSoftObjectPath InputMappingContextPath;
+
+	/**
+	 * AbilitySetPath
+	 * - 서버에서 ASC에 부여할 AbilitySet DataAsset 경로
+	 * - 적용은 ExperienceManagerComponent가 담당한다.
 	 */
 	UPROPERTY(EditDefaultsOnly, Category = "Experience|PhasePayload|GAS")
 	FSoftObjectPath AbilitySetPath;
-
-public:
-	// ----------------------------
-	// Getter (외부는 읽기만)
-	// ----------------------------
-	const TArray<FString>& GetGameFeaturesToEnable() const { return GameFeaturesToEnable; }
-	TSoftObjectPtr<const UMosesPawnData> GetDefaultPawnData() const { return DefaultPawnData; }
-
-	TSoftClassPtr<UUserWidget> GetStartWidgetClass() const { return StartWidgetClass; }
-	TSoftClassPtr<UUserWidget> GetHUDWidgetClass() const { return HUDWidgetClass; }
-
-	TSoftObjectPtr<UInputMappingContext> GetInputMapping() const { return InputMapping; }
-	int32 GetInputPriority() const { return InputPriority; }
-
-	FSoftObjectPath GetAbilitySetPath() const { return AbilitySetPath; }
-
-	// 스폰 단계에서 바로 쓰기 위한 "동기 로드 포인터 Getter"
-	const UMosesPawnData* GetDefaultPawnDataLoaded() const; 
 
 };

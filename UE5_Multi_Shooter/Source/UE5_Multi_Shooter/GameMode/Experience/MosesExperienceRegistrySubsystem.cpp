@@ -2,6 +2,11 @@
 
 #include "UE5_Multi_Shooter/GameMode/Experience/MosesExperienceDefinition.h"
 
+void UMosesExperienceRegistrySubsystem::Initialize(FSubsystemCollectionBase& Collection)
+{
+	Super::Initialize(Collection);
+}
+
 void UMosesExperienceRegistrySubsystem::SetFromExperience(const UMosesExperienceDefinition* Experience)
 {
 	/**

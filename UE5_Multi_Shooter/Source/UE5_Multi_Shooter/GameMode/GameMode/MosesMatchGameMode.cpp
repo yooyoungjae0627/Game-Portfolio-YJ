@@ -1,7 +1,5 @@
-﻿
-#include "MosesMatchGameMode.h"
+﻿#include "UE5_Multi_Shooter/GameMode/GameMode/MosesMatchGameMode.h"
 
-#include "UE5_Multi_Shooter/Character/MosesCharacter.h"
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
 #include "UE5_Multi_Shooter/Player/MosesPlayerState.h"
 #include "UE5_Multi_Shooter/Player/MosesPlayerController.h"
@@ -12,7 +10,6 @@
 #include "TimerManager.h"
 #include "Kismet/GameplayStatics.h"
 #include "GameFramework/GameStateBase.h"
-#include "GameFramework/PlayerState.h"
 #include "GameFramework/PlayerController.h"
 #include "GameFramework/PlayerStart.h"
 
@@ -23,26 +20,19 @@ AMosesMatchGameMode::AMosesMatchGameMode()
 	PlayerStateClass = AMosesPlayerState::StaticClass();
 	PlayerControllerClass = AMosesPlayerController::StaticClass();
 
-	// [MOD] DefaultPawnClass를 하드 고정하지 않고,
-	//       GetDefaultPawnClassForController(SelectedId->Catalog) + SpawnDefaultPawnFor 오버라이드로 결정한다.
 	DefaultPawnClass = nullptr;
 	FallbackPawnClass = nullptr;
 
-	UE_LOG(LogMosesSpawn, Warning, TEXT("[MatchGM] DefaultPawnClass is NOT hard-fixed. Using SpawnDefaultPawnFor override."));
+	UE_LOG(LogMosesSpawn, Warning, TEXT("[MatchGM] DefaultPawnClass not fixed. Using GetDefaultPawnClassForController + SpawnDefaultPawnFor."));
 }
 
-// =========================================================
-// Engine
-// =========================================================
 void AMosesMatchGameMode::InitGame(const FString& MapName, const FString& Options, FString& ErrorMessage)
 {
-	// // [MOD] Match 레벨은 옵션에 Experience가 없으면 Exp_Match_Warmup로 강제
-	// [유지] Match 레벨은 옵션에 Experience가 없으면 Exp_Match로 강제
 	FString FinalOptions = Options;
 
 	if (!UGameplayStatics::HasOption(Options, TEXT("Experience")))
 	{
-		FinalOptions += TEXT("?Experience=Exp_Match_Warmup"); // [MOD]
+		FinalOptions += TEXT("?Experience=Exp_Match_Warmup");
 	}
 
 	Super::InitGame(MapName, FinalOptions, ErrorMessage);
@@ -63,15 +53,9 @@ void AMosesMatchGameMode::BeginPlay()
 	DumpAllDODPlayerStates(TEXT("MatchGM:BeginPlay"));
 	DumpPlayerStates(TEXT("[MatchGM][BeginPlay]"));
 
-	// [MOD] 여기서 수동 Spawn/Possess를 하지 않는다.
-	// 이유:
-	// - Base(GameModeBase)가 Experience READY 후 SpawnGate를 해제하면서
-	//   Super::HandleStartingNewPlayer → RestartPlayer → SpawnDefaultPawnAtTransform 흐름으로
-	//   "정석 스폰 파이프라인"을 이미 보장한다.
-	//
-	// 즉, BeginPlay/PostLogin에서 직접 Spawn하면 "중복 스폰" 위험이 생긴다.
+	// BeginPlay/PostLogin에서 수동 Spawn 금지.
+	// Base GM이 Experience READY 이후 SpawnGate를 통해 정석 스폰 파이프라인을 보장한다.
 
-	// (선택) 자동 로비 복귀 테스트 타이머는 기존 유지
 	if (AutoReturnToLobbySeconds > 0.f && HasAuthority())
 	{
 		GetWorldTimerManager().SetTimer(
@@ -99,9 +83,8 @@ void AMosesMatchGameMode::PostLogin(APlayerController* NewPlayer)
 		PS ? PS->GetPlayerId() : -1,
 		PS ? *PS->GetPlayerName() : TEXT("None"));
 
-	// [MOD] 수동 Spawn/Possess 제거
-	// - Experience READY 전에는 SpawnGate가 막고 있음
-	// - READY 후에는 FlushPendingPlayers에서 정석 스폰됨
+	// Experience READY 전에는 SpawnGate가 막고 있음
+	// READY 후에는 FlushPendingPlayers에서 정석 스폰됨
 }
 
 void AMosesMatchGameMode::Logout(AController* Exiting)
@@ -110,19 +93,11 @@ void AMosesMatchGameMode::Logout(AController* Exiting)
 	Super::Logout(Exiting);
 }
 
-// =========================================================
-// Experience READY Hook (Server authoritative match flow)
-// =========================================================
-
 void AMosesMatchGameMode::HandleDoD_AfterExperienceReady(const UMosesExperienceDefinition* CurrentExperience)
 {
 	Super::HandleDoD_AfterExperienceReady(CurrentExperience);
 
-	// [MOD] ExperienceDefinition 타입이 UObject가 아닐 수도 있으므로 이름 출력 생략(빌드 안정 우선)
 	UE_LOG(LogMosesExp, Warning, TEXT("[MatchGM][DOD] AfterExperienceReady -> StartMatchFlow"));
-
-
-	// [ADD] Experience READY가 된 안전 시점에서만 매치 흐름을 시작한다.
 	StartMatchFlow_AfterExperienceReady();
 }
 
@@ -133,7 +108,6 @@ void AMosesMatchGameMode::StartMatchFlow_AfterExperienceReady()
 		return;
 	}
 
-	// [ADD] 혹시 SeamlessTravel/특수 케이스로 Pawn이 없는 PC가 있으면 RestartPlayer로 보정
 	for (FConstPlayerControllerIterator It = GetWorld()->GetPlayerControllerIterator(); It; ++It)
 	{
 		APlayerController* PC = It->Get();
@@ -142,7 +116,6 @@ void AMosesMatchGameMode::StartMatchFlow_AfterExperienceReady()
 			continue;
 		}
 
-		// Pawn이 없으면 서버 권위로 다시 스폰(베이스 GM이 READY를 이미 보장한 상태)
 		if (!IsValid(PC->GetPawn()))
 		{
 			UE_LOG(LogMosesSpawn, Warning, TEXT("[MatchGM][READY] RestartPlayer (NoPawn) PC=%s"), *GetNameSafe(PC));
@@ -150,7 +123,6 @@ void AMosesMatchGameMode::StartMatchFlow_AfterExperienceReady()
 		}
 	}
 
-	// [ADD] 페이즈 시작: Warmup
 	SetMatchPhase(EMosesMatchPhase::Warmup);
 }
 
@@ -162,7 +134,6 @@ void AMosesMatchGameMode::HandlePhaseTimerExpired()
 	}
 
 	UE_LOG(LogMosesExp, Warning, TEXT("[MatchGM][PHASE] TimerExpired Phase=%s"), *UEnum::GetValueAsString(CurrentPhase));
-
 	AdvancePhase();
 }
 
@@ -189,7 +160,6 @@ void AMosesMatchGameMode::AdvancePhase()
 
 	case EMosesMatchPhase::Result:
 	default:
-		// [ADD] 결과 페이즈 종료 = 로비 복귀
 		UE_LOG(LogMosesExp, Warning, TEXT("[MatchGM][PHASE] ResultFinished -> TravelToLobby"));
 		TravelToLobby();
 		break;
@@ -201,17 +171,12 @@ float AMosesMatchGameMode::GetPhaseDurationSeconds(EMosesMatchPhase Phase) const
 	switch (Phase)
 	{
 	case EMosesMatchPhase::Warmup: return WarmupSeconds;
-	case EMosesMatchPhase::Combat:  return CombatSeconds;
-	case EMosesMatchPhase::Result:  return ResultSeconds;
+	case EMosesMatchPhase::Combat: return CombatSeconds;
+	case EMosesMatchPhase::Result: return ResultSeconds;
 	default: break;
 	}
-
 	return 0.f;
 }
-
-// =========================================================
-// Spawning (duplicate prevention)
-// =========================================================
 
 AActor* AMosesMatchGameMode::ChoosePlayerStart_Implementation(AController* Player)
 {
@@ -220,7 +185,6 @@ AActor* AMosesMatchGameMode::ChoosePlayerStart_Implementation(AController* Playe
 		return Super::ChoosePlayerStart_Implementation(Player);
 	}
 
-	// 이미 할당된 Start가 있으면 그대로 재사용(중복 방지)
 	if (const TWeakObjectPtr<APlayerStart>* Assigned = AssignedStartByController.Find(Player))
 	{
 		if (Assigned->IsValid())
@@ -270,10 +234,6 @@ AActor* AMosesMatchGameMode::ChoosePlayerStart_Implementation(AController* Playe
 
 	return Chosen;
 }
-
-// =========================================================
-// Travel
-// =========================================================
 
 void AMosesMatchGameMode::TravelToLobby()
 {
@@ -343,8 +303,6 @@ void AMosesMatchGameMode::HandleSeamlessTravelPlayer(AController*& C)
 {
 	Super::HandleSeamlessTravelPlayer(C);
 
-	// [MOD] SeamlessTravel 직후 "Pawn이 없는 경우"만 보정
-	// - 중복 Spawn을 막기 위해 조건적으로만 RestartPlayer
 	APlayerController* PC = Cast<APlayerController>(C);
 	if (!PC || !HasAuthority())
 	{
@@ -365,15 +323,12 @@ void AMosesMatchGameMode::HandleSeamlessTravelPlayer(AController*& C)
 
 APawn* AMosesMatchGameMode::SpawnDefaultPawnFor_Implementation(AController* NewPlayer, AActor* StartSpot)
 {
-	// 서버만 스폰
 	if (!HasAuthority() || !NewPlayer || !StartSpot)
 	{
 		return Super::SpawnDefaultPawnFor_Implementation(NewPlayer, StartSpot);
 	}
 
-	// ✅ 핵심: "선택된 캐릭터 PawnClass"로 스폰한다.
 	TSubclassOf<APawn> PawnClassToSpawn = GetDefaultPawnClassForController(NewPlayer);
-
 	if (!PawnClassToSpawn)
 	{
 		UE_LOG(LogMosesSpawn, Warning, TEXT("[MatchGM] SpawnDefaultPawnFor fallback -> Super (No PawnClass resolved)"));
@@ -384,7 +339,6 @@ APawn* AMosesMatchGameMode::SpawnDefaultPawnFor_Implementation(AController* NewP
 
 	FActorSpawnParameters Params;
 	Params.Owner = NewPlayer;
-	Params.Instigator = Cast<APawn>(NewPlayer->GetPawn());
 	Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn;
 
 	APawn* NewPawn = GetWorld()->SpawnActor<APawn>(PawnClassToSpawn, SpawnTM, Params);
@@ -440,8 +394,7 @@ UClass* AMosesMatchGameMode::ResolvePawnClassFromSelectedId(int32 SelectedId) co
 		return nullptr;
 	}
 
-	// [유지/주의] 지금은 1~2만 존재한다고 가정해서 Clamp
-	// - 캐릭터가 늘어나면 Catalog 크기에 맞춰 Clamp 범위를 바꿔야 한다.
+	// 현재는 1~2만 존재한다고 가정(필요시 확장)
 	const int32 SafeSelectedId = FMath::Clamp(SelectedId, 1, 2);
 
 	FMSCharacterEntry Entry;
@@ -462,10 +415,6 @@ UClass* AMosesMatchGameMode::ResolvePawnClassFromSelectedId(int32 SelectedId) co
 
 	return PawnClass;
 }
-
-// =========================================================
-// Debug dumps
-// =========================================================
 
 void AMosesMatchGameMode::DumpPlayerStates(const TCHAR* Prefix) const
 {
@@ -511,10 +460,6 @@ void AMosesMatchGameMode::DumpAllDODPlayerStates(const TCHAR* Where) const
 
 	UE_LOG(LogMosesSpawn, Warning, TEXT("[DOD][PS][DS][%s] ---- DumpAllPS End ----"), Where);
 }
-
-// =========================================================
-// PlayerStart helpers
-// =========================================================
 
 void AMosesMatchGameMode::CollectMatchPlayerStarts(TArray<APlayerStart*>& OutStarts) const
 {
@@ -627,11 +572,10 @@ FName AMosesMatchGameMode::GetExperienceNameForPhase(EMosesMatchPhase Phase)
 	switch (Phase)
 	{
 	case EMosesMatchPhase::Warmup: return FName(TEXT("Exp_Match_Warmup"));
-	case EMosesMatchPhase::Combat:  return FName(TEXT("Exp_Match_Combat"));
-	case EMosesMatchPhase::Result:  return FName(TEXT("Exp_Match_Result"));
+	case EMosesMatchPhase::Combat: return FName(TEXT("Exp_Match_Combat"));
+	case EMosesMatchPhase::Result: return FName(TEXT("Exp_Match_Result"));
 	default: break;
 	}
-
 	return NAME_None;
 }
 
@@ -640,7 +584,6 @@ UMosesExperienceManagerComponent* AMosesMatchGameMode::GetExperienceManager() co
 	return GameState ? GameState->FindComponentByClass<UMosesExperienceManagerComponent>() : nullptr;
 }
 
-// [ADD] 서버 권위로 Experience를 교체한다.
 void AMosesMatchGameMode::ServerSwitchExperienceByPhase(EMosesMatchPhase Phase)
 {
 	if (!HasAuthority())
@@ -657,8 +600,7 @@ void AMosesMatchGameMode::ServerSwitchExperienceByPhase(EMosesMatchPhase Phase)
 	static const FPrimaryAssetType ExperienceType(TEXT("Experience"));
 	const FPrimaryAssetId NewExperienceId(ExperienceType, ExpName);
 
-	UMosesExperienceManagerComponent* ExperienceManagerComponent = GetExperienceManager(); // [MOD]
-
+	UMosesExperienceManagerComponent* ExperienceManagerComponent = GetExperienceManager();
 	if (!ExperienceManagerComponent)
 	{
 		UE_LOG(LogMosesExp, Error, TEXT("[MatchGM][EXP] No ExperienceManagerComponent. Cannot switch Experience."));
@@ -669,11 +611,9 @@ void AMosesMatchGameMode::ServerSwitchExperienceByPhase(EMosesMatchPhase Phase)
 		*NewExperienceId.ToString(),
 		*UEnum::GetValueAsString(Phase));
 
-	// 서버에서 호출하면 즉시 서버 로드가 시작되고, CurrentExperienceId가 복제되어 클라도 따라감
 	ExperienceManagerComponent->ServerSetCurrentExperience(NewExperienceId);
 }
 
-// [MOD] Phase가 바뀔 때 Experience도 함께 교체( Warmup/Combat/Result )
 void AMosesMatchGameMode::SetMatchPhase(EMosesMatchPhase NewPhase)
 {
 	if (!HasAuthority())
@@ -688,11 +628,8 @@ void AMosesMatchGameMode::SetMatchPhase(EMosesMatchPhase NewPhase)
 
 	CurrentPhase = NewPhase;
 
-	// [ADD] Phase 진입 시 Experience도 갈아끼운다.
-	// - Warmup: Exp_Match_Warmup
-	// - Combat : Exp_Match_Combat
-	// - Result : Exp_Match_Result
-	ServerSwitchExperienceByPhase(CurrentPhase); // [ADD]
+	// Phase 진입 시 Experience 교체
+	ServerSwitchExperienceByPhase(CurrentPhase);
 
 	GetWorldTimerManager().ClearTimer(PhaseTimerHandle);
 
@@ -703,15 +640,6 @@ void AMosesMatchGameMode::SetMatchPhase(EMosesMatchPhase NewPhase)
 		*UEnum::GetValueAsString(CurrentPhase),
 		Duration,
 		PhaseEndTimeSeconds);
-
-	if (CurrentPhase == EMosesMatchPhase::Combat)
-	{
-		UE_LOG(LogMosesExp, Warning, TEXT("[MatchGM][PHASE] Combat START"));
-	}
-	else if (CurrentPhase == EMosesMatchPhase::Result)
-	{
-		UE_LOG(LogMosesExp, Warning, TEXT("[MatchGM][PHASE] Result START"));
-	}
 
 	if (Duration > 0.f)
 	{

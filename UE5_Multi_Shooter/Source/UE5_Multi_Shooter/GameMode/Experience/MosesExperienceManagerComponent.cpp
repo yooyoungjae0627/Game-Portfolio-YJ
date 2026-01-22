@@ -1,12 +1,18 @@
 ﻿
 #include "UE5_Multi_Shooter/GameMode/Experience/MosesExperienceManagerComponent.h"
-
 #include "UE5_Multi_Shooter/GameMode/Experience/MosesExperienceDefinition.h"
-#include "UE5_Multi_Shooter/System/MosesAssetManager.h"
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
+#include "UE5_Multi_Shooter/GAS/MosesAbilitySet.h"
+#include "UE5_Multi_Shooter/System/MosesAssetManager.h"
+
+#include "GameFramework/GameStateBase.h"
+#include "GameFramework/PlayerState.h"
 
 #include "GameFeaturesSubsystem.h"
 #include "GameFeaturePluginOperationResult.h"
+
+#include "AbilitySystemInterface.h"
+#include "AbilitySystemComponent.h"
 
 #include "Net/UnrealNetwork.h"
 #include "Interfaces/IPluginManager.h"
@@ -54,7 +60,7 @@ void UMosesExperienceManagerComponent::ServerSetCurrentExperience_Implementation
 	if (CurrentExperienceId == ExperienceId && LoadState != EMosesExperienceLoadState::Unloaded)
 	{
 		UE_LOG(LogMosesExp, Verbose, TEXT("[EXP][SV] Ignore duplicate set Id=%s State=%d"),
-			*ExperienceId.ToString(), (int32)LoadState); // [ADD]
+			*ExperienceId.ToString(), (int32)LoadState); 
 		return;
 	}
 
@@ -100,16 +106,16 @@ void UMosesExperienceManagerComponent::OnRep_CurrentExperienceId()
 	const ENetMode NM = World ? World->GetNetMode() : NM_Standalone;
 	const TCHAR* NetTag =
 		(NM == NM_DedicatedServer || NM == NM_ListenServer) ? TEXT("SV") :
-		(NM == NM_Client) ? TEXT("CL") : TEXT("ST"); // [ADD]
+		(NM == NM_Client) ? TEXT("CL") : TEXT("ST");
 
 	UE_LOG(LogMosesExp, Warning, TEXT("[EXP][%s] OnRep_CurrentExperienceId Id=%s State=%d"),
-		NetTag, *CurrentExperienceId.ToString(), (int32)LoadState); // [ADD]
+		NetTag, *CurrentExperienceId.ToString(), (int32)LoadState); 
 
 	// 핵심: 전환 지원
 	if (LoadState != EMosesExperienceLoadState::Unloaded)
 	{
 		UE_LOG(LogMosesExp, Verbose, TEXT("[EXP][%s] ResetForNewExperience (PrevState=%d)"),
-			NetTag, (int32)LoadState); // [ADD]
+			NetTag, (int32)LoadState);
 		ResetForNewExperience();
 	}
 
@@ -125,10 +131,10 @@ void UMosesExperienceManagerComponent::StartLoadExperienceAssets()
 	const ENetMode NM = World ? World->GetNetMode() : NM_Standalone;
 	const TCHAR* NetTag =
 		(NM == NM_DedicatedServer || NM == NM_ListenServer) ? TEXT("SV") :
-		(NM == NM_Client) ? TEXT("CL") : TEXT("ST"); // [ADD]
+		(NM == NM_Client) ? TEXT("CL") : TEXT("ST"); 
 
 	UE_LOG(LogMosesExp, Warning, TEXT("[EXP][%s] LoadingAssets -> %s"),
-		NetTag, *CurrentExperienceId.ToString()); // [ADD]
+		NetTag, *CurrentExperienceId.ToString()); 
 
 	// PrimaryAsset 로드(서버/클라 동일)
 	UMosesAssetManager& AssetManager = UMosesAssetManager::Get();
@@ -149,7 +155,7 @@ void UMosesExperienceManagerComponent::OnExperienceAssetsLoaded()
 	if (PendingExperienceId != CurrentExperienceId)
 	{
 		UE_LOG(LogMosesExp, Warning, TEXT("[EXP] AssetsLoaded STALE Pending=%s Current=%s -> IGNORE"),
-			*PendingExperienceId.ToString(), *CurrentExperienceId.ToString()); // [ADD]
+			*PendingExperienceId.ToString(), *CurrentExperienceId.ToString()); 
 		return;
 	}
 
@@ -166,7 +172,7 @@ void UMosesExperienceManagerComponent::OnExperienceAssetsLoaded()
 	CurrentExperience = LoadedDef;
 
 	UE_LOG(LogMosesExp, Warning, TEXT("[EXP] AssetsLoaded OK Id=%s -> StartLoadGameFeatures"),
-		*CurrentExperienceId.ToString()); // [ADD]
+		*CurrentExperienceId.ToString()); 
 
 	StartLoadGameFeatures();
 }
@@ -200,7 +206,7 @@ void UMosesExperienceManagerComponent::StartLoadGameFeatures()
 	const TArray<FString>& Features = CurrentExperience->GetGameFeaturesToEnable();
 
 	UE_LOG(LogMosesExp, Warning, TEXT("[EXP] LoadingGameFeatures Id=%s Count=%d"),
-		*CurrentExperienceId.ToString(), Features.Num()); // [ADD]
+		*CurrentExperienceId.ToString(), Features.Num()); 
 
 	if (Features.Num() == 0)
 	{
@@ -221,17 +227,17 @@ void UMosesExperienceManagerComponent::StartLoadGameFeatures()
 		const FString URL = MakeGameFeaturePluginURL(PluginName);
 		if (URL.IsEmpty())
 		{
-			// [ADD] 실패 사유를 반드시 남겨라(지금까지 silent였던 핵심 원인)
+			// 실패 사유를 반드시 남겨라(지금까지 silent였던 핵심 원인)
 			bAnyGFFailed = true;
 			LastGFFailReason = FString::Printf(TEXT("MakeGameFeaturePluginURL failed. PluginName=%s"), *PluginName);
-			UE_LOG(LogMosesExp, Error, TEXT("[EXP][GF] URL FAIL Plugin=%s"), *PluginName); // [ADD]
+			UE_LOG(LogMosesExp, Error, TEXT("[EXP][GF] URL FAIL Plugin=%s"), *PluginName); 
 
 			CompletedGFCount++;
 			continue;
 		}
 
 		UE_LOG(LogMosesExp, Warning, TEXT("[EXP][GF] Activate REQ Plugin=%s URL=%s"),
-			*PluginName, *URL); // [ADD]
+			*PluginName, *URL);
 
 		// 비동기 Load+Activate 요청
 		GFS.LoadAndActivateGameFeaturePlugin(
@@ -251,7 +257,7 @@ void UMosesExperienceManagerComponent::OnOneGameFeatureActivated(const UE::GameF
 		LastGFFailReason = Result.GetError();
 
 		UE_LOG(LogMosesExp, Error, TEXT("[EXP][GF] Activate FAIL Plugin=%s Error=%s (%d/%d)"),
-			*PluginName, *LastGFFailReason, CompletedGFCount, PendingGFCount); // [ADD]
+			*PluginName, *LastGFFailReason, CompletedGFCount, PendingGFCount); 
 	}
 	else
 	{
@@ -262,14 +268,14 @@ void UMosesExperienceManagerComponent::OnOneGameFeatureActivated(const UE::GameF
 		}
 
 		UE_LOG(LogMosesExp, Warning, TEXT("[EXP][GF] Activate OK Plugin=%s (%d/%d)"),
-			*PluginName, CompletedGFCount, PendingGFCount); // [ADD]
+			*PluginName, CompletedGFCount, PendingGFCount);
 	}
 
 	if (CompletedGFCount >= PendingGFCount)
 	{
 		UE_LOG(LogMosesExp, Warning, TEXT("[EXP][GF] AllCompleted AnyFail=%d LastFail=%s"),
 			bAnyGFFailed ? 1 : 0,
-			LastGFFailReason.IsEmpty() ? TEXT("None") : *LastGFFailReason); // [ADD]
+			LastGFFailReason.IsEmpty() ? TEXT("None") : *LastGFFailReason); 
 
 		if (bAnyGFFailed)
 		{
@@ -288,7 +294,7 @@ void UMosesExperienceManagerComponent::FinishExperienceLoad()
 	const UWorld* World = GetWorld();
 	const ENetMode NM = World ? World->GetNetMode() : NM_Standalone;
 
-	// [ADD] Day1 DoD: Loaded 로그(서버에서 반드시 보여야 함)
+	// DoD: Loaded 로그(서버에서 반드시 보여야 함)
 	if (NM == NM_DedicatedServer || NM == NM_ListenServer)
 	{
 		UE_LOG(LogMosesExp, Warning, TEXT("[EXP][SV] Loaded %s"), *CurrentExperienceId.ToString());
@@ -310,7 +316,13 @@ void UMosesExperienceManagerComponent::FinishExperienceLoad()
 	{
 		CB.ExecuteIfBound(CurrentExperience);
 	}
+
 	PendingReadyCallbacks.Reset();
+
+	if (GetOwner() && GetOwner()->HasAuthority())
+	{
+		ApplyServerSideExperiencePayload();
+	}
 }
 
 void UMosesExperienceManagerComponent::FailExperienceLoad(const FString& Reason)
@@ -321,10 +333,10 @@ void UMosesExperienceManagerComponent::FailExperienceLoad(const FString& Reason)
 	const ENetMode NM = World ? World->GetNetMode() : NM_Standalone;
 	const TCHAR* NetTag =
 		(NM == NM_DedicatedServer || NM == NM_ListenServer) ? TEXT("SV") :
-		(NM == NM_Client) ? TEXT("CL") : TEXT("ST"); // [ADD]
+		(NM == NM_Client) ? TEXT("CL") : TEXT("ST"); 
 
 	UE_LOG(LogMosesExp, Error, TEXT("[EXP][%s][FAIL] Id=%s Reason=%s"),
-		NetTag, *CurrentExperienceId.ToString(), *Reason); // [ADD]
+		NetTag, *CurrentExperienceId.ToString(), *Reason); 
 
 	// 실패 시에도 이전 GF가 남아있으면 위험하므로 정리
 	DeactivatePreviouslyActivatedGameFeatures();
@@ -336,7 +348,7 @@ void UMosesExperienceManagerComponent::ResetForNewExperience()
 	DeactivatePreviouslyActivatedGameFeatures();
 
 	UE_LOG(LogMosesExp, Verbose, TEXT("[EXP] ResetForNewExperience PrevId=%s PrevState=%d"),
-		*CurrentExperienceId.ToString(), (int32)LoadState); // [ADD]
+		*CurrentExperienceId.ToString(), (int32)LoadState); 
 
 	LoadState = EMosesExperienceLoadState::Unloaded;
 	CurrentExperience = nullptr;
@@ -379,3 +391,67 @@ void UMosesExperienceManagerComponent::DeactivatePreviouslyActivatedGameFeatures
 
 	ActivatedGFURLs.Reset();
 }
+
+void UMosesExperienceManagerComponent::ApplyServerSideExperiencePayload()
+{
+	check(GetOwner() && GetOwner()->HasAuthority());
+
+	if (!CurrentExperience)
+	{
+		return;
+	}
+
+	const FSoftObjectPath AbilitySetPath = CurrentExperience->GetAbilitySetPath();
+	if (AbilitySetPath.IsNull())
+	{
+		UE_LOG(LogMosesExp, Warning, TEXT("[EXP][SV] AbilitySetPath is empty (Skip GAS Apply)"));
+		return;
+	}
+
+	ApplyServerSideAbilitySet(AbilitySetPath);
+}
+
+void UMosesExperienceManagerComponent::ApplyServerSideAbilitySet(const FSoftObjectPath& AbilitySetPath)
+{
+	check(GetOwner() && GetOwner()->HasAuthority());
+
+	UObject* LoadedObj = AbilitySetPath.TryLoad();
+	const UMosesAbilitySet* AbilitySet = Cast<UMosesAbilitySet>(LoadedObj);
+	if (!AbilitySet)
+	{
+		UE_LOG(LogMosesExp, Error, TEXT("[EXP][SV] AbilitySet Load FAIL Path=%s"), *AbilitySetPath.ToString());
+		return;
+	}
+
+	AGameStateBase* GS = GetWorld() ? GetWorld()->GetGameState() : nullptr;
+	if (!GS)
+	{
+		return;
+	}
+
+	for (APlayerState* PS : GS->PlayerArray)
+	{
+		if (!PS)
+		{
+			continue;
+		}
+
+		UAbilitySystemComponent* ASC = nullptr;
+		if (const IAbilitySystemInterface* ASI = Cast<IAbilitySystemInterface>(PS))
+		{
+			ASC = ASI->GetAbilitySystemComponent();
+		}
+
+		if (!ASC)
+		{
+			continue;
+		}
+
+		FMosesAbilitySet_GrantedHandles Handles;
+		AbilitySet->GiveToAbilitySystem(*ASC, Handles);
+
+		UE_LOG(LogMosesGAS, Warning, TEXT("[EXP][SV][GAS] AbilitySet Applied PS=%s Set=%s"),
+			*GetNameSafe(PS), *AbilitySetPath.ToString());
+	}
+}
+

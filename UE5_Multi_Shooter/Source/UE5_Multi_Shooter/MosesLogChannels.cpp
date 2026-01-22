@@ -1,6 +1,5 @@
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
 
-// 한 줄이라도 빠지면 그 카테고리 UE_LOG에서 C2065가 난다.
 DEFINE_LOG_CATEGORY(LogMosesSpawn);
 DEFINE_LOG_CATEGORY(LogMosesMove);
 DEFINE_LOG_CATEGORY(LogMosesPickup);
@@ -16,3 +15,7 @@ DEFINE_LOG_CATEGORY(LogMosesPlayer);
 DEFINE_LOG_CATEGORY(LogMosesAuth);
 DEFINE_LOG_CATEGORY(LogMosesPhase);
 DEFINE_LOG_CATEGORY(LogMosesRoom);
+
+DEFINE_LOG_CATEGORY(LogMosesGF);
+DEFINE_LOG_CATEGORY(LogMosesHP);
+DEFINE_LOG_CATEGORY(LogMosesGrenade);

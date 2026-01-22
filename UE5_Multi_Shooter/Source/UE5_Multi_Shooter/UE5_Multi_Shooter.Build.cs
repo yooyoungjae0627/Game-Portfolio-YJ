@@ -21,7 +21,6 @@ public class UE5_Multi_Shooter : ModuleRules
             "InputCore",
             "EnhancedInput",
 
-            "GameplayTags",
             "ModularGameplay",
             "GameFeatures",
 
