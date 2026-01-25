@@ -7,6 +7,8 @@
 #include "UE5_Multi_Shooter/MosesGameInstance.h"
 #include "UE5_Multi_Shooter/MosesLogChannels.h" 
 
+#include "UE5_Multi_Shooter/System/MosesAuthorityGuards.h"
+
 #include "Blueprint/UserWidget.h"
 #include "Engine/LocalPlayer.h"
 #include "GameFramework/GameStateBase.h"

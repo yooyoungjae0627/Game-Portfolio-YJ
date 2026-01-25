@@ -4,11 +4,15 @@
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
 
 #include "UE5_Multi_Shooter/Player/MosesPlayerState.h"
+#include "UE5_Multi_Shooter/System/MosesPawnSSOTGuardComponent.h"
 
 AMosesCharacter::AMosesCharacter()
 {
 	bReplicates = true;
 	PrimaryActorTick.bCanEverTick = false;
+
+	// Pawn에는 HP/Ammo/Score가 있으면 안 된다 -> 자동 감지
+	PawnSSOTGuard = CreateDefaultSubobject<UMosesPawnSSOTGuardComponent>(TEXT("PawnSSOTGuard"));
 }
 
 void AMosesCharacter::BeginPlay()

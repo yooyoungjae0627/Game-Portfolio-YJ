@@ -5,6 +5,9 @@
 #include "UE5_Multi_Shooter/GAS/MosesAbilitySet.h"
 #include "UE5_Multi_Shooter/System/MosesAssetManager.h"
 
+#include "UE5_Multi_Shooter/System/MosesAuthorityGuards.h"
+
+
 #include "GameFramework/GameStateBase.h"
 #include "GameFramework/PlayerState.h"
 
@@ -39,6 +42,8 @@ void UMosesExperienceManagerComponent::GetLifetimeReplicatedProps(TArray<FLifeti
 
 void UMosesExperienceManagerComponent::ServerSetCurrentExperience_Implementation(FPrimaryAssetId ExperienceId)
 {
+	MOSES_GUARD_AUTHORITY_VOID(this, "Experience", TEXT("Client attempted SetCurrentExperience"));
+
 	check(GetOwner());
 	check(GetOwner()->HasAuthority());
 

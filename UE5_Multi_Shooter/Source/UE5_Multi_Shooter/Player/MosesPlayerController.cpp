@@ -1,12 +1,4 @@
-﻿// =========================================================
-// MosesPlayerController.cpp (FULL)
-// - [MOD] Lobby 판정 안정화(IsLobbyContext): 맵 이름 기반 1순위
-// - [ADD] IsLobbyMap_Local / IsMatchMap_Local
-// - [MOD] BeginPlay/OnPossess/ClientRestart에서 커서 정책 강제
-// - [ADD] Lobby BeginPlay에서 NextTick 재적용(ReapplyLobbyInputMode_NextTick_LocalOnly)
-// =========================================================
-
-#include "UE5_Multi_Shooter/Player/MosesPlayerController.h"
+﻿#include "UE5_Multi_Shooter/Player/MosesPlayerController.h"
 
 #include "UE5_Multi_Shooter/Camera/MosesPlayerCameraManager.h"
 #include "UE5_Multi_Shooter/GameMode/GameMode/MosesStartGameMode.h"
@@ -16,6 +8,8 @@
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
 #include "UE5_Multi_Shooter/Player/MosesPlayerState.h"
 #include "UE5_Multi_Shooter/System/MosesLobbyLocalPlayerSubsystem.h"
+
+#include "UE5_Multi_Shooter/Development/MosesDeveloperCheatManager.h"
 
 #include "Camera/CameraActor.h"
 #include "Engine/LocalPlayer.h"
@@ -38,7 +32,7 @@ AMosesPlayerController::AMosesPlayerController(const FObjectInitializer& ObjectI
 	: Super(ObjectInitializer)
 {
 	PlayerCameraManagerClass = AMosesPlayerCameraManager::StaticClass();
-
+	CheatClass = UMosesDeveloperCheatManager::StaticClass();
 	/**
 	 * 주의:
 	 * - bAutoManageActiveCameraTarget을 ctor에서 영구로 끄면 매치에서 Pawn 카메라 자동 복구가 깨질 수 있음.

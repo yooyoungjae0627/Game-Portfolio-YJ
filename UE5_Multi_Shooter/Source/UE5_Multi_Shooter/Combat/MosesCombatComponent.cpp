@@ -3,6 +3,9 @@
 #include "Net/UnrealNetwork.h"
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
 
+// Owner가 PlayerState인지 검사하기 위해 포함
+#include "GameFramework/PlayerState.h"
+
 UMosesCombatComponent::UMosesCombatComponent(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
 {
@@ -16,12 +19,34 @@ void UMosesCombatComponent::BeginPlay()
 {
 	Super::BeginPlay();
 
+	// [ADD] CombatComponent는 무조건 PlayerState 소유여야 한다.
+	ValidateOwnerIsPlayerState();
+
 	if (AActor* Owner = GetOwner())
 	{
 		if (Owner->HasAuthority())
 		{
 			Server_EnsureInitialized_Day2();
 		}
+	}
+}
+
+void UMosesCombatComponent::ValidateOwnerIsPlayerState() const
+{
+	const AActor* Owner = GetOwner();
+	const bool bOk = (Owner != nullptr) && Owner->IsA(APlayerState::StaticClass());
+
+	ensureAlwaysMsgf(
+		bOk,
+		TEXT("[COMBAT] CombatComponent must be owned by PlayerState. Owner=%s Class=%s"),
+		*GetNameSafe(Owner),
+		Owner ? *Owner->GetClass()->GetName() : TEXT("None"));
+
+	if (!bOk)
+	{
+		UE_LOG(LogMosesCombat, Error, TEXT("%s CombatComponent Owner INVALID (Must be PlayerState). Owner=%s"),
+			MOSES_TAG_COMBAT_SV,
+			*GetNameSafe(Owner));
 	}
 }
 
@@ -67,7 +92,10 @@ void UMosesCombatComponent::Server_EnsureInitialized_Day2()
 	bServerInitialized_Day2 = true;
 
 	ForceReplication();
-	UE_LOG(LogMosesCombat, Warning, TEXT("[Combat][SV] Day2 Defaults Initialized Owner=%s"), *GetNameSafe(Owner));
+
+	UE_LOG(LogMosesCombat, Warning, TEXT("%s Day2 Defaults Initialized Owner=%s"),
+		MOSES_TAG_COMBAT_SV,
+		*GetNameSafe(Owner));
 
 	BroadcastCombatDataChanged(TEXT("ServerInit_Day2"));
 }
@@ -95,7 +123,8 @@ void UMosesCombatComponent::Server_SetAmmoState(EMosesWeaponType WeaponType, con
 
 	ForceReplication();
 
-	UE_LOG(LogMosesCombat, Log, TEXT("[Combat][SV] SetAmmoState Type=%s Mag=%d/%d Res=%d/%d Owner=%s"),
+	UE_LOG(LogMosesCombat, Log, TEXT("%s SetAmmoState Type=%s Mag=%d/%d Res=%d/%d Owner=%s"),
+		MOSES_TAG_COMBAT_SV,
 		*UEnum::GetValueAsString(WeaponType),
 		State.MagAmmo, State.MaxMag,
 		State.ReserveAmmo, State.MaxReserve,
@@ -122,7 +151,8 @@ void UMosesCombatComponent::Server_AddReserveAmmo(EMosesWeaponType WeaponType, i
 
 	ForceReplication();
 
-	UE_LOG(LogMosesPickup, Log, TEXT("[Combat][SV] AddReserveAmmo Type=%s Delta=%d Res=%d/%d Owner=%s"),
+	UE_LOG(LogMosesPickup, Log, TEXT("%s AddReserveAmmo Type=%s Delta=%d Res=%d/%d Owner=%s"),
+		MOSES_TAG_COMBAT_SV,
 		*UEnum::GetValueAsString(WeaponType),
 		DeltaReserve,
 		State.ReserveAmmo, State.MaxReserve,
@@ -148,6 +178,14 @@ void UMosesCombatComponent::Server_AddMagAmmo(EMosesWeaponType WeaponType, int32
 	State.MagAmmo = FMath::Clamp(State.MagAmmo + DeltaMag, 0, State.MaxMag);
 
 	ForceReplication();
+
+	UE_LOG(LogMosesCombat, Verbose, TEXT("%s AddMagAmmo Type=%s Delta=%d Mag=%d/%d Owner=%s"),
+		MOSES_TAG_COMBAT_SV,
+		*UEnum::GetValueAsString(WeaponType),
+		DeltaMag,
+		State.MagAmmo, State.MaxMag,
+		*GetNameSafe(Owner));
+
 	BroadcastCombatDataChanged(TEXT("Server_AddMagAmmo"));
 }
 
@@ -169,7 +207,8 @@ void UMosesCombatComponent::Server_SetWeaponSlot(EMosesWeaponType SlotType, cons
 
 	ForceReplication();
 
-	UE_LOG(LogMosesCombat, Log, TEXT("[Combat][SV] SetSlot Slot=%s WeaponId=%d Owner=%s"),
+	UE_LOG(LogMosesCombat, Log, TEXT("%s SetSlot Slot=%s WeaponId=%d Owner=%s"),
+		MOSES_TAG_COMBAT_SV,
 		*UEnum::GetValueAsString(SlotType),
 		WeaponSlots[Index].WeaponId,
 		*GetNameSafe(Owner));
@@ -199,13 +238,12 @@ void UMosesCombatComponent::BroadcastCombatDataChanged(const TCHAR* Reason)
 	const FString ReasonStr = Reason ? FString(Reason) : FString(TEXT("Unknown"));
 	OnCombatDataChangedBP.Broadcast(ReasonStr);
 
-	UE_LOG(LogMosesCombat, Verbose, TEXT("[Combat] DataChanged Reason=%s Owner=%s"),
+	UE_LOG(LogMosesCombat, Verbose, TEXT("[COMBAT] DataChanged Reason=%s Owner=%s"),
 		*ReasonStr, *GetNameSafe(GetOwner()));
 }
 
 void UMosesCombatComponent::EnsureArraysSized()
 {
-	// 현재 enum: Rifle/Pistol/Melee/Grenade (4개)
 	constexpr int32 WeaponTypeCount = 4;
 
 	if (AmmoStates.Num() != WeaponTypeCount)
@@ -226,7 +264,6 @@ int32 UMosesCombatComponent::WeaponTypeToIndex(EMosesWeaponType WeaponType) cons
 
 void UMosesCombatComponent::ForceReplication()
 {
-	// UActorComponent에는 ForceReplication()이 없으므로 Owner의 ForceNetUpdate를 사용한다.
 	if (AActor* Owner = GetOwner())
 	{
 		Owner->ForceNetUpdate();

@@ -163,7 +163,7 @@ private:
 	void BindCombatDelegatesOnce();
 
 	UFUNCTION()
-	void HandleCombatDataChanged_BP(FString Reason);
+	void HandleCombatDataChanged_BP(const FString& Reason);
 
 	void HandleCombatDataChanged_Native(const TCHAR* Reason);
 

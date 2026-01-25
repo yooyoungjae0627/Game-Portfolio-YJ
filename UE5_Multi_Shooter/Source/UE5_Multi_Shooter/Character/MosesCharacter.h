@@ -21,6 +21,9 @@
  * - PossessedBy (Server): 서버에서 소유가 확정되는 순간
  * - OnRep_PlayerState (Client): 클라에서 PlayerState 복제가 도착한 순간
  */
+
+class UMosesPawnSSOTGuardComponent;
+
 UCLASS()
 class UE5_MULTI_SHOOTER_API AMosesCharacter : public ACharacter
 {
@@ -49,4 +52,9 @@ private:
 private:
 	UPROPERTY(EditDefaultsOnly, Category = "Moses|Move")
 	float DefaultWalkSpeed = 600.0f;
+
+private:
+	// Pawn SSOT 위반 감지기
+	UPROPERTY(VisibleAnywhere, Category = "Moses|Guard")
+	TObjectPtr<UMosesPawnSSOTGuardComponent> PawnSSOTGuard;
 };

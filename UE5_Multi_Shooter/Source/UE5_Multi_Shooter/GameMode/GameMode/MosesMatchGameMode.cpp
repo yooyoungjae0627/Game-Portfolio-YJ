@@ -6,6 +6,9 @@
 #include "UE5_Multi_Shooter/UI/CharacterSelect/MSCharacterCatalog.h"
 #include "UE5_Multi_Shooter/GameMode/Experience/MosesExperienceManagerComponent.h"
 
+#include "UE5_Multi_Shooter/System/MosesAuthorityGuards.h"
+#include "UE5_Multi_Shooter/GameMode/Experience/MosesExperienceDefinition.h"
+
 #include "Engine/World.h"
 #include "TimerManager.h"
 #include "Kismet/GameplayStatics.h"
@@ -23,7 +26,8 @@ AMosesMatchGameMode::AMosesMatchGameMode()
 	DefaultPawnClass = nullptr;
 	FallbackPawnClass = nullptr;
 
-	UE_LOG(LogMosesSpawn, Warning, TEXT("[MatchGM] DefaultPawnClass not fixed. Using GetDefaultPawnClassForController + SpawnDefaultPawnFor."));
+	UE_LOG(LogMosesSpawn, Warning, TEXT("%s [MatchGM] DefaultPawnClass not fixed. Using GetDefaultPawnClassForController + SpawnDefaultPawnFor."),
+		MOSES_TAG_RESPAWN_SV);
 }
 
 void AMosesMatchGameMode::InitGame(const FString& MapName, const FString& Options, FString& ErrorMessage)
@@ -37,24 +41,22 @@ void AMosesMatchGameMode::InitGame(const FString& MapName, const FString& Option
 
 	Super::InitGame(MapName, FinalOptions, ErrorMessage);
 
-	UE_LOG(LogMosesExp, Warning, TEXT("[MatchGM][InitGame] Map=%s Options=%s"), *MapName, *FinalOptions);
+	UE_LOG(LogMosesExp, Warning, TEXT("%s [MatchGM][InitGame] Map=%s Options=%s"),
+		MOSES_TAG_COMBAT_SV, *MapName, *FinalOptions);
 }
 
 void AMosesMatchGameMode::BeginPlay()
 {
 	Super::BeginPlay();
 
-	UE_LOG(LogMosesExp, Warning, TEXT("[DOD][Travel] MatchGM Seamless=%d"), bUseSeamlessTravel ? 1 : 0);
+	UE_LOG(LogMosesExp, Warning, TEXT("%s [DOD][Travel] MatchGM Seamless=%d"),
+		MOSES_TAG_COMBAT_SV, bUseSeamlessTravel ? 1 : 0);
 
-	UE_LOG(LogMosesSpawn, Warning, TEXT("[MatchGM] BeginPlay Catalog=%s Fallback=%s"),
-		*GetNameSafe(CharacterCatalog),
-		*GetNameSafe(FallbackPawnClass));
+	UE_LOG(LogMosesSpawn, Warning, TEXT("%s [MatchGM] BeginPlay Catalog=%s Fallback=%s"),
+		MOSES_TAG_COMBAT_SV, *GetNameSafe(CharacterCatalog), *GetNameSafe(FallbackPawnClass));
 
 	DumpAllDODPlayerStates(TEXT("MatchGM:BeginPlay"));
 	DumpPlayerStates(TEXT("[MatchGM][BeginPlay]"));
-
-	// BeginPlay/PostLogin에서 수동 Spawn 금지.
-	// Base GM이 Experience READY 이후 SpawnGate를 통해 정석 스폰 파이프라인을 보장한다.
 
 	if (AutoReturnToLobbySeconds > 0.f && HasAuthority())
 	{
@@ -65,7 +67,8 @@ void AMosesMatchGameMode::BeginPlay()
 			AutoReturnToLobbySeconds,
 			false);
 
-		UE_LOG(LogMosesSpawn, Warning, TEXT("[MatchGM] AutoReturnToLobby in %.2f sec"), AutoReturnToLobbySeconds);
+		UE_LOG(LogMosesSpawn, Warning, TEXT("%s [MatchGM] AutoReturnToLobby in %.2f sec"),
+			MOSES_TAG_COMBAT_SV, AutoReturnToLobbySeconds);
 	}
 }
 
@@ -76,15 +79,13 @@ void AMosesMatchGameMode::PostLogin(APlayerController* NewPlayer)
 	APlayerState* PS = NewPlayer ? NewPlayer->PlayerState : nullptr;
 
 	UE_LOG(LogMosesSpawn, Warning,
-		TEXT("[MatchGM][PostLogin] PC=%s PS=%p PSName=%s PlayerId=%d PlayerName=%s"),
+		TEXT("%s [MatchGM][PostLogin] PC=%s PS=%p PSName=%s PlayerId=%d PlayerName=%s"),
+		MOSES_TAG_COMBAT_SV,
 		*GetNameSafe(NewPlayer),
 		PS,
 		*GetNameSafe(PS),
 		PS ? PS->GetPlayerId() : -1,
 		PS ? *PS->GetPlayerName() : TEXT("None"));
-
-	// Experience READY 전에는 SpawnGate가 막고 있음
-	// READY 후에는 FlushPendingPlayers에서 정석 스폰됨
 }
 
 void AMosesMatchGameMode::Logout(AController* Exiting)
@@ -97,16 +98,17 @@ void AMosesMatchGameMode::HandleDoD_AfterExperienceReady(const UMosesExperienceD
 {
 	Super::HandleDoD_AfterExperienceReady(CurrentExperience);
 
-	UE_LOG(LogMosesExp, Warning, TEXT("[MatchGM][DOD] AfterExperienceReady -> StartMatchFlow"));
+	UE_LOG(LogMosesExp, Warning,
+		TEXT("%s [MatchGM][DOD] AfterExperienceReady -> StartMatchFlow Exp=%s"),
+		MOSES_TAG_AUTH_SV, 
+		*GetNameSafe(CurrentExperience));
+
 	StartMatchFlow_AfterExperienceReady();
 }
 
 void AMosesMatchGameMode::StartMatchFlow_AfterExperienceReady()
 {
-	if (!HasAuthority())
-	{
-		return;
-	}
+	MOSES_GUARD_AUTHORITY_VOID(this, "Respawn", TEXT("Client attempted StartMatchFlow_AfterExperienceReady"));
 
 	for (FConstPlayerControllerIterator It = GetWorld()->GetPlayerControllerIterator(); It; ++It)
 	{
@@ -118,7 +120,8 @@ void AMosesMatchGameMode::StartMatchFlow_AfterExperienceReady()
 
 		if (!IsValid(PC->GetPawn()))
 		{
-			UE_LOG(LogMosesSpawn, Warning, TEXT("[MatchGM][READY] RestartPlayer (NoPawn) PC=%s"), *GetNameSafe(PC));
+			UE_LOG(LogMosesSpawn, Warning, TEXT("%s [MatchGM][READY] RestartPlayer (NoPawn) PC=%s"),
+				MOSES_TAG_RESPAWN_SV, *GetNameSafe(PC));
 			RestartPlayer(PC);
 		}
 	}
@@ -128,21 +131,16 @@ void AMosesMatchGameMode::StartMatchFlow_AfterExperienceReady()
 
 void AMosesMatchGameMode::HandlePhaseTimerExpired()
 {
-	if (!HasAuthority())
-	{
-		return;
-	}
+	MOSES_GUARD_AUTHORITY_VOID(this, "Phase", TEXT("Client attempted HandlePhaseTimerExpired"));
 
-	UE_LOG(LogMosesExp, Warning, TEXT("[MatchGM][PHASE] TimerExpired Phase=%s"), *UEnum::GetValueAsString(CurrentPhase));
+	UE_LOG(LogMosesExp, Warning, TEXT("%s [MatchGM][PHASE] TimerExpired Phase=%s"),
+		MOSES_TAG_COMBAT_SV, *UEnum::GetValueAsString(CurrentPhase));
 	AdvancePhase();
 }
 
 void AMosesMatchGameMode::AdvancePhase()
 {
-	if (!HasAuthority())
-	{
-		return;
-	}
+	MOSES_GUARD_AUTHORITY_VOID(this, "Phase", TEXT("Client attempted AdvancePhase"));
 
 	switch (CurrentPhase)
 	{
@@ -160,7 +158,8 @@ void AMosesMatchGameMode::AdvancePhase()
 
 	case EMosesMatchPhase::Result:
 	default:
-		UE_LOG(LogMosesExp, Warning, TEXT("[MatchGM][PHASE] ResultFinished -> TravelToLobby"));
+		UE_LOG(LogMosesExp, Warning, TEXT("%s [MatchGM][PHASE] ResultFinished -> TravelToLobby"),
+			MOSES_TAG_COMBAT_SV);
 		TravelToLobby();
 		break;
 	}
@@ -190,7 +189,8 @@ AActor* AMosesMatchGameMode::ChoosePlayerStart_Implementation(AController* Playe
 		if (Assigned->IsValid())
 		{
 			APlayerStart* Start = Assigned->Get();
-			UE_LOG(LogMosesSpawn, Warning, TEXT("[StartPick][Reuse] PC=%s Start=%s Loc=%s Rot=%s"),
+			UE_LOG(LogMosesSpawn, Warning, TEXT("%s [StartPick][Reuse] PC=%s Start=%s Loc=%s Rot=%s"),
+				MOSES_TAG_RESPAWN_SV,
 				*GetNameSafe(Player),
 				*GetNameSafe(Start),
 				*Start->GetActorLocation().ToString(),
@@ -206,7 +206,8 @@ AActor* AMosesMatchGameMode::ChoosePlayerStart_Implementation(AController* Playe
 	TArray<APlayerStart*> FreeStarts;
 	FilterFreeStarts(AllStarts, FreeStarts);
 
-	UE_LOG(LogMosesSpawn, Warning, TEXT("[StartPick] PC=%s All=%d Free=%d Reserved=%d"),
+	UE_LOG(LogMosesSpawn, Warning, TEXT("%s [StartPick] PC=%s All=%d Free=%d Reserved=%d"),
+		MOSES_TAG_RESPAWN_SV,
 		*GetNameSafe(Player),
 		AllStarts.Num(),
 		FreeStarts.Num(),
@@ -214,8 +215,8 @@ AActor* AMosesMatchGameMode::ChoosePlayerStart_Implementation(AController* Playe
 
 	if (FreeStarts.Num() <= 0)
 	{
-		UE_LOG(LogMosesSpawn, Warning, TEXT("[StartPick][Fallback] No free Match PlayerStart. Use Super. PC=%s"),
-			*GetNameSafe(Player));
+		UE_LOG(LogMosesSpawn, Warning, TEXT("%s [StartPick][Fallback] No free Match PlayerStart. Use Super. PC=%s"),
+			MOSES_TAG_RESPAWN_SV, *GetNameSafe(Player));
 
 		return Super::ChoosePlayerStart_Implementation(Player);
 	}
@@ -225,7 +226,8 @@ AActor* AMosesMatchGameMode::ChoosePlayerStart_Implementation(AController* Playe
 
 	ReserveStartForController(Player, Chosen);
 
-	UE_LOG(LogMosesSpawn, Warning, TEXT("[StartPick][Chosen] PC=%s Start=%s Loc=%s Rot=%s (Reserved=%d)"),
+	UE_LOG(LogMosesSpawn, Warning, TEXT("%s [StartPick][Chosen] PC=%s Start=%s Loc=%s Rot=%s (Reserved=%d)"),
+		MOSES_TAG_RESPAWN_SV,
 		*GetNameSafe(Player),
 		*GetNameSafe(Chosen),
 		*Chosen->GetActorLocation().ToString(),
@@ -239,7 +241,8 @@ void AMosesMatchGameMode::TravelToLobby()
 {
 	if (!CanDoServerTravel())
 	{
-		UE_LOG(LogMosesSpawn, Warning, TEXT("[MatchGM] TravelToLobby BLOCKED"));
+		UE_LOG(LogMosesSpawn, Warning, TEXT("%s [MatchGM] TravelToLobby BLOCKED"),
+			MOSES_TAG_COMBAT_SV);
 		return;
 	}
 
@@ -248,14 +251,16 @@ void AMosesMatchGameMode::TravelToLobby()
 	DumpReservedStarts(TEXT("BeforeTravelToLobby"));
 
 	const FString URL = GetLobbyMapURL();
-	UE_LOG(LogMosesSpawn, Warning, TEXT("[MatchGM] ServerTravel -> %s"), *URL);
+	UE_LOG(LogMosesSpawn, Warning, TEXT("%s [MatchGM] ServerTravel -> %s"),
+		MOSES_TAG_COMBAT_SV, *URL);
 
 	GetWorld()->ServerTravel(URL, false);
 }
 
 void AMosesMatchGameMode::HandleAutoReturn()
 {
-	UE_LOG(LogMosesSpawn, Warning, TEXT("[MatchGM] HandleAutoReturn -> TravelToLobby"));
+	UE_LOG(LogMosesSpawn, Warning, TEXT("%s [MatchGM] HandleAutoReturn -> TravelToLobby"),
+		MOSES_TAG_COMBAT_SV);
 	TravelToLobby();
 }
 
@@ -264,24 +269,24 @@ bool AMosesMatchGameMode::CanDoServerTravel() const
 	UWorld* World = GetWorld();
 	if (!World)
 	{
-		UE_LOG(LogMosesSpawn, Warning, TEXT("[DOD][Travel] REJECT (NoWorld)"));
+		UE_LOG(LogMosesSpawn, Warning, TEXT("%s [DOD][Travel] REJECT (NoWorld)"), MOSES_TAG_COMBAT_SV);
 		return false;
 	}
 
 	const ENetMode NM = World->GetNetMode();
 	if (NM == NM_Client)
 	{
-		UE_LOG(LogMosesSpawn, Warning, TEXT("[DOD][Travel] REJECT (Client)"));
+		UE_LOG(LogMosesSpawn, Warning, TEXT("%s [DOD][Travel] REJECT (Client)"), MOSES_TAG_COMBAT_SV);
 		return false;
 	}
 
 	if (!HasAuthority())
 	{
-		UE_LOG(LogMosesSpawn, Warning, TEXT("[DOD][Travel] REJECT (NoAuthority)"));
+		UE_LOG(LogMosesSpawn, Warning, TEXT("%s [DOD][Travel] REJECT (NoAuthority)"), MOSES_TAG_COMBAT_SV);
 		return false;
 	}
 
-	UE_LOG(LogMosesSpawn, Warning, TEXT("[DOD][Travel] ACCEPT (Server)"));
+	UE_LOG(LogMosesSpawn, Warning, TEXT("%s [DOD][Travel] ACCEPT (Server)"), MOSES_TAG_COMBAT_SV);
 	return true;
 }
 
@@ -295,7 +300,8 @@ void AMosesMatchGameMode::GetSeamlessTravelActorList(bool bToTransition, TArray<
 	Super::GetSeamlessTravelActorList(bToTransition, ActorList);
 
 	UE_LOG(LogMosesSpawn, Warning,
-		TEXT("[MatchGM] GetSeamlessTravelActorList bToTransition=%d ActorListNum=%d"),
+		TEXT("%s [MatchGM] GetSeamlessTravelActorList bToTransition=%d ActorListNum=%d"),
+		MOSES_TAG_COMBAT_SV,
 		bToTransition, ActorList.Num());
 }
 
@@ -311,7 +317,8 @@ void AMosesMatchGameMode::HandleSeamlessTravelPlayer(AController*& C)
 
 	if (!IsValid(PC->GetPawn()))
 	{
-		UE_LOG(LogMosesSpawn, Warning, TEXT("[MatchGM][Seamless] RestartPlayer (NoPawn) PC=%s"), *GetNameSafe(PC));
+		UE_LOG(LogMosesSpawn, Warning, TEXT("%s [MatchGM][Seamless] RestartPlayer (NoPawn) PC=%s"),
+			MOSES_TAG_RESPAWN_SV, *GetNameSafe(PC));
 		RestartPlayer(PC);
 	}
 
@@ -331,7 +338,8 @@ APawn* AMosesMatchGameMode::SpawnDefaultPawnFor_Implementation(AController* NewP
 	TSubclassOf<APawn> PawnClassToSpawn = GetDefaultPawnClassForController(NewPlayer);
 	if (!PawnClassToSpawn)
 	{
-		UE_LOG(LogMosesSpawn, Warning, TEXT("[MatchGM] SpawnDefaultPawnFor fallback -> Super (No PawnClass resolved)"));
+		UE_LOG(LogMosesSpawn, Warning, TEXT("%s [MatchGM] SpawnDefaultPawnFor fallback -> Super (No PawnClass resolved)"),
+			MOSES_TAG_RESPAWN_SV);
 		return Super::SpawnDefaultPawnFor_Implementation(NewPlayer, StartSpot);
 	}
 
@@ -344,11 +352,13 @@ APawn* AMosesMatchGameMode::SpawnDefaultPawnFor_Implementation(AController* NewP
 	APawn* NewPawn = GetWorld()->SpawnActor<APawn>(PawnClassToSpawn, SpawnTM, Params);
 	if (!NewPawn)
 	{
-		UE_LOG(LogMosesSpawn, Error, TEXT("[MatchGM] SpawnActor FAILED PawnClass=%s"), *GetNameSafe(PawnClassToSpawn));
+		UE_LOG(LogMosesSpawn, Error, TEXT("%s [MatchGM] SpawnActor FAILED PawnClass=%s"),
+			MOSES_TAG_RESPAWN_SV, *GetNameSafe(PawnClassToSpawn));
 		return nullptr;
 	}
 
-	UE_LOG(LogMosesSpawn, Warning, TEXT("[MatchGM] Spawned Pawn=%s Class=%s Start=%s"),
+	UE_LOG(LogMosesSpawn, Warning, TEXT("%s [MatchGM] Spawned Pawn=%s Class=%s Start=%s"),
+		MOSES_TAG_RESPAWN_SV,
 		*GetNameSafe(NewPawn),
 		*GetNameSafe(PawnClassToSpawn),
 		*GetNameSafe(StartSpot));
@@ -394,7 +404,6 @@ UClass* AMosesMatchGameMode::ResolvePawnClassFromSelectedId(int32 SelectedId) co
 		return nullptr;
 	}
 
-	// 현재는 1~2만 존재한다고 가정(필요시 확장)
 	const int32 SafeSelectedId = FMath::Clamp(SelectedId, 1, 2);
 
 	FMSCharacterEntry Entry;
@@ -586,10 +595,7 @@ UMosesExperienceManagerComponent* AMosesMatchGameMode::GetExperienceManager() co
 
 void AMosesMatchGameMode::ServerSwitchExperienceByPhase(EMosesMatchPhase Phase)
 {
-	if (!HasAuthority())
-	{
-		return;
-	}
+	MOSES_GUARD_AUTHORITY_VOID(this, "Experience", TEXT("Client attempted ServerSwitchExperienceByPhase"));
 
 	const FName ExpName = GetExperienceNameForPhase(Phase);
 	if (ExpName.IsNone())
@@ -607,7 +613,8 @@ void AMosesMatchGameMode::ServerSwitchExperienceByPhase(EMosesMatchPhase Phase)
 		return;
 	}
 
-	UE_LOG(LogMosesExp, Warning, TEXT("[MatchGM][EXP] Switch -> %s (Phase=%s)"),
+	UE_LOG(LogMosesExp, Warning, TEXT("%s [MatchGM][EXP] Switch -> %s (Phase=%s)"),
+		MOSES_TAG_COMBAT_SV,
 		*NewExperienceId.ToString(),
 		*UEnum::GetValueAsString(Phase));
 
@@ -616,10 +623,7 @@ void AMosesMatchGameMode::ServerSwitchExperienceByPhase(EMosesMatchPhase Phase)
 
 void AMosesMatchGameMode::SetMatchPhase(EMosesMatchPhase NewPhase)
 {
-	if (!HasAuthority())
-	{
-		return;
-	}
+	MOSES_GUARD_AUTHORITY_VOID(this, "Phase", TEXT("Client attempted SetMatchPhase"));
 
 	if (CurrentPhase == NewPhase)
 	{
@@ -628,7 +632,6 @@ void AMosesMatchGameMode::SetMatchPhase(EMosesMatchPhase NewPhase)
 
 	CurrentPhase = NewPhase;
 
-	// Phase 진입 시 Experience 교체
 	ServerSwitchExperienceByPhase(CurrentPhase);
 
 	GetWorldTimerManager().ClearTimer(PhaseTimerHandle);
@@ -636,7 +639,8 @@ void AMosesMatchGameMode::SetMatchPhase(EMosesMatchPhase NewPhase)
 	const float Duration = GetPhaseDurationSeconds(CurrentPhase);
 	PhaseEndTimeSeconds = (Duration > 0.f) ? (GetWorld()->GetTimeSeconds() + Duration) : 0.0;
 
-	UE_LOG(LogMosesExp, Warning, TEXT("[MatchGM][PHASE] -> %s (Duration=%.2f EndTime=%.2f)"),
+	UE_LOG(LogMosesExp, Warning, TEXT("%s [MatchGM][PHASE] -> %s (Duration=%.2f EndTime=%.2f)"),
+		MOSES_TAG_COMBAT_SV,
 		*UEnum::GetValueAsString(CurrentPhase),
 		Duration,
 		PhaseEndTimeSeconds);
