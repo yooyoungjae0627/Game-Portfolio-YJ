@@ -9,8 +9,6 @@
 #include "UE5_Multi_Shooter/Player/MosesPlayerState.h"
 #include "UE5_Multi_Shooter/System/MosesLobbyLocalPlayerSubsystem.h"
 
-#include "UE5_Multi_Shooter/Development/MosesDeveloperCheatManager.h"
-
 #include "Camera/CameraActor.h"
 #include "Engine/LocalPlayer.h"
 #include "Engine/World.h"
@@ -32,7 +30,6 @@ AMosesPlayerController::AMosesPlayerController(const FObjectInitializer& ObjectI
 	: Super(ObjectInitializer)
 {
 	PlayerCameraManagerClass = AMosesPlayerCameraManager::StaticClass();
-	CheatClass = UMosesDeveloperCheatManager::StaticClass();
 	/**
 	 * 주의:
 	 * - bAutoManageActiveCameraTarget을 ctor에서 영구로 끄면 매치에서 Pawn 카메라 자동 복구가 깨질 수 있음.

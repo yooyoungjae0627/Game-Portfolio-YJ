@@ -2,19 +2,30 @@
 
 #include "CoreMinimal.h"
 #include "UE5_Multi_Shooter/Character/MosesCharacter.h"
+#include "GameplayTagContainer.h"
 #include "PlayerCharacter.generated.h"
+
+class AController;
+class APickupBase;
 
 class UMosesHeroComponent;
 class UMosesCameraComponent;
-class APickupBase;
+class UMosesCombatComponent;
+
+class UStaticMeshComponent;
 
 /**
  * APlayerCharacter
  *
  * [기능]
- * - 로컬 입력 엔드포인트(이동/시점/점프/스프린트/상호작용).
+ * - 로컬 입력 엔드포인트(이동/시점/점프/스프린트/상호작용/장착).
  * - 스프린트는 서버 권위로 확정(RepNotify)하고, 로컬은 예측값으로 즉시 반응.
  * - 픽업은 로컬이 타겟을 찾고 → 서버 RPC → PickupBase가 원자성/거리 체크 후 확정.
+ *
+ * [Equip 정책]
+ * - Equip 결정권: 서버 (PlayerState의 CombatComponent가 SSOT)
+ * - 코스메틱(무기 표시): 각 클라가 OnRep/Delegate로 재현
+ *   - Actor 스폰 없이, Character 내부 WeaponMeshComp(StaticMeshComponent)로 표시
  *
  * [명세]
  * - HeroComponent가 Input_* 함수를 호출한다(그래서 public).
@@ -38,28 +49,22 @@ public:
 	void Input_JumpPressed();
 	void Input_InteractPressed();
 
+	// Equip 입력(임시 테스트용: 1/2/3)
+	void Input_EquipSlot1();
+	void Input_EquipSlot2();
+	void Input_EquipSlot3();
+
 protected:
 	virtual void BeginPlay() override;
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
+
 	virtual void SetupPlayerInputComponent(UInputComponent* PlayerInputComponent) override;
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 
-	/**
-	 * 클라이언트에서 Controller가 나중에 복제되어 붙는 경우 대응
-	 * (SeamlessTravel / Replication 타이밍 이슈)
-	 */
 	virtual void OnRep_Controller() override;
-
-	/**
-	 * ClientRestart / RestartPlayer 이후 로컬 초기화 재시도
-	 * - 카메라 Delegate 바인딩 보장 목적
-	 */
 	virtual void PawnClientRestart() override;
-
-	/**
-	 * 서버/리슨 서버에서 Pawn이 Possess 되는 시점
-	 * - 로컬 플레이어라면 카메라 Delegate 바인딩 재시도
-	 */
 	virtual void PossessedBy(AController* NewController) override;
+	virtual void OnRep_PlayerState() override;
 
 private:
 	// Sprint
@@ -78,12 +83,26 @@ private:
 	UFUNCTION(Server, Reliable)
 	void Server_TryPickup(APickupBase* Target);
 
+	// Equip (Cosmetic)
+	void BindCombatComponent();
+	void UnbindCombatComponent();
+
+	void HandleEquippedChanged(int32 SlotIndex, FGameplayTag WeaponId);
+	void RefreshWeaponCosmetic(FGameplayTag WeaponId);
+
+	// WeaponMeshComp 생성/부착 보장
+	void EnsureWeaponMeshComponent();
+
 private:
 	UPROPERTY(VisibleAnywhere, Category = "Moses|Components")
 	TObjectPtr<UMosesHeroComponent> HeroComponent = nullptr;
 
 	UPROPERTY(VisibleAnywhere, Category = "Moses|Components")
 	TObjectPtr<UMosesCameraComponent> MosesCameraComponent = nullptr;
+
+	// [ADD] 코스메틱 무기 표시용(Actor 스폰 X)
+	UPROPERTY(VisibleAnywhere, Category = "Moses|Weapon")
+	TObjectPtr<UStaticMeshComponent> WeaponMeshComp = nullptr;
 
 private:
 	UPROPERTY(EditDefaultsOnly, Category = "Moses|Move")
@@ -95,10 +114,16 @@ private:
 	UPROPERTY(EditDefaultsOnly, Category = "Moses|Pickup")
 	float PickupTraceDistance = 500.0f;
 
+	UPROPERTY(EditDefaultsOnly, Category = "Moses|Weapon")
+	FName CharacterWeaponSocketName = TEXT("WeaponSocket");
+
 private:
 	UPROPERTY(ReplicatedUsing = OnRep_IsSprinting)
 	bool bIsSprinting = false;
 
 	UPROPERTY(Transient)
 	bool bLocalPredictedSprinting = false;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UMosesCombatComponent> CachedCombatComponent = nullptr;
 };

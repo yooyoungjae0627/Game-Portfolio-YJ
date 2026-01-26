@@ -13,25 +13,25 @@ bool APickup_Ammo::Server_ApplyPickup(APawn* InstigatorPawn)
 {
 	check(HasAuthority());
 
-	if (!IsValid(InstigatorPawn))
-	{
-		return false;
-	}
+	//if (!IsValid(InstigatorPawn))
+	//{
+	//	return false;
+	//}
 
-	AMosesPlayerState* PS = InstigatorPawn->GetPlayerState<AMosesPlayerState>();
-	if (!PS)
-	{
-		UE_LOG(LogMosesPickup, Warning, TEXT("[PICKUP] FAIL Reason=NoPlayerState Pawn=%s"), *GetNameSafe(InstigatorPawn));
-		return false;
-	}
+	//AMosesPlayerState* PS = InstigatorPawn->GetPlayerState<AMosesPlayerState>();
+	//if (!PS)
+	//{
+	//	UE_LOG(LogMosesPickup, Warning, TEXT("[PICKUP] FAIL Reason=NoPlayerState Pawn=%s"), *GetNameSafe(InstigatorPawn));
+	//	return false;
+	//}
 
-	UMosesCombatComponent* Combat = PS->FindComponentByClass<UMosesCombatComponent>();
-	if (!Combat)
-	{
-		UE_LOG(LogMosesPickup, Warning, TEXT("[PICKUP] FAIL Reason=NoCombatComponent PS=%s"), *GetNameSafe(PS));
-		return false;
-	}
+	//UMosesCombatComponent* Combat = PS->FindComponentByClass<UMosesCombatComponent>();
+	//if (!Combat)
+	//{
+	//	UE_LOG(LogMosesPickup, Warning, TEXT("[PICKUP] FAIL Reason=NoCombatComponent PS=%s"), *GetNameSafe(PS));
+	//	return false;
+	//}
 
-	Combat->Server_AddReserveAmmo(WeaponType, AddReserveAmmo);
+	//Combat->Server_AddReserveAmmo(WeaponType, AddReserveAmmo);
 	return true;
 }

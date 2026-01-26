@@ -32,7 +32,7 @@ void AMosesPlayerState::PostInitializeComponents()
 {
 	Super::PostInitializeComponents();
 
-	// Day2: Combat 초기값은 서버에서만 확정.
+	// [MOD] Combat 초기값은 서버에서만 확정(중복 호출 안전)
 	if (HasAuthority() && CombatComponent)
 	{
 		UE_LOG(LogMosesCombat, Warning, TEXT("%s PS PostInit -> EnsureCombatInit PS=%s"),
@@ -409,8 +409,8 @@ void AMosesPlayerState::BindCombatDelegatesOnce()
 
 	bCombatDelegatesBound = true;
 
-	CombatComponent->OnCombatDataChangedNative.AddUObject(this, &ThisClass::HandleCombatDataChanged_Native);
-	CombatComponent->OnCombatDataChangedBP.AddDynamic(this, &ThisClass::HandleCombatDataChanged_BP);
+	//CombatComponent->OnCombatDataChangedNative.AddUObject(this, &ThisClass::HandleCombatDataChanged_Native);
+	//CombatComponent->OnCombatDataChangedBP.AddDynamic(this, &ThisClass::HandleCombatDataChanged_BP);
 
 	UE_LOG(LogMosesCombat, Warning, TEXT("%s Bound Combat delegates PS=%s CC=%s"),
 		MOSES_TAG_COMBAT_CL, *GetNameSafe(this), *GetNameSafe(CombatComponent));
@@ -437,30 +437,30 @@ void AMosesPlayerState::BroadcastAmmoAndGrenade()
 		return;
 	}
 
-	const TArray<FAmmoState>& AmmoStates = CombatComponent->GetAmmoStates();
-	if (AmmoStates.Num() <= 0)
-	{
-		return;
-	}
+	//const TArray<FAmmoState>& AmmoStates = CombatComponent->GetAmmoStates();
+	//if (AmmoStates.Num() <= 0)
+	//{
+	//	return;
+	//}
 
-	// [정책] 현재 무기 개념이 없으므로 Rifle(0) 기준으로 표시 (Day2 완료 후 확장)
-	{
-		const FAmmoState& Rifle = AmmoStates[0];
-		OnAmmoChanged.Broadcast(Rifle.MagAmmo, Rifle.ReserveAmmo);
+	//// [정책] 현재 무기 개념이 없으므로 Rifle(0) 기준으로 표시 (Day2 완료 후 확장)
+	//{
+	//	const FAmmoState& Rifle = AmmoStates[0];
+	//	OnAmmoChanged.Broadcast(Rifle.MagAmmo, Rifle.ReserveAmmo);
 
-		UE_LOG(LogMosesCombat, Verbose, TEXT("%s AmmoChanged Rifle %d/%d"),
-			MOSES_TAG_HUD_CL, Rifle.MagAmmo, Rifle.ReserveAmmo);
-	}
+	//	UE_LOG(LogMosesCombat, Verbose, TEXT("%s AmmoChanged Rifle %d/%d"),
+	//		MOSES_TAG_HUD_CL, Rifle.MagAmmo, Rifle.ReserveAmmo);
+	//}
 
-	// Grenade는 enum 3번, ReserveAmmo를 보유 개수로 사용 중인 정책 유지
-	if (AmmoStates.Num() > 3)
-	{
-		const FAmmoState& Grenade = AmmoStates[3];
-		OnGrenadeChanged.Broadcast(Grenade.ReserveAmmo);
+	//// Grenade는 enum 3번, ReserveAmmo를 보유 개수로 사용 중인 정책 유지
+	//if (AmmoStates.Num() > 3)
+	//{
+	//	const FAmmoState& Grenade = AmmoStates[3];
+	//	OnGrenadeChanged.Broadcast(Grenade.ReserveAmmo);
 
-		UE_LOG(LogMosesCombat, Verbose, TEXT("%s GrenadeChanged Count=%d"),
-			MOSES_TAG_HUD_CL, Grenade.ReserveAmmo);
-	}
+	//	UE_LOG(LogMosesCombat, Verbose, TEXT("%s GrenadeChanged Count=%d"),
+	//		MOSES_TAG_HUD_CL, Grenade.ReserveAmmo);
+	//}
 }
 
 void AMosesPlayerState::BroadcastScore()

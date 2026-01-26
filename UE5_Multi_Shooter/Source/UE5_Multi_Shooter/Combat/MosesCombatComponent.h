@@ -2,116 +2,89 @@
 
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
-#include "Net/UnrealNetwork.h"
-
-#include "UE5_Multi_Shooter/Combat/MosesWeaponTypes.h"
-
+#include "GameplayTagContainer.h"
 #include "MosesCombatComponent.generated.h"
+
+DECLARE_MULTICAST_DELEGATE_TwoParams(FMosesOnEquippedChanged, int32 /*SlotIndex*/, FGameplayTag /*WeaponId*/);
 
 /**
  * UMosesCombatComponent
  *
- * [역할]
- * - 전투 상태(Ammo / WeaponSlot)를 서버 권위로 관리
- * - 반드시 PlayerState 소유
- * - Pawn에는 절대 상태를 두지 않는다
+ * [SSOT]
+ * - Weapon Slot / CurrentSlot / WeaponId는 PlayerState가 단일 진실로 소유한다.
+ *
+ * [정책]
+ * - Equip 결정권은 서버.
+ * - 코스메틱(무기 스폰/부착)은 Pawn이 Delegate(OnEquippedChanged)로 처리한다.
  */
-
-DECLARE_MULTICAST_DELEGATE_OneParam(FMosesCombatDataChangedNative, const TCHAR* /*Reason*/);
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FMosesCombatDataChangedBP, const FString&, Reason);
-
 UCLASS(ClassGroup = (Moses), meta = (BlueprintSpawnableComponent))
 class UE5_MULTI_SHOOTER_API UMosesCombatComponent : public UActorComponent
 {
 	GENERATED_BODY()
 
 public:
-	UMosesCombatComponent(const FObjectInitializer& ObjectInitializer);
+	UMosesCombatComponent();
 
-public:
-	const TArray<FAmmoState>& GetAmmoStates() const { return AmmoStates; }
-	const TArray<FWeaponSlotState>& GetWeaponSlots() const { return WeaponSlots; }
+	// ===== SSOT Query =====
+	int32 GetCurrentSlot() const { return CurrentSlot; }
+	FGameplayTag GetWeaponIdForSlot(int32 SlotIndex) const;
+	FGameplayTag GetEquippedWeaponId() const;
 
-	// ----------------------------
-	// Server-only API
-	// ----------------------------
+	// ===== Equip API (Client → Server) =====
+	void RequestEquipSlot(int32 SlotIndex);
+
+	// 서버 권위 확정
+	UFUNCTION(Server, Reliable)
+	void ServerEquipSlot(int32 SlotIndex);
+
+	// 서버 전용: 기본 슬롯 무기 초기화(스모크 용)
+	void ServerInitDefaultSlots(const FGameplayTag& InSlot1, const FGameplayTag& InSlot2, const FGameplayTag& InSlot3);
+
+	// 서버 전용:“초기화 보장” (중복 호출 안전)
 	void Server_EnsureInitialized_Day2();
-	void Server_SetAmmoState(EMosesWeaponType WeaponType, const FAmmoState& NewState);
-	void Server_AddReserveAmmo(EMosesWeaponType WeaponType, int32 DeltaReserve);
-	void Server_AddMagAmmo(EMosesWeaponType WeaponType, int32 DeltaMag);
-	void Server_SetWeaponSlot(EMosesWeaponType SlotType, const FWeaponSlotState& NewState);
 
-	// ----------------------------
-	// Delegates
-	// ----------------------------
-	FMosesCombatDataChangedNative OnCombatDataChangedNative;
-
-	UPROPERTY(BlueprintAssignable)
-	FMosesCombatDataChangedBP OnCombatDataChangedBP;
+	// ===== Delegates =====
+	FMosesOnEquippedChanged OnEquippedChanged;
 
 protected:
-	virtual void BeginPlay() override;
-
-private:
-	// ----------------------------
-	// Internal helpers
-	// ----------------------------
-	void BroadcastCombatDataChanged(const TCHAR* Reason);
-	void EnsureArraysSized();
-	int32 WeaponTypeToIndex(EMosesWeaponType WeaponType) const;
-	void ForceReplication();
-	void ValidateOwnerIsPlayerState() const;
-
-private:
-	// ----------------------------
-	// Replicated states
-	// ----------------------------
-	UPROPERTY(ReplicatedUsing = OnRep_AmmoStates)
-	TArray<FAmmoState> AmmoStates;
-
-	UPROPERTY(ReplicatedUsing = OnRep_WeaponSlots)
-	TArray<FWeaponSlotState> WeaponSlots;
-
-	UPROPERTY(ReplicatedUsing = OnRep_ServerInitialized_Day2)
-	bool bServerInitialized_Day2 = false;
-
-	// ----------------------------
-	// ★ 누락돼서 에러 났던 부분 (필수)
-	// ----------------------------
-	UPROPERTY(EditDefaultsOnly, Category = "Moses|Day2|Defaults")
-	int32 DefaultRifleMag = 30;
-
-	UPROPERTY(EditDefaultsOnly, Category = "Moses|Day2|Defaults")
-	int32 DefaultRifleReserve = 90;
-
-	UPROPERTY(EditDefaultsOnly, Category = "Moses|Day2|Defaults")
-	int32 DefaultRifleMaxMag = 30;
-
-	UPROPERTY(EditDefaultsOnly, Category = "Moses|Day2|Defaults")
-	int32 DefaultRifleMaxReserve = 180;
-
-	UPROPERTY(EditDefaultsOnly, Category = "Moses|Day2|Defaults")
-	int32 DefaultPistolMag = 12;
-
-	UPROPERTY(EditDefaultsOnly, Category = "Moses|Day2|Defaults")
-	int32 DefaultPistolReserve = 24;
-
-	UPROPERTY(EditDefaultsOnly, Category = "Moses|Day2|Defaults")
-	int32 DefaultPistolMaxMag = 12;
-
-	UPROPERTY(EditDefaultsOnly, Category = "Moses|Day2|Defaults")
-	int32 DefaultPistolMaxReserve = 60;
-
-private:
-	UFUNCTION()
-	void OnRep_AmmoStates();
-
-	UFUNCTION()
-	void OnRep_WeaponSlots();
-
-	UFUNCTION()
-	void OnRep_ServerInitialized_Day2();
-
-public:
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
+
+private:
+	// RepNotifies
+	UFUNCTION() void OnRep_CurrentSlot();
+	UFUNCTION() void OnRep_Slot1WeaponId();
+	UFUNCTION() void OnRep_Slot2WeaponId();
+	UFUNCTION() void OnRep_Slot3WeaponId();
+
+private:
+	void BroadcastEquippedChanged(const TCHAR* ContextTag);
+
+	bool IsValidSlotIndex(int32 SlotIndex) const;
+	FGameplayTag GetSlotWeaponIdInternal(int32 SlotIndex) const;
+
+	// 서버에서 WeaponId -> DataAsset Resolve 로그 증거
+	void LogResolveWeaponData_Server(const FGameplayTag& WeaponId) const;
+
+private:
+	// -----------------------
+	// SSOT Replicated Variables
+	// -----------------------
+	UPROPERTY(ReplicatedUsing = OnRep_CurrentSlot)
+	int32 CurrentSlot = 1;
+
+	UPROPERTY(ReplicatedUsing = OnRep_Slot1WeaponId)
+	FGameplayTag Slot1WeaponId;
+
+	UPROPERTY(ReplicatedUsing = OnRep_Slot2WeaponId)
+	FGameplayTag Slot2WeaponId;
+
+	UPROPERTY(ReplicatedUsing = OnRep_Slot3WeaponId)
+	FGameplayTag Slot3WeaponId;
+
+private:
+	// -----------------------
+	// Runtime guards
+	// -----------------------
+	UPROPERTY(Transient)
+	bool bInitialized_Day2 = false;
 };

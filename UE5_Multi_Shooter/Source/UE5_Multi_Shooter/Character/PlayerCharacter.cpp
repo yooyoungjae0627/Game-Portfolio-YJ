@@ -4,33 +4,51 @@
 #include "GameFramework/Controller.h"
 #include "GameFramework/CharacterMovementComponent.h"
 
-#include "Components/CapsuleComponent.h" 
+#include "Components/CapsuleComponent.h"
+#include "Components/StaticMeshComponent.h"
+#include "Components/SkeletalMeshComponent.h"
 
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
 #include "UE5_Multi_Shooter/Camera/MosesCameraComponent.h"
 #include "UE5_Multi_Shooter/Character/Components/MosesHeroComponent.h"
 #include "UE5_Multi_Shooter/Pickup/PickupBase.h"
 
+#include "UE5_Multi_Shooter/Player/MosesPlayerState.h"
+#include "UE5_Multi_Shooter/Combat/MosesCombatComponent.h"
+
+#include "UE5_Multi_Shooter/Combat/MosesWeaponRegistrySubsystem.h"
+#include "UE5_Multi_Shooter/Combat/MosesWeaponData.h"
+
+#include "Engine/GameInstance.h"
+#include "Engine/World.h"
+
 APlayerCharacter::APlayerCharacter()
 {
 	bReplicates = true;
 	PrimaryActorTick.bCanEverTick = false;
 
-	// ViewTarget이 이 Pawn일 때 CameraComponent를 자동 사용하도록
 	bFindCameraComponentWhenViewTarget = true;
 
-	// Player 전용 컴포넌트 구성
 	HeroComponent = CreateDefaultSubobject<UMosesHeroComponent>(TEXT("HeroComponent"));
 	MosesCameraComponent = CreateDefaultSubobject<UMosesCameraComponent>(TEXT("MosesCameraComponent"));
 
 	if (MosesCameraComponent)
 	{
-		// [FIX] Root에 붙여 타입/구조 안정성 보장
 		MosesCameraComponent->SetupAttachment(GetRootComponent());
-
 		MosesCameraComponent->SetRelativeLocation(FVector(0.f, 0.f, 60.f));
 		MosesCameraComponent->SetRelativeRotation(FRotator::ZeroRotator);
 		MosesCameraComponent->bAutoActivate = true;
+	}
+
+	// [ADD] WeaponMeshComp는 생성만 해두고 BeginPlay에서 Socket에 부착
+	WeaponMeshComp = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("WeaponMeshComp"));
+	if (WeaponMeshComp)
+	{
+		WeaponMeshComp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		WeaponMeshComp->SetGenerateOverlapEvents(false);
+		WeaponMeshComp->SetCastShadow(true);
+		WeaponMeshComp->PrimaryComponentTick.bCanEverTick = false;
+		WeaponMeshComp->SetupAttachment(GetMesh()); // 실제 Socket 부착은 BeginPlay에서
 	}
 }
 
@@ -38,18 +56,33 @@ void APlayerCharacter::BeginPlay()
 {
 	Super::BeginPlay();
 
-	// 기본 걷기 속도 세팅
 	if (UCharacterMovementComponent* MoveComp = GetCharacterMovement())
 	{
 		MoveComp->MaxWalkSpeed = WalkSpeed;
 	}
+
+	EnsureWeaponMeshComponent();
+
+	BindCombatComponent();
+}
+
+void APlayerCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	UnbindCombatComponent();
+
+	// 코스메틱 정리(메시만 비움)
+	if (WeaponMeshComp)
+	{
+		WeaponMeshComp->SetStaticMesh(nullptr);
+	}
+
+	Super::EndPlay(EndPlayReason);
 }
 
 void APlayerCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
 {
 	Super::SetupPlayerInputComponent(PlayerInputComponent);
 
-	// HeroComponent가 EnhancedInput 바인딩을 담당
 	if (HeroComponent)
 	{
 		HeroComponent->SetupInputBindings(PlayerInputComponent);
@@ -59,8 +92,6 @@ void APlayerCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCom
 void APlayerCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
 {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
-
-	// 스프린트 상태는 서버가 확정하고 복제
 	DOREPLIFETIME(APlayerCharacter, bIsSprinting);
 }
 
@@ -68,7 +99,6 @@ void APlayerCharacter::OnRep_Controller()
 {
 	Super::OnRep_Controller();
 
-	// 클라에서 Controller가 “나중에” 붙는 케이스 대응
 	if (HeroComponent)
 	{
 		HeroComponent->TryBindCameraModeDelegate_LocalOnly();
@@ -79,27 +109,34 @@ void APlayerCharacter::PawnClientRestart()
 {
 	Super::PawnClientRestart();
 
-	// ClientRestart/RestartPlayer 타이밍에서 로컬 초기화 재시도
 	if (HeroComponent)
 	{
 		HeroComponent->TryBindCameraModeDelegate_LocalOnly();
 	}
+
+	BindCombatComponent();
 }
 
 void APlayerCharacter::PossessedBy(AController* NewController)
 {
 	Super::PossessedBy(NewController);
 
-	// 서버/리슨 포함: Possess 시점에서도 바인딩 시도 (로컬이면 의미 있음)
 	if (HeroComponent)
 	{
 		HeroComponent->TryBindCameraModeDelegate_LocalOnly();
 	}
+
+	BindCombatComponent();
+}
+
+void APlayerCharacter::OnRep_PlayerState()
+{
+	Super::OnRep_PlayerState();
+	BindCombatComponent();
 }
 
 bool APlayerCharacter::IsSprinting() const
 {
-	// 로컬은 즉시 반응(예측), 원격은 서버 복제값
 	return IsLocallyControlled() ? bLocalPredictedSprinting : bIsSprinting;
 }
 
@@ -110,7 +147,6 @@ void APlayerCharacter::Input_Move(const FVector2D& MoveValue)
 		return;
 	}
 
-	// 컨트롤 회전(Yaw) 기준으로 이동 방향 계산
 	const FRotator ControlRot = Controller->GetControlRotation();
 	const FRotator YawRot(0.f, ControlRot.Yaw, 0.f);
 
@@ -146,10 +182,41 @@ void APlayerCharacter::Input_JumpPressed()
 
 void APlayerCharacter::Input_InteractPressed()
 {
-	// 로컬에서 픽업 타겟을 찾고 서버에 요청
 	APickupBase* Target = FindPickupTarget_Local();
 	Server_TryPickup(Target);
 }
+
+// -------------------------
+// Equip 입력
+// -------------------------
+
+void APlayerCharacter::Input_EquipSlot1()
+{
+	if (CachedCombatComponent)
+	{
+		CachedCombatComponent->RequestEquipSlot(1);
+	}
+}
+
+void APlayerCharacter::Input_EquipSlot2()
+{
+	if (CachedCombatComponent)
+	{
+		CachedCombatComponent->RequestEquipSlot(2);
+	}
+}
+
+void APlayerCharacter::Input_EquipSlot3()
+{
+	if (CachedCombatComponent)
+	{
+		CachedCombatComponent->RequestEquipSlot(3);
+	}
+}
+
+// -------------------------
+// Sprint
+// -------------------------
 
 void APlayerCharacter::ApplySprintSpeed_LocalPredict(bool bNewSprinting)
 {
@@ -160,7 +227,6 @@ void APlayerCharacter::ApplySprintSpeed_LocalPredict(bool bNewSprinting)
 
 	bLocalPredictedSprinting = bNewSprinting;
 
-	// 로컬 즉시 반영(체감)
 	if (UCharacterMovementComponent* MoveComp = GetCharacterMovement())
 	{
 		MoveComp->MaxWalkSpeed = bLocalPredictedSprinting ? SprintSpeed : WalkSpeed;
@@ -169,13 +235,11 @@ void APlayerCharacter::ApplySprintSpeed_LocalPredict(bool bNewSprinting)
 
 void APlayerCharacter::ApplySprintSpeed_FromAuth(const TCHAR* From)
 {
-	// 서버 확정값 적용
 	if (UCharacterMovementComponent* MoveComp = GetCharacterMovement())
 	{
 		MoveComp->MaxWalkSpeed = bIsSprinting ? SprintSpeed : WalkSpeed;
 	}
 
-	// 로컬 예측값도 서버 확정값으로 맞춤
 	if (IsLocallyControlled())
 	{
 		bLocalPredictedSprinting = bIsSprinting;
@@ -184,18 +248,18 @@ void APlayerCharacter::ApplySprintSpeed_FromAuth(const TCHAR* From)
 
 void APlayerCharacter::Server_SetSprinting_Implementation(bool bNewSprinting)
 {
-	// 서버만 상태 변경
 	bIsSprinting = bNewSprinting;
-
-	// 서버 자신의 이동속도도 즉시 맞춤
 	ApplySprintSpeed_FromAuth(TEXT("Server_SetSprinting"));
 }
 
 void APlayerCharacter::OnRep_IsSprinting()
 {
-	// 클라에서 서버 확정값 반영
 	ApplySprintSpeed_FromAuth(TEXT("OnRep_IsSprinting"));
 }
+
+// -------------------------
+// Pickup
+// -------------------------
 
 APickupBase* APlayerCharacter::FindPickupTarget_Local() const
 {
@@ -204,7 +268,6 @@ APickupBase* APlayerCharacter::FindPickupTarget_Local() const
 		return nullptr;
 	}
 
-	// FollowCamera가 없으므로 MosesCameraComponent 위치를 사용한다.
 	const UMosesCameraComponent* CamComp = UMosesCameraComponent::FindCameraComponent(this);
 	const FVector Start = CamComp ? CamComp->GetComponentLocation() : GetActorLocation();
 
@@ -230,6 +293,135 @@ void APlayerCharacter::Server_TryPickup_Implementation(APickupBase* Target)
 		return;
 	}
 
-	// 서버 확정: PickupBase가 원자성/거리 체크 후 확정
 	Target->ServerTryConsume(this);
+}
+
+// -------------------------
+// Equip Cosmetic
+// -------------------------
+
+void APlayerCharacter::BindCombatComponent()
+{
+	AMosesPlayerState* PS = GetPlayerState<AMosesPlayerState>();
+	if (!PS)
+	{
+		return;
+	}
+
+	UMosesCombatComponent* CC = PS->GetCombatComponent();
+	if (!CC || CC == CachedCombatComponent)
+	{
+		return;
+	}
+
+	UnbindCombatComponent();
+
+	CachedCombatComponent = CC;
+	CachedCombatComponent->OnEquippedChanged.AddUObject(this, &ThisClass::HandleEquippedChanged);
+
+	const FGameplayTag EquippedId = CachedCombatComponent->GetEquippedWeaponId();
+	if (EquippedId.IsValid())
+	{
+		HandleEquippedChanged(CachedCombatComponent->GetCurrentSlot(), EquippedId);
+	}
+}
+
+void APlayerCharacter::UnbindCombatComponent()
+{
+	if (CachedCombatComponent)
+	{
+		CachedCombatComponent->OnEquippedChanged.RemoveAll(this);
+		CachedCombatComponent = nullptr;
+	}
+}
+
+void APlayerCharacter::HandleEquippedChanged(int32 SlotIndex, FGameplayTag WeaponId)
+{
+	RefreshWeaponCosmetic(WeaponId);
+}
+
+void APlayerCharacter::EnsureWeaponMeshComponent()
+{
+	if (!WeaponMeshComp)
+	{
+		return;
+	}
+
+	USkeletalMeshComponent* MeshComp = GetMesh();
+	if (!MeshComp)
+	{
+		return;
+	}
+
+	// Socket 존재 여부는 여기서 한 번만 체크(없으면 이후 Attach 실패 로그가 난다)
+	if (!MeshComp->DoesSocketExist(CharacterWeaponSocketName))
+	{
+		UE_LOG(LogMosesWeapon, Warning, TEXT("[WEAPON][CL] Missing Character Socket=%s Char=%s"),
+			*CharacterWeaponSocketName.ToString(), *GetNameSafe(this));
+		return;
+	}
+
+	WeaponMeshComp->AttachToComponent(MeshComp, FAttachmentTransformRules::SnapToTargetNotIncludingScale, CharacterWeaponSocketName);
+}
+
+void APlayerCharacter::RefreshWeaponCosmetic(FGameplayTag WeaponId)
+{
+	if (!WeaponMeshComp)
+	{
+		return;
+	}
+
+	if (!WeaponId.IsValid())
+	{
+		WeaponMeshComp->SetStaticMesh(nullptr);
+
+		UE_LOG(LogMosesWeapon, Warning, TEXT("[WEAPON][CL] OnRep Equip FAIL WeaponId=INVALID Char=%s"),
+			*GetNameSafe(this));
+		return;
+	}
+
+	UGameInstance* GI = GetGameInstance();
+	if (!GI)
+	{
+		UE_LOG(LogMosesWeapon, Warning, TEXT("[WEAPON][CL] OnRep Equip FAIL NoGameInstance Char=%s Weapon=%s"),
+			*GetNameSafe(this), *WeaponId.ToString());
+		return;
+	}
+
+	UMosesWeaponRegistrySubsystem* Registry = GI->GetSubsystem<UMosesWeaponRegistrySubsystem>();
+	if (!Registry)
+	{
+		UE_LOG(LogMosesWeapon, Warning, TEXT("[WEAPON][CL] OnRep Equip FAIL NoRegistry Char=%s Weapon=%s"),
+			*GetNameSafe(this), *WeaponId.ToString());
+		return;
+	}
+
+	const UMosesWeaponData* Data = Registry->ResolveWeaponData(WeaponId);
+	if (!Data)
+	{
+		UE_LOG(LogMosesWeapon, Warning, TEXT("[WEAPON][CL] OnRep Equip FAIL ResolveData Weapon=%s Char=%s"),
+			*WeaponId.ToString(), *GetNameSafe(this));
+		return;
+	}
+
+	UStaticMesh* StaticMesh = Data->WeaponStaticMesh.LoadSynchronous();
+	if (!StaticMesh)
+	{
+		WeaponMeshComp->SetStaticMesh(nullptr);
+
+		UE_LOG(LogMosesWeapon, Warning, TEXT("[WEAPON][CL] OnRep Equip FAIL WeaponStaticMesh NULL Weapon=%s Data=%s"),
+			*WeaponId.ToString(), *GetNameSafe(Data));
+		return;
+	}
+
+	WeaponMeshComp->SetStaticMesh(StaticMesh);
+
+	// Socket 재부착 보장(SeamlessTravel/Restart에서 컴포넌트가 풀릴 수 있음)
+	EnsureWeaponMeshComponent();
+
+	UE_LOG(LogMosesWeapon, Log, TEXT("[WEAPON][CL] OnRep Equip Weapon=%s Attach=OK Char=%s Socket=%s Mesh=%s"),
+		*WeaponId.ToString(),
+		*GetNameSafe(this),
+		*CharacterWeaponSocketName.ToString(),
+		*GetNameSafe(StaticMesh));
 }
