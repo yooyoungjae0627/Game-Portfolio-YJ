@@ -39,13 +39,31 @@ protected:
 	virtual void OnRep_PlayerState() override;
 
 protected:
-	/** 공통 피격 훅(서버 판정 파이프라인에서 호출 가능) */
+	// 서버 판정 파이프라인에서 호출 가능한 공통 훅
 	virtual void HandleDamaged(float DamageAmount, AActor* DamageCauser);
-
-	/** 공통 사망 훅(서버 판정 파이프라인에서 호출 가능) */
 	virtual void HandleDeath(AActor* DeathCauser);
 
+public:
+	// ============================================================
+	// Server pipeline wrappers
+	// - CombatComponent(서버 판정)에서 Pawn으로 "서버 훅"을 호출할 수 있게 해준다.
+	// - 서버에서만 실행되도록 Guard 포함
+	// ============================================================
+	void ServerNotifyDamaged(float DamageAmount, AActor* DamageCauser);
+	void ServerNotifyDeath(AActor* DeathCauser);
+
+	// ============================================================
+	// Cosmetic triggers (All clients)
+	// - 최소 버전: 로그만. (플레이어는 APlayerCharacter에서 몽타주로 override)
+	// ============================================================
+	UFUNCTION(NetMulticast, Unreliable)
+	void Multicast_PlayHitReactCosmetic();
+
+	UFUNCTION(NetMulticast, Reliable)
+	void Multicast_PlayDeathCosmetic();
+
 private:
+	// Pawn -> PlayerState(ASC) 초기화 보강 (Possessed/OnRep/BeginPlay)
 	void TryInitASC_FromPawn(const TCHAR* Reason);
 
 private:
@@ -53,7 +71,7 @@ private:
 	float DefaultWalkSpeed = 600.0f;
 
 private:
-	// Pawn SSOT 위반 감지기
+	// Pawn SSOT 위반 감지기(HP/Ammo 등을 Pawn에 두지 말 것)
 	UPROPERTY(VisibleAnywhere, Category = "Moses|Guard")
 	TObjectPtr<UMosesPawnSSOTGuardComponent> PawnSSOTGuard;
 };

@@ -1,135 +1,89 @@
 #include "UE5_Multi_Shooter/Character/PlayerCharacter.h"
 
-#include "Net/UnrealNetwork.h"
-#include "GameFramework/Controller.h"
-#include "GameFramework/CharacterMovementComponent.h"
-
-#include "Components/CapsuleComponent.h"
-//#include "Components/StaticMeshComponent.h" // [MOD] 무기가 SkeletalMesh이므로 StaticMeshComp 불필요
-#include "Components/SkeletalMeshComponent.h"
-
-#include "UE5_Multi_Shooter/MosesLogChannels.h"
-#include "UE5_Multi_Shooter/Camera/MosesCameraComponent.h"
-#include "UE5_Multi_Shooter/Character/Components/MosesHeroComponent.h"
-#include "UE5_Multi_Shooter/Pickup/PickupBase.h"
-
-#include "UE5_Multi_Shooter/Player/MosesPlayerState.h"
 #include "UE5_Multi_Shooter/Combat/MosesCombatComponent.h"
-
 #include "UE5_Multi_Shooter/Combat/MosesWeaponRegistrySubsystem.h"
 #include "UE5_Multi_Shooter/Combat/MosesWeaponData.h"
+#include "UE5_Multi_Shooter/Player/MosesPlayerState.h"
+#include "UE5_Multi_Shooter/System/MosesAuthorityGuards.h"
+#include "UE5_Multi_Shooter/Pickup/PickupBase.h"
+#include "UE5_Multi_Shooter/MosesLogChannels.h"
 
-#include "Engine/GameInstance.h"
+#include "GameFramework/CharacterMovementComponent.h"
+#include "Components/SkeletalMeshComponent.h"
+
+#include "Animation/AnimInstance.h"
+#include "Animation/AnimMontage.h"
+
+#include "Net/UnrealNetwork.h"
 #include "Engine/World.h"
+#include "Engine/GameInstance.h"
+
+// ============================================================================
+// Ctor / Lifecycle
+// ============================================================================
 
 APlayerCharacter::APlayerCharacter()
 {
-	bReplicates = true;
 	PrimaryActorTick.bCanEverTick = false;
+	bReplicates = true;
 
-	bFindCameraComponentWhenViewTarget = true;
-
-	HeroComponent = CreateDefaultSubobject<UMosesHeroComponent>(TEXT("HeroComponent"));
-	MosesCameraComponent = CreateDefaultSubobject<UMosesCameraComponent>(TEXT("MosesCameraComponent"));
-
-	if (MosesCameraComponent)
-	{
-		MosesCameraComponent->SetupAttachment(GetRootComponent());
-		MosesCameraComponent->SetRelativeLocation(FVector(0.f, 0.f, 60.f));
-		MosesCameraComponent->SetRelativeRotation(FRotator::ZeroRotator);
-		MosesCameraComponent->bAutoActivate = true;
-	}
-
-	// [MOD] 무기가 Skeletal Mesh라면 WeaponMeshComp도 USkeletalMeshComponent여야 함
-	// [ADD] WeaponMeshComp는 생성만 해두고 BeginPlay에서 Socket에 부착
-	WeaponMeshComp = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("WeaponMeshComp")); // [MOD]
-	if (WeaponMeshComp)
-	{
-		WeaponMeshComp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-		WeaponMeshComp->SetGenerateOverlapEvents(false);
-		WeaponMeshComp->SetCastShadow(true);
-		WeaponMeshComp->PrimaryComponentTick.bCanEverTick = false;
-
-		// [ADD] 무기 메시가 캐릭터의 애님 영향을 받으면 안 되면 보통 MasterPose를 쓰지 않고,
-		// 단순히 Socket에 Attach만 한다. (필요 시 향후 MasterPose/CopyPose로 확장)
-		WeaponMeshComp->SetupAttachment(GetMesh()); // 실제 Socket 부착은 BeginPlay에서
-	}
+	// 코스메틱 무기 메시 컴포넌트는 "항상 존재"하게 보장(늦게 생성되면 Attach 타이밍 꼬임)
+	EnsureWeaponMeshComponent();
 }
 
 void APlayerCharacter::BeginPlay()
 {
 	Super::BeginPlay();
 
+	// 이동 기본 속도 적용(로컬/서버 공통)
 	if (UCharacterMovementComponent* MoveComp = GetCharacterMovement())
 	{
 		MoveComp->MaxWalkSpeed = WalkSpeed;
 	}
 
-	EnsureWeaponMeshComponent();
-
+	// PlayerState/CombatComponent 바인딩 보강
 	BindCombatComponent();
 }
 
 void APlayerCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
 	UnbindCombatComponent();
-
-	// 코스메틱 정리(메시만 비움)
-	if (WeaponMeshComp)
-	{
-		WeaponMeshComp->SetSkeletalMesh(nullptr); // [MOD]
-	}
-
 	Super::EndPlay(EndPlayReason);
 }
 
 void APlayerCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
 {
+	// 프로젝트 정책: EnhancedInput 바인딩은 HeroComponent가 담당.
+	// Pawn은 입력 엔드포인트 함수(Input_*)만 제공한다.
 	Super::SetupPlayerInputComponent(PlayerInputComponent);
-
-	if (HeroComponent)
-	{
-		HeroComponent->SetupInputBindings(PlayerInputComponent);
-	}
 }
 
 void APlayerCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
 {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+
 	DOREPLIFETIME(APlayerCharacter, bIsSprinting);
 }
+
+// ============================================================================
+// Possession / Restart hooks (바인딩 안정화)
+// ============================================================================
 
 void APlayerCharacter::OnRep_Controller()
 {
 	Super::OnRep_Controller();
-
-	if (HeroComponent)
-	{
-		HeroComponent->TryBindCameraModeDelegate_LocalOnly();
-	}
+	BindCombatComponent();
 }
 
 void APlayerCharacter::PawnClientRestart()
 {
 	Super::PawnClientRestart();
-
-	if (HeroComponent)
-	{
-		HeroComponent->TryBindCameraModeDelegate_LocalOnly();
-	}
-
 	BindCombatComponent();
 }
 
 void APlayerCharacter::PossessedBy(AController* NewController)
 {
 	Super::PossessedBy(NewController);
-
-	if (HeroComponent)
-	{
-		HeroComponent->TryBindCameraModeDelegate_LocalOnly();
-	}
-
 	BindCombatComponent();
 }
 
@@ -139,21 +93,27 @@ void APlayerCharacter::OnRep_PlayerState()
 	BindCombatComponent();
 }
 
+// ============================================================================
+// Query
+// ============================================================================
+
 bool APlayerCharacter::IsSprinting() const
 {
-	return IsLocallyControlled() ? bLocalPredictedSprinting : bIsSprinting;
+	return bIsSprinting;
 }
+
+// ============================================================================
+// Input Endpoints (HeroComponent -> Pawn)
+// ============================================================================
 
 void APlayerCharacter::Input_Move(const FVector2D& MoveValue)
 {
-	if (!Controller || MoveValue.IsNearlyZero())
+	if (Controller == nullptr)
 	{
 		return;
 	}
 
-	const FRotator ControlRot = Controller->GetControlRotation();
-	const FRotator YawRot(0.f, ControlRot.Yaw, 0.f);
-
+	const FRotator YawRot(0.0f, Controller->GetControlRotation().Yaw, 0.0f);
 	const FVector Forward = FRotationMatrix(YawRot).GetUnitAxis(EAxis::X);
 	const FVector Right = FRotationMatrix(YawRot).GetUnitAxis(EAxis::Y);
 
@@ -169,7 +129,10 @@ void APlayerCharacter::Input_Look(const FVector2D& LookValue)
 
 void APlayerCharacter::Input_SprintPressed()
 {
+	// 체감(로컬): 즉시 속도 반영
 	ApplySprintSpeed_LocalPredict(true);
+
+	// 정답(서버): 서버가 승인하고 복제로 내려준다
 	Server_SetSprinting(true);
 }
 
@@ -186,55 +149,66 @@ void APlayerCharacter::Input_JumpPressed()
 
 void APlayerCharacter::Input_InteractPressed()
 {
+	// 로컬 타겟 탐색 -> 서버 TryPickup 요청
 	APickupBase* Target = FindPickupTarget_Local();
-	Server_TryPickup(Target);
+	if (Target)
+	{
+		Server_TryPickup(Target);
+	}
 }
-
-// -------------------------
-// Equip 입력
-// -------------------------
 
 void APlayerCharacter::Input_EquipSlot1()
 {
-	if (CachedCombatComponent)
+	if (UMosesCombatComponent* CombatComp = GetCombatComponent_Checked())
 	{
-		CachedCombatComponent->RequestEquipSlot(1);
+		CombatComp->RequestEquipSlot(1);
 	}
 }
 
 void APlayerCharacter::Input_EquipSlot2()
 {
-	if (CachedCombatComponent)
+	if (UMosesCombatComponent* CombatComp = GetCombatComponent_Checked())
 	{
-		CachedCombatComponent->RequestEquipSlot(2);
+		CombatComp->RequestEquipSlot(2);
 	}
 }
 
 void APlayerCharacter::Input_EquipSlot3()
 {
-	if (CachedCombatComponent)
+	if (UMosesCombatComponent* CombatComp = GetCombatComponent_Checked())
 	{
-		CachedCombatComponent->RequestEquipSlot(3);
+		CombatComp->RequestEquipSlot(3);
 	}
 }
 
-// -------------------------
-// Sprint
-// -------------------------
+void APlayerCharacter::Input_FirePressed()
+{
+	// - 클라 입력은 '요청'만 한다.
+	// - 서버 승인/탄약 차감/명중 판정/데미지 적용은 CombatComponent(서버)에서 수행한다.
+	// - 서버가 승인한 뒤에만 Multicast_PlayFireMontage()로 코스메틱 재생을 퍼뜨린다.
+	if (UMosesCombatComponent* CombatComp = GetCombatComponent_Checked())
+	{
+		UE_LOG(LogMosesCombat, Verbose, TEXT("[FIRE][CL] Input FirePressed Pawn=%s"), *GetNameSafe(this));
+		CombatComp->RequestFire();
+	}
+}
+
+// ============================================================================
+// Sprint (Server authoritative + Local feel)
+// ============================================================================
 
 void APlayerCharacter::ApplySprintSpeed_LocalPredict(bool bNewSprinting)
 {
-	if (!IsLocallyControlled())
-	{
-		return;
-	}
-
 	bLocalPredictedSprinting = bNewSprinting;
 
 	if (UCharacterMovementComponent* MoveComp = GetCharacterMovement())
 	{
-		MoveComp->MaxWalkSpeed = bLocalPredictedSprinting ? SprintSpeed : WalkSpeed;
+		MoveComp->MaxWalkSpeed = bNewSprinting ? SprintSpeed : WalkSpeed;
 	}
+
+	UE_LOG(LogMosesMove, Verbose, TEXT("[MOVE][CL] Sprint LocalPredict=%d Pawn=%s"),
+		bNewSprinting ? 1 : 0,
+		*GetNameSafe(this));
 }
 
 void APlayerCharacter::ApplySprintSpeed_FromAuth(const TCHAR* From)
@@ -244,110 +218,240 @@ void APlayerCharacter::ApplySprintSpeed_FromAuth(const TCHAR* From)
 		MoveComp->MaxWalkSpeed = bIsSprinting ? SprintSpeed : WalkSpeed;
 	}
 
-	if (IsLocallyControlled())
-	{
-		bLocalPredictedSprinting = bIsSprinting;
-	}
+	UE_LOG(LogMosesMove, Log, TEXT("[MOVE][%s] Sprint Auth=%d Pawn=%s"),
+		From ? From : TEXT("UNK"),
+		bIsSprinting ? 1 : 0,
+		*GetNameSafe(this));
 }
 
 void APlayerCharacter::Server_SetSprinting_Implementation(bool bNewSprinting)
 {
+	MOSES_GUARD_AUTHORITY_VOID(this, "Move", TEXT("Client attempted Server_SetSprinting"));
+
+	// 서버만 정답을 변경한다
 	bIsSprinting = bNewSprinting;
-	ApplySprintSpeed_FromAuth(TEXT("Server_SetSprinting"));
+
+	// 서버(리슨 포함)는 즉시 반영
+	ApplySprintSpeed_FromAuth(TEXT("SV"));
 }
 
 void APlayerCharacter::OnRep_IsSprinting()
 {
-	ApplySprintSpeed_FromAuth(TEXT("OnRep_IsSprinting"));
+	// 클라이언트는 서버 확정값으로 최종 보정한다
+	ApplySprintSpeed_FromAuth(TEXT("CL"));
 }
 
-// -------------------------
-// Pickup
-// -------------------------
+// ============================================================================
+// Pickup (placeholder)
+// ============================================================================
 
 APickupBase* APlayerCharacter::FindPickupTarget_Local() const
 {
-	if (!IsLocallyControlled())
-	{
-		return nullptr;
-	}
-
-	const UMosesCameraComponent* CamComp = UMosesCameraComponent::FindCameraComponent(this);
-	const FVector Start = CamComp ? CamComp->GetComponentLocation() : GetActorLocation();
-
-	const FRotator Rot = Controller ? Controller->GetControlRotation() : GetActorRotation();
-	const FVector End = Start + Rot.Vector() * PickupTraceDistance;
-
-	FHitResult Hit;
-	FCollisionQueryParams Params(SCENE_QUERY_STAT(MosesPickupTrace), false, this);
-
-	const bool bHit = GetWorld()->LineTraceSingleByChannel(Hit, Start, End, ECC_Visibility, Params);
-	if (!bHit)
-	{
-		return nullptr;
-	}
-
-	return Cast<APickupBase>(Hit.GetActor());
+	// TODO(Day2): 프로젝트에 이미 구현된 Trace/Overlap 기반 타겟 탐색이 있다면 그 코드로 교체.
+	return nullptr;
 }
 
 void APlayerCharacter::Server_TryPickup_Implementation(APickupBase* Target)
 {
-	if (!Target)
-	{
-		return;
-	}
+	MOSES_GUARD_AUTHORITY_VOID(this, "Pickup", TEXT("Client attempted Server_TryPickup"));
 
-	Target->ServerTryConsume(this);
+	UE_LOG(LogMosesCombat, Warning, TEXT("[PICKUP][SV] NotImplemented Target=%s Pawn=%s"),
+		*GetNameSafe(Target),
+		*GetNameSafe(this));
 }
 
-// -------------------------
-// Equip Cosmetic
-// -------------------------
+// ============================================================================
+// CombatComponent Bind (RepNotify -> Delegate -> Cosmetic)
+// ============================================================================
 
 void APlayerCharacter::BindCombatComponent()
 {
-	AMosesPlayerState* PS = GetPlayerState<AMosesPlayerState>();
-	if (!PS)
+	UMosesCombatComponent* NewComp = GetCombatComponent_Checked();
+	if (!NewComp)
 	{
 		return;
 	}
 
-	UMosesCombatComponent* CC = PS->GetCombatComponent();
-	if (!CC || CC == CachedCombatComponent)
+	// 이미 같은 컴포넌트에 바인딩되어 있으면 중복 방지
+	if (CachedCombatComponent == NewComp)
 	{
 		return;
 	}
 
 	UnbindCombatComponent();
 
-	CachedCombatComponent = CC;
-	CachedCombatComponent->OnEquippedChanged.AddUObject(this, &ThisClass::HandleEquippedChanged);
+	CachedCombatComponent = NewComp;
 
-	const FGameplayTag EquippedId = CachedCombatComponent->GetEquippedWeaponId();
-	if (EquippedId.IsValid())
-	{
-		HandleEquippedChanged(CachedCombatComponent->GetCurrentSlot(), EquippedId);
-	}
+	// CombatComponent 쪽에서 RepNotify가 발생하면 Delegate로 알려주고,
+	// Pawn은 그 Delegate를 받아서 코스메틱(무기 메시)을 갱신한다.
+	CachedCombatComponent->OnEquippedChanged.AddUObject(this, &APlayerCharacter::HandleEquippedChanged);
+
+	UE_LOG(LogMosesWeapon, Log, TEXT("[WEAPON][Bind] CombatComponent Bound Pawn=%s PS=%s"),
+		*GetNameSafe(this),
+		*GetNameSafe(GetPlayerState()));
+
+	// 늦게 바인딩되는 케이스(예: Late Join / ClientRestart) 대비:
+	// 바인딩 직후 현재 상태를 한 번 "즉시 재현"한다.
+	HandleEquippedChanged(CachedCombatComponent->GetCurrentSlot(), CachedCombatComponent->GetEquippedWeaponId());
 }
 
 void APlayerCharacter::UnbindCombatComponent()
 {
-	if (CachedCombatComponent)
+	if (!CachedCombatComponent)
 	{
-		CachedCombatComponent->OnEquippedChanged.RemoveAll(this);
-		CachedCombatComponent = nullptr;
+		return;
 	}
+
+	CachedCombatComponent->OnEquippedChanged.RemoveAll(this);
+
+	UE_LOG(LogMosesWeapon, Verbose, TEXT("[WEAPON][Bind] CombatComponent Unbound Pawn=%s"), *GetNameSafe(this));
+
+	CachedCombatComponent = nullptr;
+}
+
+UMosesCombatComponent* APlayerCharacter::GetCombatComponent_Checked() const
+{
+	AMosesPlayerState* PS = GetPlayerState<AMosesPlayerState>();
+	if (!PS)
+	{
+		return nullptr;
+	}
+
+	// 정책: CombatComponent는 PlayerState가 SSOT로 소유한다.
+	return PS->FindComponentByClass<UMosesCombatComponent>();
 }
 
 void APlayerCharacter::HandleEquippedChanged(int32 SlotIndex, FGameplayTag WeaponId)
 {
+	UE_LOG(LogMosesWeapon, Log, TEXT("[WEAPON][COS] EquippedChanged Slot=%d Weapon=%s Pawn=%s"),
+		SlotIndex,
+		*WeaponId.ToString(),
+		*GetNameSafe(this));
+
 	RefreshWeaponCosmetic(WeaponId);
+}
+
+void APlayerCharacter::RefreshWeaponCosmetic(FGameplayTag WeaponId)
+{
+	if (!WeaponId.IsValid())
+	{
+		UE_LOG(LogMosesWeapon, Verbose, TEXT("[WEAPON][COS] Skip (Invalid WeaponId) Pawn=%s"), *GetNameSafe(this));
+		return;
+	}
+
+	EnsureWeaponMeshComponent();
+
+	UWorld* World = GetWorld();
+	UGameInstance* GI = World ? World->GetGameInstance() : nullptr;
+	if (!GI)
+	{
+		return;
+	}
+
+	const UMosesWeaponRegistrySubsystem* Registry = GI->GetSubsystem<UMosesWeaponRegistrySubsystem>();
+	if (!Registry)
+	{
+		UE_LOG(LogMosesWeapon, Warning, TEXT("[WEAPON][COS] NoRegistry Pawn=%s"), *GetNameSafe(this));
+		return;
+	}
+
+	const UMosesWeaponData* Data = Registry->ResolveWeaponData(WeaponId);
+	if (!Data)
+	{
+		UE_LOG(LogMosesWeapon, Warning, TEXT("[WEAPON][COS] ResolveWeaponData FAIL Weapon=%s Pawn=%s"),
+			*WeaponId.ToString(),
+			*GetNameSafe(this));
+		return;
+	}
+
+	if (!Data->WeaponSkeletalMesh)
+	{
+		UE_LOG(LogMosesWeapon, Warning, TEXT("[WEAPON][COS] NoWeaponMesh Weapon=%s Pawn=%s"),
+			*WeaponId.ToString(),
+			*GetNameSafe(this));
+		return;
+	}
+
+	// TSoftObjectPtr 로드
+	USkeletalMesh* LoadedMesh = Data->WeaponSkeletalMesh.Get();
+	if (!LoadedMesh)
+	{
+		LoadedMesh = Data->WeaponSkeletalMesh.LoadSynchronous();
+	}
+
+	if (!LoadedMesh)
+	{
+		UE_LOG(LogMosesWeapon, Warning, TEXT("[WEAPON][COS] WeaponMesh Load FAIL Weapon=%s Pawn=%s"),
+			*WeaponId.ToString(),
+			*GetNameSafe(this));
+		return;
+	}
+
+	// 메시 교체
+	WeaponMeshComp->SetSkeletalMesh(LoadedMesh);
+
+	// 안전: 혹시라도 소켓 부착이 풀렸으면 재부착(에디터/PIE 재시작 등)
+	if (USkeletalMeshComponent* CharMesh = GetMesh())
+	{
+		WeaponMeshComp->AttachToComponent(CharMesh, FAttachmentTransformRules::SnapToTargetNotIncludingScale, CharacterWeaponSocketName);
+	}
+
+	UE_LOG(LogMosesWeapon, Log, TEXT("[WEAPON][COS] Apply OK Weapon=%s Mesh=%s Socket=%s Pawn=%s"),
+		*WeaponId.ToString(),
+		*GetNameSafe(LoadedMesh),
+		*CharacterWeaponSocketName.ToString(),
+		*GetNameSafe(this));
 }
 
 void APlayerCharacter::EnsureWeaponMeshComponent()
 {
-	if (!WeaponMeshComp)
+	if (WeaponMeshComp)
 	{
+		return;
+	}
+
+	// 코스메틱 전용 무기 메시 컴포넌트 (Replication X)
+	WeaponMeshComp = NewObject<USkeletalMeshComponent>(this, TEXT("WeaponMeshComp"));
+	check(WeaponMeshComp);
+
+	WeaponMeshComp->SetIsReplicated(false);
+
+	// 캐릭터 메시의 손 소켓에 "스냅" 부착 (생성 즉시 부착해두고, 이후에는 Mesh만 교체)
+	if (USkeletalMeshComponent* CharMesh = GetMesh())
+	{
+		WeaponMeshComp->SetupAttachment(CharMesh);
+	}
+	else
+	{
+		// Mesh가 아직 없을 수도 있으니 일단 Root에 달아두고,
+		// RefreshWeaponCosmetic에서 다시 AttachToComponent로 보정한다.
+		WeaponMeshComp->SetupAttachment(GetRootComponent());
+	}
+
+	WeaponMeshComp->RegisterComponent();
+
+	// 부착 보강(가능한 경우)
+	if (USkeletalMeshComponent* CharMesh = GetMesh())
+	{
+		WeaponMeshComp->AttachToComponent(CharMesh, FAttachmentTransformRules::SnapToTargetNotIncludingScale, CharacterWeaponSocketName);
+	}
+
+	UE_LOG(LogMosesWeapon, Log, TEXT("[WEAPON][COS] WeaponMeshComp Created Pawn=%s Socket=%s"),
+		*GetNameSafe(this),
+		*CharacterWeaponSocketName.ToString());
+}
+
+// ============================================================================
+// Montage Cosmetics (Server approved -> Multicast)
+// ============================================================================
+
+void APlayerCharacter::TryPlayMontage_Local(UAnimMontage* Montage, const TCHAR* DebugTag) const
+{
+	if (!Montage)
+	{
+		UE_LOG(LogMosesCombat, Warning, TEXT("[ANIM] %s Montage null Pawn=%s"),
+			DebugTag ? DebugTag : TEXT("Montage"),
+			*GetNameSafe(this));
 		return;
 	}
 
@@ -357,76 +461,35 @@ void APlayerCharacter::EnsureWeaponMeshComponent()
 		return;
 	}
 
-	// Socket 존재 여부는 여기서 한 번만 체크(없으면 이후 Attach 실패 로그가 난다)
-	if (!MeshComp->DoesSocketExist(CharacterWeaponSocketName))
+	UAnimInstance* AnimInst = MeshComp->GetAnimInstance();
+	if (!AnimInst)
 	{
-		UE_LOG(LogMosesWeapon, Warning, TEXT("[WEAPON][CL] Missing Character Socket=%s Char=%s"),
-			*CharacterWeaponSocketName.ToString(), *GetNameSafe(this));
-		return;
-	}
-
-	WeaponMeshComp->AttachToComponent(MeshComp, FAttachmentTransformRules::SnapToTargetNotIncludingScale, CharacterWeaponSocketName);
-}
-
-void APlayerCharacter::RefreshWeaponCosmetic(FGameplayTag WeaponId)
-{
-	if (!WeaponMeshComp)
-	{
-		return;
-	}
-
-	if (!WeaponId.IsValid())
-	{
-		WeaponMeshComp->SetSkeletalMesh(nullptr); // [MOD]
-
-		UE_LOG(LogMosesWeapon, Warning, TEXT("[WEAPON][CL] OnRep Equip FAIL WeaponId=INVALID Char=%s"),
+		UE_LOG(LogMosesCombat, Warning, TEXT("[ANIM] %s NoAnimInstance Pawn=%s"),
+			DebugTag ? DebugTag : TEXT("Anim"),
 			*GetNameSafe(this));
 		return;
 	}
 
-	UGameInstance* GI = GetGameInstance();
-	if (!GI)
-	{
-		UE_LOG(LogMosesWeapon, Warning, TEXT("[WEAPON][CL] OnRep Equip FAIL NoGameInstance Char=%s Weapon=%s"),
-			*GetNameSafe(this), *WeaponId.ToString());
-		return;
-	}
+	AnimInst->Montage_Play(Montage);
 
-	UMosesWeaponRegistrySubsystem* Registry = GI->GetSubsystem<UMosesWeaponRegistrySubsystem>();
-	if (!Registry)
-	{
-		UE_LOG(LogMosesWeapon, Warning, TEXT("[WEAPON][CL] OnRep Equip FAIL NoRegistry Char=%s Weapon=%s"),
-			*GetNameSafe(this), *WeaponId.ToString());
-		return;
-	}
+	UE_LOG(LogMosesCombat, Log, TEXT("[ANIM] %s PlayMontage=%s Pawn=%s"),
+		DebugTag ? DebugTag : TEXT("Play"),
+		*GetNameSafe(Montage),
+		*GetNameSafe(this));
+}
 
-	const UMosesWeaponData* Data = Registry->ResolveWeaponData(WeaponId);
-	if (!Data)
-	{
-		UE_LOG(LogMosesWeapon, Warning, TEXT("[WEAPON][CL] OnRep Equip FAIL ResolveData Weapon=%s Char=%s"),
-			*WeaponId.ToString(), *GetNameSafe(this));
-		return;
-	}
+void APlayerCharacter::Multicast_PlayFireMontage_Implementation()
+{
+	// 서버 승인 후에만 호출되어야 한다(CombatComponent 서버 로직에서 호출)
+	TryPlayMontage_Local(FireMontage, TEXT("FIRE"));
+}
 
-	// [MOD] Skeletal Mesh 로딩 + SetSkeletalMesh
-	USkeletalMesh* NewWeaponMesh = Data->WeaponSkeletalMesh.LoadSynchronous(); // Data의 타입이 TSoftObjectPtr<USkeletalMesh> 이어야 함
-	if (!NewWeaponMesh)
-	{
-		WeaponMeshComp->SetSkeletalMesh(nullptr); // [MOD]
+void APlayerCharacter::Multicast_PlayHitReactMontage_Implementation()
+{
+	TryPlayMontage_Local(HitReactMontage, TEXT("HIT"));
+}
 
-		UE_LOG(LogMosesWeapon, Warning, TEXT("[WEAPON][CL] OnRep Equip FAIL WeaponSkeletalMesh NULL Weapon=%s Data=%s"),
-			*WeaponId.ToString(), *GetNameSafe(Data));
-		return;
-	}
-
-	WeaponMeshComp->SetSkeletalMesh(NewWeaponMesh); // [MOD]
-
-	// Socket 재부착 보장(SeamlessTravel/Restart에서 컴포넌트가 풀릴 수 있음)
-	EnsureWeaponMeshComponent();
-
-	UE_LOG(LogMosesWeapon, Log, TEXT("[WEAPON][CL] OnRep Equip Weapon=%s Attach=OK Char=%s Socket=%s Mesh=%s"),
-		*WeaponId.ToString(),
-		*GetNameSafe(this),
-		*CharacterWeaponSocketName.ToString(),
-		*GetNameSafe(NewWeaponMesh)); // [MOD]
+void APlayerCharacter::Multicast_PlayDeathMontage_Implementation()
+{
+	TryPlayMontage_Local(DeathMontage, TEXT("DEATH"));
 }

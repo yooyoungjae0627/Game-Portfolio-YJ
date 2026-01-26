@@ -1,5 +1,10 @@
 ﻿#include "UE5_Multi_Shooter/Character/Components/MosesHeroComponent.h"
 
+#include "UE5_Multi_Shooter/MosesLogChannels.h"
+#include "UE5_Multi_Shooter/Character/PlayerCharacter.h"
+#include "UE5_Multi_Shooter/Camera/MosesCameraComponent.h"
+#include "UE5_Multi_Shooter/Camera/MosesCameraMode.h"
+
 #include "GameFramework/Pawn.h"
 #include "GameFramework/PlayerController.h"
 
@@ -8,10 +13,9 @@
 #include "InputMappingContext.h"
 #include "InputAction.h"
 
-#include "UE5_Multi_Shooter/MosesLogChannels.h"
-#include "UE5_Multi_Shooter/Character/PlayerCharacter.h"
-#include "UE5_Multi_Shooter/Camera/MosesCameraComponent.h"
-#include "UE5_Multi_Shooter/Camera/MosesCameraMode.h"
+// ============================================================================
+// Ctor / Lifecycle
+// ============================================================================
 
 UMosesHeroComponent::UMosesHeroComponent(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
@@ -24,12 +28,16 @@ void UMosesHeroComponent::BeginPlay()
 {
 	Super::BeginPlay();
 
-	// 로컬 플레이어만 카메라 Delegate 바인딩
+	// 로컬 전용
 	if (!IsLocalPlayerPawn())
 	{
 		return;
 	}
 }
+
+// ============================================================================
+// Local guard
+// ============================================================================
 
 bool UMosesHeroComponent::IsLocalPlayerPawn() const
 {
@@ -42,6 +50,10 @@ bool UMosesHeroComponent::IsLocalPlayerPawn() const
 	const APlayerController* PC = Cast<APlayerController>(Pawn->GetController());
 	return PC && PC->IsLocalController();
 }
+
+// ============================================================================
+// Camera delegate
+// ============================================================================
 
 TSubclassOf<UMosesCameraMode> UMosesHeroComponent::DetermineCameraMode() const
 {
@@ -56,36 +68,11 @@ TSubclassOf<UMosesCameraMode> UMosesHeroComponent::DetermineCameraMode() const
 		return FirstPersonModeClass;
 	}
 
-	// 기본은 TPS
 	return ThirdPersonModeClass;
-}
-
-void UMosesHeroComponent::SetupInputBindings(UInputComponent* PlayerInputComponent)
-{
-	if (bInputBound)
-	{
-		return;
-	}
-
-	if (!IsLocalPlayerPawn())
-	{
-		return;
-	}
-
-	// 최소 입력 에셋 검사
-	if (!InputMappingContext || !IA_Move || !IA_Sprint || !IA_Jump || !IA_Interact)
-	{
-		UE_LOG(LogMosesSpawn, Error, TEXT("[Hero] Input assets missing. Set IMC + IA_Move/Sprint/Jump/Interact."));
-		return;
-	}
-
-	AddMappingContextOnce();
-	BindInputActions(PlayerInputComponent);
 }
 
 void UMosesHeroComponent::TryBindCameraModeDelegate_LocalOnly()
 {
-	// 로컬 Pawn이 아니면 바인딩하지 않는다.
 	if (!IsLocalPlayerPawn())
 	{
 		return;
@@ -104,7 +91,6 @@ void UMosesHeroComponent::TryBindCameraModeDelegate_LocalOnly()
 		return;
 	}
 
-	// 이미 바인딩 되어 있으면 끝
 	if (CamComp->DetermineCameraModeDelegate.IsBound())
 	{
 		return;
@@ -112,11 +98,42 @@ void UMosesHeroComponent::TryBindCameraModeDelegate_LocalOnly()
 
 	CamComp->DetermineCameraModeDelegate.BindUObject(this, &ThisClass::DetermineCameraMode);
 
-	UE_LOG(LogMosesCamera, Warning,
+	UE_LOG(LogMosesCamera, Log,
 		TEXT("[Hero][CamBind] Bind DetermineCameraModeDelegate OK Pawn=%s PC=%s"),
 		*GetNameSafe(Pawn),
 		*GetNameSafe(Pawn->GetController()));
 }
+
+// ============================================================================
+// Input binding entry
+// ============================================================================
+
+void UMosesHeroComponent::SetupInputBindings(UInputComponent* PlayerInputComponent)
+{
+	if (bInputBound)
+	{
+		return;
+	}
+
+	if (!IsLocalPlayerPawn())
+	{
+		return;
+	}
+
+	// 최소 필수: 이동/스프린트/점프/상호작용
+	if (!InputMappingContext || !IA_Move || !IA_Sprint || !IA_Jump || !IA_Interact)
+	{
+		UE_LOG(LogMosesSpawn, Error, TEXT("[Hero][Input] Assets missing. Set IMC + IA_Move/Sprint/Jump/Interact."));
+		return;
+	}
+
+	AddMappingContextOnce();
+	BindInputActions(PlayerInputComponent);
+}
+
+// ============================================================================
+// Mapping context
+// ============================================================================
 
 void UMosesHeroComponent::AddMappingContextOnce()
 {
@@ -147,51 +164,80 @@ void UMosesHeroComponent::AddMappingContextOnce()
 	Subsystem->AddMappingContext(InputMappingContext.Get(), MappingPriority);
 	bMappingContextAdded = true;
 
-	UE_LOG(LogMosesSpawn, Log, TEXT("[Hero] AddMappingContext OK Pawn=%s"), *GetNameSafe(Pawn));
+	UE_LOG(LogMosesSpawn, Log, TEXT("[Hero][Input] AddMappingContext OK Pawn=%s Priority=%d"),
+		*GetNameSafe(Pawn), MappingPriority);
 }
+
+// ============================================================================
+// Bind actions
+// ============================================================================
 
 void UMosesHeroComponent::BindInputActions(UInputComponent* PlayerInputComponent)
 {
 	UEnhancedInputComponent* EIC = Cast<UEnhancedInputComponent>(PlayerInputComponent);
 	if (!EIC)
 	{
-		UE_LOG(LogMosesSpawn, Error, TEXT("[Hero] Expected EnhancedInputComponent."));
+		UE_LOG(LogMosesSpawn, Error, TEXT("[Hero][Input] Expected EnhancedInputComponent."));
 		return;
 	}
 
-	// 이동/시점
+	// Move / Look
 	EIC->BindAction(IA_Move.Get(), ETriggerEvent::Triggered, this, &ThisClass::HandleMove);
+
 	if (IA_Look)
 	{
 		EIC->BindAction(IA_Look.Get(), ETriggerEvent::Triggered, this, &ThisClass::HandleLook);
 	}
 
-	// 점프
+	// Jump
 	EIC->BindAction(IA_Jump.Get(), ETriggerEvent::Started, this, &ThisClass::HandleJump);
 
-	// 스프린트(누르는 동안)
+	// Sprint (hold)
 	EIC->BindAction(IA_Sprint.Get(), ETriggerEvent::Started, this, &ThisClass::HandleSprintPressed);
 	EIC->BindAction(IA_Sprint.Get(), ETriggerEvent::Completed, this, &ThisClass::HandleSprintReleased);
 
-	// 상호작용
+	// Interact
 	EIC->BindAction(IA_Interact.Get(), ETriggerEvent::Started, this, &ThisClass::HandleInteract);
 
-	// 카메라 토글(선택)
+	// Camera (optional)
 	if (IA_ToggleView)
 	{
 		EIC->BindAction(IA_ToggleView.Get(), ETriggerEvent::Started, this, &ThisClass::HandleToggleView);
 	}
 
-	// 조준(선택) - 누르는 동안 Sniper2x
 	if (IA_Aim)
 	{
 		EIC->BindAction(IA_Aim.Get(), ETriggerEvent::Started, this, &ThisClass::HandleAimPressed);
 		EIC->BindAction(IA_Aim.Get(), ETriggerEvent::Completed, this, &ThisClass::HandleAimReleased);
 	}
 
+	// [ADD] Equip slots (optional but DAY3 핵심 검증)
+	if (IA_EquipSlot1)
+	{
+		EIC->BindAction(IA_EquipSlot1.Get(), ETriggerEvent::Started, this, &ThisClass::HandleEquipSlot1);
+	}
+	if (IA_EquipSlot2)
+	{
+		EIC->BindAction(IA_EquipSlot2.Get(), ETriggerEvent::Started, this, &ThisClass::HandleEquipSlot2);
+	}
+	if (IA_EquipSlot3)
+	{
+		EIC->BindAction(IA_EquipSlot3.Get(), ETriggerEvent::Started, this, &ThisClass::HandleEquipSlot3);
+	}
+
+	// [ADD] Fire (DAY3 핵심)
+	if (IA_Fire)
+	{
+		EIC->BindAction(IA_Fire.Get(), ETriggerEvent::Started, this, &ThisClass::HandleFirePressed);
+	}
+
 	bInputBound = true;
-	UE_LOG(LogMosesSpawn, Log, TEXT("[Hero] Input bind OK Pawn=%s"), *GetNameSafe(GetOwner()));
+	UE_LOG(LogMosesSpawn, Log, TEXT("[Hero][Input] Bind OK Pawn=%s"), *GetNameSafe(GetOwner()));
 }
+
+// ============================================================================
+// Handlers -> PlayerCharacter endpoints
+// ============================================================================
 
 void UMosesHeroComponent::HandleMove(const FInputActionValue& Value)
 {
@@ -259,32 +305,67 @@ void UMosesHeroComponent::HandleInteract(const FInputActionValue& Value)
 	PlayerChar->Input_InteractPressed();
 }
 
+// [ADD] Equip / Fire handlers
+void UMosesHeroComponent::HandleEquipSlot1(const FInputActionValue& Value)
+{
+	if (APlayerCharacter* PlayerChar = Cast<APlayerCharacter>(GetOwner()))
+	{
+		PlayerChar->Input_EquipSlot1();
+	}
+}
+
+void UMosesHeroComponent::HandleEquipSlot2(const FInputActionValue& Value)
+{
+	if (APlayerCharacter* PlayerChar = Cast<APlayerCharacter>(GetOwner()))
+	{
+		PlayerChar->Input_EquipSlot2();
+	}
+}
+
+void UMosesHeroComponent::HandleEquipSlot3(const FInputActionValue& Value)
+{
+	if (APlayerCharacter* PlayerChar = Cast<APlayerCharacter>(GetOwner()))
+	{
+		PlayerChar->Input_EquipSlot3();
+	}
+}
+
+void UMosesHeroComponent::HandleFirePressed(const FInputActionValue& Value)
+{
+	if (APlayerCharacter* PlayerChar = Cast<APlayerCharacter>(GetOwner()))
+	{
+		PlayerChar->Input_FirePressed();
+	}
+}
+
+// ============================================================================
+// Camera state handlers
+// ============================================================================
+
 void UMosesHeroComponent::HandleToggleView(const FInputActionValue& Value)
 {
-	// TPS/FPS 토글
 	bWantsFirstPerson = !bWantsFirstPerson;
 
-	// FPS로 바뀌면 Sniper는 즉시 해제(정책)
+	// 정책: FPS 해제 시 Sniper도 해제
 	if (!bWantsFirstPerson)
 	{
 		bWantsSniper2x = false;
 	}
 
-	UE_LOG(LogMosesCamera, Log, TEXT("[Hero] ToggleView -> FirstPerson=%d"), bWantsFirstPerson ? 1 : 0);
+	UE_LOG(LogMosesCamera, Log, TEXT("[Hero][Cam] ToggleView -> FirstPerson=%d"), bWantsFirstPerson ? 1 : 0);
 }
 
 void UMosesHeroComponent::HandleAimPressed(const FInputActionValue& Value)
 {
-	// 조준(저격) On: Sniper 모드가 지정되어 있을 때만
 	if (Sniper2xModeClass)
 	{
 		bWantsSniper2x = true;
-		UE_LOG(LogMosesCamera, Log, TEXT("[Hero] AimPressed -> Sniper2x ON"));
+		UE_LOG(LogMosesCamera, Log, TEXT("[Hero][Cam] AimPressed -> Sniper2x ON"));
 	}
 }
 
 void UMosesHeroComponent::HandleAimReleased(const FInputActionValue& Value)
 {
 	bWantsSniper2x = false;
-	UE_LOG(LogMosesCamera, Log, TEXT("[Hero] AimReleased -> Sniper2x OFF"));
+	UE_LOG(LogMosesCamera, Log, TEXT("[Hero][Cam] AimReleased -> Sniper2x OFF"));
 }
