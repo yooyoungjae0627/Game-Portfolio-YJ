@@ -40,8 +40,10 @@ DEFINE_LOG_CATEGORY(LogMosesRespawn);
 DEFINE_LOG_CATEGORY(LogMosesScore);    
 DEFINE_LOG_CATEGORY(LogMosesHUD);      
 
+DEFINE_LOG_CATEGORY(LogMosesWeapon);
+
 // ============================================================
-// [ADD] MosesLog Helpers
+// MosesLog Helpers
 // ============================================================
 
 namespace MosesLog

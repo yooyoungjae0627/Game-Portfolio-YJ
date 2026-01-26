@@ -61,6 +61,8 @@ DECLARE_LOG_CATEGORY_EXTERN(LogMosesRespawn, Log, All);
 DECLARE_LOG_CATEGORY_EXTERN(LogMosesScore, Log, All);     
 DECLARE_LOG_CATEGORY_EXTERN(LogMosesHUD, Log, All);       
 
+DECLARE_LOG_CATEGORY_EXTERN(LogMosesWeapon, Log, All);
+
 // ============================================================
 // 표준 태그(접두어) 매크로 - "문자열 포맷 강제"
 // - "[COMBAT][SV]" 형태로 통일한다.
