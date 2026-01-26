@@ -49,7 +49,7 @@ public:
 	void Input_JumpPressed();
 	void Input_InteractPressed();
 
-	// Equip 입력(임시 테스트용: 1/2/3)
+	// Equip 입력
 	void Input_EquipSlot1();
 	void Input_EquipSlot2();
 	void Input_EquipSlot3();

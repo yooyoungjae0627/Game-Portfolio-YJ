@@ -96,6 +96,15 @@ private:
 	TObjectPtr<UInputAction> IA_Aim = nullptr;
 
 	UPROPERTY(EditAnywhere, Category = "Moses|Input")
+	TObjectPtr<UInputAction> IA_EquipSlot1 = nullptr;
+
+	UPROPERTY(EditAnywhere, Category = "Moses|Input")
+	TObjectPtr<UInputAction> IA_EquipSlot2 = nullptr;
+
+	UPROPERTY(EditAnywhere, Category = "Moses|Input")
+	TObjectPtr<UInputAction> IA_EquipSlot3 = nullptr;
+
+	UPROPERTY(EditAnywhere, Category = "Moses|Input")
 	int32 MappingPriority = 0;
 
 private:

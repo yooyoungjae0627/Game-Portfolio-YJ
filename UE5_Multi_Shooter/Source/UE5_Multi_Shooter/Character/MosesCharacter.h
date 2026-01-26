@@ -35,7 +35,6 @@ public:
 protected:
 	virtual void BeginPlay() override;
 
-	// [ADDED] GAS 안정화 훅
 	virtual void PossessedBy(AController* NewController) override;
 	virtual void OnRep_PlayerState() override;
 
