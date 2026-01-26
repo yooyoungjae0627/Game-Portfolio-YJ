@@ -91,6 +91,10 @@
 		{
 			"Name": "GF_Combat_UI",
 			"Enabled": true
+		},
+		{
+			"Name": "GF_Combat_Data",
+			"Enabled": true
 		}
 	]
 }

@@ -5,7 +5,7 @@
 #include "GameFramework/CharacterMovementComponent.h"
 
 #include "Components/CapsuleComponent.h"
-#include "Components/StaticMeshComponent.h"
+//#include "Components/StaticMeshComponent.h" // [MOD] 무기가 SkeletalMesh이므로 StaticMeshComp 불필요
 #include "Components/SkeletalMeshComponent.h"
 
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
@@ -40,14 +40,18 @@ APlayerCharacter::APlayerCharacter()
 		MosesCameraComponent->bAutoActivate = true;
 	}
 
+	// [MOD] 무기가 Skeletal Mesh라면 WeaponMeshComp도 USkeletalMeshComponent여야 함
 	// [ADD] WeaponMeshComp는 생성만 해두고 BeginPlay에서 Socket에 부착
-	WeaponMeshComp = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("WeaponMeshComp"));
+	WeaponMeshComp = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("WeaponMeshComp")); // [MOD]
 	if (WeaponMeshComp)
 	{
 		WeaponMeshComp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 		WeaponMeshComp->SetGenerateOverlapEvents(false);
 		WeaponMeshComp->SetCastShadow(true);
 		WeaponMeshComp->PrimaryComponentTick.bCanEverTick = false;
+
+		// [ADD] 무기 메시가 캐릭터의 애님 영향을 받으면 안 되면 보통 MasterPose를 쓰지 않고,
+		// 단순히 Socket에 Attach만 한다. (필요 시 향후 MasterPose/CopyPose로 확장)
 		WeaponMeshComp->SetupAttachment(GetMesh()); // 실제 Socket 부착은 BeginPlay에서
 	}
 }
@@ -73,7 +77,7 @@ void APlayerCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	// 코스메틱 정리(메시만 비움)
 	if (WeaponMeshComp)
 	{
-		WeaponMeshComp->SetStaticMesh(nullptr);
+		WeaponMeshComp->SetSkeletalMesh(nullptr); // [MOD]
 	}
 
 	Super::EndPlay(EndPlayReason);
@@ -373,7 +377,7 @@ void APlayerCharacter::RefreshWeaponCosmetic(FGameplayTag WeaponId)
 
 	if (!WeaponId.IsValid())
 	{
-		WeaponMeshComp->SetStaticMesh(nullptr);
+		WeaponMeshComp->SetSkeletalMesh(nullptr); // [MOD]
 
 		UE_LOG(LogMosesWeapon, Warning, TEXT("[WEAPON][CL] OnRep Equip FAIL WeaponId=INVALID Char=%s"),
 			*GetNameSafe(this));
@@ -404,17 +408,18 @@ void APlayerCharacter::RefreshWeaponCosmetic(FGameplayTag WeaponId)
 		return;
 	}
 
-	UStaticMesh* StaticMesh = Data->WeaponStaticMesh.LoadSynchronous();
-	if (!StaticMesh)
+	// [MOD] Skeletal Mesh 로딩 + SetSkeletalMesh
+	USkeletalMesh* NewWeaponMesh = Data->WeaponSkeletalMesh.LoadSynchronous(); // Data의 타입이 TSoftObjectPtr<USkeletalMesh> 이어야 함
+	if (!NewWeaponMesh)
 	{
-		WeaponMeshComp->SetStaticMesh(nullptr);
+		WeaponMeshComp->SetSkeletalMesh(nullptr); // [MOD]
 
-		UE_LOG(LogMosesWeapon, Warning, TEXT("[WEAPON][CL] OnRep Equip FAIL WeaponStaticMesh NULL Weapon=%s Data=%s"),
+		UE_LOG(LogMosesWeapon, Warning, TEXT("[WEAPON][CL] OnRep Equip FAIL WeaponSkeletalMesh NULL Weapon=%s Data=%s"),
 			*WeaponId.ToString(), *GetNameSafe(Data));
 		return;
 	}
 
-	WeaponMeshComp->SetStaticMesh(StaticMesh);
+	WeaponMeshComp->SetSkeletalMesh(NewWeaponMesh); // [MOD]
 
 	// Socket 재부착 보장(SeamlessTravel/Restart에서 컴포넌트가 풀릴 수 있음)
 	EnsureWeaponMeshComponent();
@@ -423,5 +428,5 @@ void APlayerCharacter::RefreshWeaponCosmetic(FGameplayTag WeaponId)
 		*WeaponId.ToString(),
 		*GetNameSafe(this),
 		*CharacterWeaponSocketName.ToString(),
-		*GetNameSafe(StaticMesh));
+		*GetNameSafe(NewWeaponMesh)); // [MOD]
 }

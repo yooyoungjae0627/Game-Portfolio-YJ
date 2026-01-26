@@ -5,7 +5,7 @@
 #include "GameplayTagContainer.h"
 #include "MosesWeaponData.generated.h"
 
-class UStaticMesh;
+class USkeletalMesh;
 
 UENUM(BlueprintType)
 enum class EMosesFireMode : uint8
@@ -41,7 +41,7 @@ public:
 	// Cosmetic (간단 버전)
 	// -----------------------
 	UPROPERTY(EditDefaultsOnly, Category = "Weapon|Cosmetic")
-	TSoftObjectPtr<UStaticMesh> WeaponStaticMesh;
+	TSoftObjectPtr<USkeletalMesh> WeaponSkeletalMesh;
 
 	// -----------------------
 	// Combat Spec (Server Authority Source)

@@ -100,9 +100,9 @@ private:
 	UPROPERTY(VisibleAnywhere, Category = "Moses|Components")
 	TObjectPtr<UMosesCameraComponent> MosesCameraComponent = nullptr;
 
-	// [ADD] 코스메틱 무기 표시용(Actor 스폰 X)
+	// 코스메틱 무기 표시용(Actor 스폰 X)
 	UPROPERTY(VisibleAnywhere, Category = "Moses|Weapon")
-	TObjectPtr<UStaticMeshComponent> WeaponMeshComp = nullptr;
+	TObjectPtr<USkeletalMeshComponent> WeaponMeshComp = nullptr;
 
 private:
 	UPROPERTY(EditDefaultsOnly, Category = "Moses|Move")
