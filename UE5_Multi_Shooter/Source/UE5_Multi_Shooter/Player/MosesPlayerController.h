@@ -1,9 +1,11 @@
 ﻿// =========================================================
-// MosesPlayerController.h (FULL)
-// - [MOD] Lobby 판정 안정화: GameState 기반 -> 맵 이름 기반 1순위 + GameState 보조
-// - [ADD] Lobby/Match 맵 이름 정책 변수 + 판정 함수
-// - [MOD] BeginPlay/OnPossess/ClientRestart에서 Lobby면 커서 ON, Match면 커서 OFF 강제
-// - [ADD] Lobby BeginPlay에서 NextTick으로 InputMode 1회 재적용 (Travel 직후 덮어쓰기 방지)
+// MosesPlayerController.h (FULL)  ✅ START 커서 ON 추가 포함
+//
+// - [ADD] Start 맵 이름 정책 변수 + 판정 함수(IsStartMap_Local)
+// - [ADD] Start InputMode 적용(커서 ON) + NextTick 재적용(Travel 직후 덮어쓰기 방지)
+// - [MOD] BeginPlay/OnPossess/ClientRestart에서
+//         Match면 커서 OFF, Lobby면 커서 ON, Start면 커서 ON 강제
+// - [MOD] ApplyMatchCameraPolicy는 "Lobby/Start"에서는 건드리지 않도록 보호
 // =========================================================
 
 #pragma once
@@ -40,6 +42,9 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnJoinedRoom, EMosesRoomJoinResult
  *   그 순간 RestoreNonLobbyInputMode()가 실행되면 커서 OFF가 되어 "커서가 안 보이는" 현상이 발생한다.
  * - 따라서 Lobby 여부 판정은 "맵 이름"을 1순위로 사용하고, GameState 체크는 보조로 사용한다.
  * - Match 맵에서는 커서를 무조건 OFF로 강제한다.
+ *
+ * [ADD: START]
+ * - Start 맵(StartGameLevel 등)에서도 UI 입력(닉네임 입력/버튼 클릭)을 위해 커서를 ON으로 유지한다.
  */
 UCLASS()
 class UE5_MULTI_SHOOTER_API AMosesPlayerController : public APlayerController
@@ -149,18 +154,17 @@ protected:
 	virtual void OnPossess(APawn* InPawn) override;
 	virtual void OnRep_PlayerState() override;
 
-
 protected:
-	virtual void OnRep_Pawn() override;           // Pawn 복제 도착 훅(클라 핵심)
+	virtual void OnRep_Pawn() override; // Pawn 복제 도착 훅(클라 핵심)
 
 	/*====================================================
 	= Replication
 	====================================================*/
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
-	
+
 private:
-	void ApplyMatchCameraPolicy_LocalOnly(const TCHAR* Reason);   
-	void RetryApplyMatchCameraPolicy_NextTick_LocalOnly();       
+	void ApplyMatchCameraPolicy_LocalOnly(const TCHAR* Reason);
+	void RetryApplyMatchCameraPolicy_NextTick_LocalOnly();
 
 private:
 	/*====================================================
@@ -177,11 +181,14 @@ private:
 
 private:
 	/*====================================================
-	= Lobby/Match Context 판정 (Local-only)
+	= Lobby/Match/Start Context 판정 (Local-only)
 	====================================================*/
 	bool IsLobbyContext() const;        // [MOD] 맵 이름 기반 1순위 판정
 	bool IsLobbyMap_Local() const;      // [ADD]
 	bool IsMatchMap_Local() const;      // [ADD]
+
+	// ✅ [ADD] Start 맵 판정
+	bool IsStartMap_Local() const;
 
 private:
 	/*====================================================
@@ -196,6 +203,10 @@ private:
 	void RestoreNonLobbyInputMode_LocalOnly();
 
 	void ReapplyLobbyInputMode_NextTick_LocalOnly(); // [ADD] Travel 직후 덮어쓰기 방지
+
+	// ✅ [ADD] Start InputMode (커서 ON) + NextTick 재적용
+	void ApplyStartInputMode_LocalOnly();
+	void ReapplyStartInputMode_NextTick_LocalOnly();
 
 private:
 	/*====================================================
@@ -221,10 +232,13 @@ private:
 	= Map Policy (중요)
 	====================================================*/
 	UPROPERTY(EditDefaultsOnly, Category = "Lobby|Policy")
-	FName LobbyMapName = TEXT("L_Lobby");   // [ADD] 실제 로비 맵 이름으로 변경
+	FName LobbyMapName = TEXT("LobbyLevel");
 
 	UPROPERTY(EditDefaultsOnly, Category = "Match|Policy")
-	FName MatchMapName = TEXT("L_Match");   // [ADD] 실제 매치 맵 이름으로 변경
+	FName MatchMapName = TEXT("MatchLevel");
+
+	UPROPERTY(EditDefaultsOnly, Category = "Start|Policy")
+	FName StartMapName = TEXT("StartGameLevel");
 
 private:
 	/*====================================================
@@ -247,6 +261,5 @@ private:
 	bool bRep_IsReady = false;
 
 private:
-	FTimerHandle MatchCameraRetryTimerHandle;     
+	FTimerHandle MatchCameraRetryTimerHandle;
 };
-

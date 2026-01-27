@@ -30,6 +30,7 @@ AMosesPlayerController::AMosesPlayerController(const FObjectInitializer& ObjectI
 	: Super(ObjectInitializer)
 {
 	PlayerCameraManagerClass = AMosesPlayerCameraManager::StaticClass();
+
 	/**
 	 * 주의:
 	 * - bAutoManageActiveCameraTarget을 ctor에서 영구로 끄면 매치에서 Pawn 카메라 자동 복구가 깨질 수 있음.
@@ -50,7 +51,14 @@ void AMosesPlayerController::ClientRestart_Implementation(APawn* NewPawn)
 		return;
 	}
 
-	// [ADD] 매치 맵이면 커서/입력은 무조건 GameOnly(커서 OFF)로 강제
+	// =========================================================
+	// InputMode / Cursor 정책
+	// - Match : Cursor OFF (GameOnly)
+	// - Lobby : Cursor ON  (GameAndUI)
+	// - Start : Cursor ON  (GameAndUI)  ✅ 요구사항
+	// =========================================================
+
+	// Match => 무조건 OFF
 	if (IsMatchMap_Local())
 	{
 		RestoreNonLobbyDefaults_LocalOnly();
@@ -64,15 +72,26 @@ void AMosesPlayerController::ClientRestart_Implementation(APawn* NewPawn)
 		return;
 	}
 
-	// [MOD] 로비 판정은 맵 이름 기반 1순위(IsLobbyContext 내부)
+	// Lobby => ON
 	if (IsLobbyContext())
 	{
 		bAutoManageActiveCameraTarget = false;
 		ApplyLobbyPreviewCamera();
-		ApplyLobbyInputMode_LocalOnly(); // [ADD] Restart 타이밍에서 입력 덮어쓰기 방지(커서 ON 확정)
+		ApplyLobbyInputMode_LocalOnly();
+		ReapplyLobbyInputMode_NextTick_LocalOnly();
 		return;
 	}
 
+	// ✅ Start => ON
+	if (IsStartMap_Local())
+	{
+		RestoreNonLobbyDefaults_LocalOnly();
+		ApplyStartInputMode_LocalOnly();
+		ReapplyStartInputMode_NextTick_LocalOnly();
+		return;
+	}
+
+	// Other NonLobby => OFF
 	RestoreNonLobbyDefaults_LocalOnly();
 	RestoreNonLobbyInputMode_LocalOnly();
 
@@ -190,7 +209,7 @@ void AMosesPlayerController::BeginPlay()
 		return;
 	}
 
-	// [ADD] 매치 맵이면 커서 OFF를 무조건 고정
+	// Match => 커서 OFF 고정
 	if (IsMatchMap_Local())
 	{
 		RestoreNonLobbyDefaults_LocalOnly();
@@ -204,7 +223,20 @@ void AMosesPlayerController::BeginPlay()
 		return;
 	}
 
-	// [MOD] NonLobby 판정(로비가 아니면)에서도 기존대로 복구
+	// ✅ Start => 커서 ON
+	if (IsStartMap_Local())
+	{
+		RestoreNonLobbyDefaults_LocalOnly();
+		ApplyStartInputMode_LocalOnly();
+		ReapplyStartInputMode_NextTick_LocalOnly();
+
+		UE_LOG(LogMosesSpawn, Warning, TEXT("[Start][PC] BeginPlay -> Cursor ON Map=%s"),
+			*UGameplayStatics::GetCurrentLevelName(GetWorld(), true));
+
+		return;
+	}
+
+	// NonLobby => 커서 OFF
 	if (!IsLobbyContext())
 	{
 		RestoreNonLobbyDefaults_LocalOnly();
@@ -224,14 +256,13 @@ void AMosesPlayerController::BeginPlay()
 		return;
 	}
 
-	// Lobby Context
+	// Lobby Context => 커서 ON
 	bAutoManageActiveCameraTarget = false;
 
 	ActivateLobbyUI_LocalOnly();
 	ApplyLobbyInputMode_LocalOnly();
 	ApplyLobbyPreviewCamera();
 
-	// [ADD] Travel 직후/Slate 포커스/엔진 덮어쓰기 타이밍에서 커서가 한번 꺼지는 케이스 방지
 	ReapplyLobbyInputMode_NextTick_LocalOnly();
 
 	GetWorldTimerManager().SetTimer(
@@ -257,7 +288,7 @@ void AMosesPlayerController::OnPossess(APawn* InPawn)
 		return;
 	}
 
-	// [ADD] 매치 맵이면 커서 OFF 강제
+	// Match => 커서 OFF
 	if (IsMatchMap_Local())
 	{
 		RestoreNonLobbyDefaults_LocalOnly();
@@ -278,11 +309,22 @@ void AMosesPlayerController::OnPossess(APawn* InPawn)
 		return;
 	}
 
+	// ✅ Start => 커서 ON
+	if (IsStartMap_Local())
+	{
+		RestoreNonLobbyDefaults_LocalOnly();
+		ApplyStartInputMode_LocalOnly();
+		ReapplyStartInputMode_NextTick_LocalOnly();
+		return;
+	}
+
+	// Lobby => 커서 ON
 	if (IsLobbyContext())
 	{
 		bAutoManageActiveCameraTarget = false;
 		ApplyLobbyPreviewCamera();
-		ApplyLobbyInputMode_LocalOnly(); // [MOD] Possess 타이밍에서도 커서 ON 확정
+		ApplyLobbyInputMode_LocalOnly();
+		ReapplyLobbyInputMode_NextTick_LocalOnly();
 	}
 	else
 	{
@@ -296,20 +338,19 @@ void AMosesPlayerController::OnPossess(APawn* InPawn)
 		}
 	}
 
-	UE_LOG(LogTemp, Warning, TEXT("[TEST][Cam] PC=%s Pawn=%s ViewTarget=%s AutoManage=%d Lobby=%d"),
+	UE_LOG(LogTemp, Warning, TEXT("[TEST][Cam] PC=%s Pawn=%s ViewTarget=%s AutoManage=%d Lobby=%d Start=%d"),
 		*GetNameSafe(this),
 		*GetNameSafe(InPawn),
 		*GetNameSafe(GetViewTarget()),
 		bAutoManageActiveCameraTarget ? 1 : 0,
-		IsLobbyContext() ? 1 : 0);
+		IsLobbyContext() ? 1 : 0,
+		IsStartMap_Local() ? 1 : 0);
 }
 
 void AMosesPlayerController::OnRep_PlayerState()
 {
 	Super::OnRep_PlayerState();
 
-	// [FIX] PS가 실제로 유효해진 시점에 Subsystem에게 "누가" 바뀌었는지 함께 알려준다.
-	//       PS=None 타이밍에서 UI가 먼저 읽는 문제를 차단하는 1차 게이트.
 	if (!IsLocalController())
 	{
 		return;
@@ -330,13 +371,15 @@ void AMosesPlayerController::OnRep_PlayerState()
 	AMosesPlayerState* PS = GetPlayerState<AMosesPlayerState>();
 	UE_LOG(LogMosesSpawn, Warning, TEXT("[PC][CL] OnRep_PlayerState PS=%s"), *GetNameSafe(PS));
 
-	Subsys->NotifyPlayerStateChanged(); // 기존 유지
-	// Subsys->NotifyPlayerStateChanged(PS); // (권장) Subsystem에 오버로드 있으면 이쪽이 더 안전
+	Subsys->NotifyPlayerStateChanged();
 }
 
 void AMosesPlayerController::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
 {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+
+	DOREPLIFETIME(AMosesPlayerController, SelectedCharacterId);
+	DOREPLIFETIME(AMosesPlayerController, bRep_IsReady);
 }
 
 // =========================================================
@@ -664,7 +707,7 @@ void AMosesPlayerController::DoServerTravelToLobby()
 }
 
 // =========================================================
-// Lobby/Match Context 판정 (Local-only)
+// Lobby/Match/Start Context 판정 (Local-only)
 // =========================================================
 
 bool AMosesPlayerController::IsLobbyMap_Local() const
@@ -675,7 +718,6 @@ bool AMosesPlayerController::IsLobbyMap_Local() const
 		return false;
 	}
 
-	// [ADD] Travel 직후에도 안정적인 판정: 현재 레벨 이름
 	const FName CurrentMapName = FName(*UGameplayStatics::GetCurrentLevelName(World, true));
 	return (CurrentMapName == LobbyMapName);
 }
@@ -692,15 +734,27 @@ bool AMosesPlayerController::IsMatchMap_Local() const
 	return (CurrentMapName == MatchMapName);
 }
 
+bool AMosesPlayerController::IsStartMap_Local() const
+{
+	const UWorld* World = GetWorld();
+	if (!World)
+	{
+		return false;
+	}
+
+	const FName CurrentMapName = FName(*UGameplayStatics::GetCurrentLevelName(World, true));
+	return (CurrentMapName == StartMapName);
+}
+
 bool AMosesPlayerController::IsLobbyContext() const
 {
-	// [MOD] 1순위: 맵 이름 기반(Travel/복제 타이밍에 흔들리지 않음)
+	// 1순위: 맵 이름 기반
 	if (IsLobbyMap_Local())
 	{
 		return true;
 	}
 
-	// 2순위(보조): GameState 타입 기반(예: 테스트/PIE 상황에서 맵 이름 다를 때)
+	// 2순위: GameState 타입 기반 보조
 	const UWorld* World = GetWorld();
 	if (!World)
 	{
@@ -790,6 +844,10 @@ void AMosesPlayerController::RestoreNonLobbyDefaults_LocalOnly()
 	}
 }
 
+// =========================================================
+// InputMode (Lobby/Start/NonLobby)
+// =========================================================
+
 void AMosesPlayerController::ApplyLobbyInputMode_LocalOnly()
 {
 	if (!IsLocalController())
@@ -806,6 +864,30 @@ void AMosesPlayerController::ApplyLobbyInputMode_LocalOnly()
 	Mode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
 
 	SetInputMode(Mode);
+}
+
+void AMosesPlayerController::ApplyStartInputMode_LocalOnly()
+{
+	if (!IsLocalController())
+	{
+		return;
+	}
+
+	// 개발자 주석:
+	// - Start 모드는 UI 입력 중심(닉 입력/버튼 클릭)이므로 커서 ON이 필요하다.
+	// - Lobby와 동일 정책(GameAndUI)을 사용한다.
+	bShowMouseCursor = true;
+	bEnableClickEvents = true;
+	bEnableMouseOverEvents = true;
+
+	FInputModeGameAndUI Mode;
+	Mode.SetHideCursorDuringCapture(false);
+	Mode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+
+	SetInputMode(Mode);
+
+	UE_LOG(LogMosesSpawn, Verbose, TEXT("[Start][PC] ApplyStartInputMode -> Cursor ON Map=%s"),
+		*UGameplayStatics::GetCurrentLevelName(GetWorld(), true));
 }
 
 void AMosesPlayerController::RestoreNonLobbyInputMode_LocalOnly()
@@ -836,7 +918,6 @@ void AMosesPlayerController::ReapplyLobbyInputMode_NextTick_LocalOnly()
 		return;
 	}
 
-	// [ADD] 다음 프레임에 "한 번 더" 적용해, Travel 직후 덮어쓰기를 이긴다.
 	World->GetTimerManager().SetTimerForNextTick(FTimerDelegate::CreateWeakLambda(this, [this]()
 		{
 			if (!IsLocalController())
@@ -855,6 +936,34 @@ void AMosesPlayerController::ReapplyLobbyInputMode_NextTick_LocalOnly()
 			if (IsLobbyContext())
 			{
 				ApplyLobbyInputMode_LocalOnly();
+			}
+		}));
+}
+
+void AMosesPlayerController::ReapplyStartInputMode_NextTick_LocalOnly()
+{
+	if (!IsLocalController())
+	{
+		return;
+	}
+
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	World->GetTimerManager().SetTimerForNextTick(FTimerDelegate::CreateWeakLambda(this, [this]()
+		{
+			if (!IsLocalController())
+			{
+				return;
+			}
+
+			// Start가 아니면 건드리지 않는다
+			if (IsStartMap_Local())
+			{
+				ApplyStartInputMode_LocalOnly();
 			}
 		}));
 }
@@ -942,15 +1051,6 @@ void AMosesPlayerController::OnRep_Pawn()
 		return;
 	}
 
-	/**
-	 * 개발자 주석(매우 중요):
-	 * - OnPossess는 서버에서 주로 의미가 있고,
-	 *   클라이언트에서는 Pawn이 "복제되어 도착"하는 시점이 더 신뢰할 수 있다.
-	 * - 특히 SeamlessTravel/Restart 흐름에서
-	 *   ClientRestart(NewPawn=nullptr) -> (조금 뒤) OnRep_Pawn() 순으로 오는 케이스가 흔하다.
-	 * - 따라서 여기서 "Pawn 카메라 복구"를 확정하면
-	 *   월드 고정 시점(로비 ViewTarget 잔존 등)이 구조적으로 사라진다.
-	 */
 	ApplyMatchCameraPolicy_LocalOnly(TEXT("OnRep_Pawn"));
 }
 
@@ -961,11 +1061,10 @@ void AMosesPlayerController::ApplyMatchCameraPolicy_LocalOnly(const TCHAR* Reaso
 		return;
 	}
 
-	// 매치/비로비 컨텍스트에서만 동작 (로비면 건드리지 않는다)
-	// - 현재 프로젝트 정책상 StartGame 레벨은 커서 OFF여도 큰 문제 없으므로,
-	//   "로비가 아니면" NonLobby 정책을 우선 적용한다.
-	const bool bIsLobby = IsLobbyContext();
-	if (bIsLobby)
+	// ✅ 핵심 보호:
+	// - Lobby/Start에서는 커서/입력/카메라 정책을 건드리지 않는다.
+	// - Start는 UI 중심 화면이므로 NonLobby(커서 OFF)로 묶이면 UX가 깨진다.
+	if (IsLobbyContext() || IsStartMap_Local())
 	{
 		return;
 	}
@@ -977,7 +1076,6 @@ void AMosesPlayerController::ApplyMatchCameraPolicy_LocalOnly(const TCHAR* Reaso
 	APawn* LocalPawn = GetPawn();
 	if (IsValid(LocalPawn))
 	{
-		// ✅ 핵심: Pawn이 생긴 순간 무조건 ViewTarget/Pawn으로 복구
 		SetViewTarget(LocalPawn);
 		AutoManageActiveCameraTarget(LocalPawn);
 
@@ -989,7 +1087,6 @@ void AMosesPlayerController::ApplyMatchCameraPolicy_LocalOnly(const TCHAR* Reaso
 			bAutoManageActiveCameraTarget ? 1 : 0,
 			*UGameplayStatics::GetCurrentLevelName(GetWorld(), true));
 
-		// 혹시 남아있는 재시도 타이머가 있으면 정리
 		if (GetWorld())
 		{
 			GetWorldTimerManager().ClearTimer(MatchCameraRetryTimerHandle);
@@ -997,7 +1094,6 @@ void AMosesPlayerController::ApplyMatchCameraPolicy_LocalOnly(const TCHAR* Reaso
 		return;
 	}
 
-	// Pawn이 아직 없다면 "다음 틱에 한 번 더" 재시도
 	UE_LOG(LogTemp, Warning,
 		TEXT("[CAM][PC][%s] ApplyMatchCameraPolicy RETRY (Pawn=None) ViewTarget=%s AutoManage=%d Map=%s"),
 		Reason ? Reason : TEXT("None"),
@@ -1021,7 +1117,6 @@ void AMosesPlayerController::RetryApplyMatchCameraPolicy_NextTick_LocalOnly()
 		return;
 	}
 
-	// 다음 프레임에 1회 재시도 (무한 루프 방지: 타이머 핸들을 재사용)
 	World->GetTimerManager().SetTimerForNextTick(FTimerDelegate::CreateWeakLambda(this, [this]()
 		{
 			if (!IsLocalController())
@@ -1029,8 +1124,8 @@ void AMosesPlayerController::RetryApplyMatchCameraPolicy_NextTick_LocalOnly()
 				return;
 			}
 
-			// 로비로 돌아간 경우에는 중단
-			if (IsLobbyContext())
+			// Lobby/Start로 돌아간 경우에는 중단
+			if (IsLobbyContext() || IsStartMap_Local())
 			{
 				return;
 			}
