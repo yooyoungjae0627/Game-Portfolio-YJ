@@ -1,7 +1,8 @@
 ﻿// ============================================================================
 // MosesCombatComponent.cpp (FULL)
-// - 주의: ServerFire_Implementation이 2번 정의되어 있던 중복을 제거하고,
-//        WeaponData 기반 몽타주 길이(초) 쿨다운 로직을 "한 곳"으로 정리했다.
+// - [MOD] Owner가 PlayerState(SSOT)인 구조를 전제로 Pawn/Controller resolve 헬퍼 추가
+// - [MOD] Server_CanFire / Server_PropagateFireCosmetics / Server_PerformHitscanAndApplyDamage에서
+//         GetOwner()를 Pawn으로 캐스팅하던 부분을 "PS->GetPawn()" 기반으로 교체
 // ============================================================================
 
 #include "UE5_Multi_Shooter/Combat/MosesCombatComponent.h"
@@ -10,6 +11,7 @@
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
 #include "UE5_Multi_Shooter/Combat/MosesWeaponData.h"
 #include "UE5_Multi_Shooter/Combat/MosesWeaponRegistrySubsystem.h"
+#include "UE5_Multi_Shooter/Player/MosesPlayerState.h" // [MOD] PS->GetPawn() 사용
 
 #include "Animation/AnimMontage.h"
 
@@ -20,6 +22,32 @@
 #include "GameFramework/Pawn.h"
 #include "GameFramework/Controller.h"
 #include "Kismet/GameplayStatics.h"
+
+namespace MosesCombat_Private
+{
+	/** [MOD] SSOT(Owner=PlayerState)에서 실제 Pawn을 얻는 헬퍼 */
+	static AMosesPlayerState* GetOwnerPS(const UActorComponent* Comp)
+	{
+		return Comp ? Cast<AMosesPlayerState>(Comp->GetOwner()) : nullptr;
+	}
+
+	static APawn* GetOwnerPawn(const UActorComponent* Comp)
+	{
+		AMosesPlayerState* PS = GetOwnerPS(Comp);
+		return PS ? PS->GetPawn() : nullptr; // APlayerState::GetPawn()
+	}
+
+	static AController* GetOwnerController(const UActorComponent* Comp)
+	{
+		APawn* Pawn = GetOwnerPawn(Comp);
+		return Pawn ? Pawn->GetController() : nullptr;
+	}
+
+	static APlayerCharacter* GetOwnerPlayerCharacter(const UActorComponent* Comp)
+	{
+		return Cast<APlayerCharacter>(GetOwnerPawn(Comp));
+	}
+}
 
 UMosesCombatComponent::UMosesCombatComponent()
 {
@@ -266,12 +294,14 @@ void UMosesCombatComponent::ServerFire_Implementation()
 
 void UMosesCombatComponent::Server_PropagateFireCosmetics(FGameplayTag ApprovedWeaponId)
 {
-	APawn* OwnerPawn = Cast<APawn>(GetOwner());
-	APlayerCharacter* PlayerChar = OwnerPawn ? Cast<APlayerCharacter>(OwnerPawn) : nullptr;
+	// [MOD] Owner는 PlayerState(SSOT). 실제 Pawn을 PS->GetPawn()로 resolve.
+	APlayerCharacter* PlayerChar = MosesCombat_Private::GetOwnerPlayerCharacter(this);
 	if (!PlayerChar)
 	{
-		UE_LOG(LogMosesCombat, Warning, TEXT("[FIRE][SV] PropagateCosmetic FAIL (Owner not APlayerCharacter) Owner=%s"),
-			*GetNameSafe(GetOwner()));
+		UE_LOG(LogMosesCombat, Warning,
+			TEXT("[FIRE][SV] PropagateCosmetic FAIL (No Pawn/PlayerChar) Owner=%s Pawn=%s"),
+			*GetNameSafe(GetOwner()),
+			*GetNameSafe(MosesCombat_Private::GetOwnerPawn(this)));
 		return;
 	}
 
@@ -299,11 +329,12 @@ bool UMosesCombatComponent::Server_CanFire(EMosesFireGuardFailReason& OutReason,
 		return false;
 	}
 
-	const APawn* OwnerPawn = Cast<APawn>(OwnerActor);
+	// [MOD] SSOT Owner=PlayerState. Pawn은 PS->GetPawn()로 찾는다.
+	const APawn* OwnerPawn = MosesCombat_Private::GetOwnerPawn(this);
 	if (!OwnerPawn)
 	{
 		OutReason = EMosesFireGuardFailReason::NoPawn;
-		OutDebug = TEXT("OwnerNotPawn");
+		OutDebug = TEXT("NoPawn(PS->GetPawn null)");
 		return false;
 	}
 
@@ -384,17 +415,11 @@ void UMosesCombatComponent::Server_ConsumeAmmo_OnApprovedFire(const UMosesWeapon
 
 float UMosesCombatComponent::Server_GetFireIntervalSec_FromWeaponData(const UMosesWeaponData* WeaponData) const
 {
-	// 개발자 주석:
-	// - 서버 권위: "애니가 끝나야 다음 발사"를 서버가 보장하기 위해
-	//   WeaponData가 가진 FireMontage를 서버가 로드하여 길이를 사용한다.
-	// - 몽타주가 없거나 로드 실패하면 DefaultFireIntervalSec로 fallback.
-
 	if (!WeaponData)
 	{
 		return DefaultFireIntervalSec;
 	}
 
-	// SoftPtr 로드
 	UAnimMontage* Montage = WeaponData->FireMontage.Get();
 	if (!Montage && !WeaponData->FireMontage.IsNull())
 	{
@@ -447,7 +472,8 @@ void UMosesCombatComponent::Server_UpdateFireCooldownStamp()
 
 void UMosesCombatComponent::Server_PerformHitscanAndApplyDamage(const UMosesWeaponData* /*WeaponData*/)
 {
-	APawn* OwnerPawn = Cast<APawn>(GetOwner());
+	// [MOD] Owner는 PlayerState. Pawn/Controller는 PS->GetPawn() 기반으로 사용.
+	APawn* OwnerPawn = MosesCombat_Private::GetOwnerPawn(this);
 	if (!OwnerPawn)
 	{
 		return;
@@ -468,7 +494,9 @@ void UMosesCombatComponent::Server_PerformHitscanAndApplyDamage(const UMosesWeap
 
 	FHitResult Hit;
 	FCollisionQueryParams Params(SCENE_QUERY_STAT(Moses_FireTrace), true);
-	Params.AddIgnoredActor(GetOwner());
+
+	// [MOD] 무시 대상도 Pawn 기준이 맞다.
+	Params.AddIgnoredActor(OwnerPawn);
 
 	const bool bHit = GetWorld()->LineTraceSingleByChannel(Hit, Start, End, FireTraceChannel, Params);
 	if (!bHit || !Hit.GetActor())
@@ -483,11 +511,12 @@ void UMosesCombatComponent::Server_PerformHitscanAndApplyDamage(const UMosesWeap
 	UE_LOG(LogMosesCombat, Log, TEXT("[HIT][SV] Victim=%s Bone=%s Headshot=%d Damage=%.1f"),
 		*GetNameSafe(Hit.GetActor()), *Hit.BoneName.ToString(), bHeadshot ? 1 : 0, AppliedDamage);
 
+	// [MOD] DamageCauser도 Pawn으로 주는 게 자연스럽다(PS를 causer로 주지 않음)
 	UGameplayStatics::ApplyDamage(
 		Hit.GetActor(),
 		AppliedDamage,
 		Controller,
-		GetOwner(),
+		OwnerPawn,
 		nullptr
 	);
 }
@@ -627,7 +656,6 @@ void UMosesCombatComponent::Server_EnsureAmmoInitializedForSlot(int32 SlotIndex,
 	int32 Reserve = 0;
 	GetSlotAmmo_Internal(SlotIndex, Mag, Reserve);
 
-	// 아직 미초기화(0/0)라면 최소값 세팅
 	if (Mag == 0 && Reserve == 0)
 	{
 		Mag = 30;

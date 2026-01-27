@@ -33,12 +33,26 @@ void AMosesPlayerState::PostInitializeComponents()
 	Super::PostInitializeComponents();
 
 	// [MOD] Combat 초기값은 서버에서만 확정(중복 호출 안전)
+	//if (HasAuthority() && CombatComponent)
+	//{
+	//	UE_LOG(LogMosesCombat, Warning, TEXT("%s PS PostInit -> EnsureCombatInit PS=%s"),
+	//		MOSES_TAG_COMBAT_SV, *GetNameSafe(this));
+
+	//	CombatComponent->Server_EnsureInitialized_Day2();
+	//}
+
+	//BindCombatDelegatesOnce();
+
 	if (HasAuthority() && CombatComponent)
 	{
-		UE_LOG(LogMosesCombat, Warning, TEXT("%s PS PostInit -> EnsureCombatInit PS=%s"),
-			MOSES_TAG_COMBAT_SV, *GetNameSafe(this));
+		// [TMP] 임시 기본 무기 1회 세팅 (Slot1만이라도 유효하게 만들어 Fire 루트 오픈)
+		// - GameplayTag 이름은 프로젝트에 존재하는 태그로 정확히 맞춰야 한다.
+		// - 예: "Weapon.Rifle.A"
+		const FGameplayTag TmpSlot1 = FGameplayTag::RequestGameplayTag(FName(TEXT("Weapon.Rifle.A")));
+		const FGameplayTag TmpSlot2; // None
+		const FGameplayTag TmpSlot3; // None
 
-		CombatComponent->Server_EnsureInitialized_Day2();
+		CombatComponent->ServerInitDefaultSlots(TmpSlot1, TmpSlot2, TmpSlot3);
 	}
 
 	BindCombatDelegatesOnce();
