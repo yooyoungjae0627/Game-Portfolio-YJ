@@ -1,7 +1,7 @@
 ﻿// ============================================================================
 // MosesCombatComponent.cpp (FULL)
-// - [MOD] Server_PropagateFireCosmetics(ApprovedWeaponId)로 변경
-// - [MOD] 승인된 WeaponId를 Multicast 파라미터로 전달해 "총마다 다른 AV"를 보장
+// - 주의: ServerFire_Implementation이 2번 정의되어 있던 중복을 제거하고,
+//        WeaponData 기반 몽타주 길이(초) 쿨다운 로직을 "한 곳"으로 정리했다.
 // ============================================================================
 
 #include "UE5_Multi_Shooter/Combat/MosesCombatComponent.h"
@@ -10,6 +10,8 @@
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
 #include "UE5_Multi_Shooter/Combat/MosesWeaponData.h"
 #include "UE5_Multi_Shooter/Combat/MosesWeaponRegistrySubsystem.h"
+
+#include "Animation/AnimMontage.h"
 
 #include "Net/UnrealNetwork.h"
 #include "Engine/World.h"
@@ -87,6 +89,7 @@ void UMosesCombatComponent::RequestEquipSlot(int32 SlotIndex)
 		return;
 	}
 
+	// 클라는 요청만, 서버가 결정
 	ServerEquipSlot(SlotIndex);
 }
 
@@ -118,6 +121,7 @@ void UMosesCombatComponent::ServerEquipSlot_Implementation(int32 SlotIndex)
 
 	CurrentSlot = SlotIndex;
 
+	// 슬롯 탄약이 아직 비어 있으면 서버에서 최소값 보장
 	Server_EnsureAmmoInitializedForSlot(CurrentSlot, NewWeaponId);
 
 	UE_LOG(LogMosesWeapon, Log, TEXT("[WEAPON][SV] Equip OK Slot=%d Weapon=%s"),
@@ -202,6 +206,7 @@ void UMosesCombatComponent::RequestFire()
 		return;
 	}
 
+	// 클라는 요청만, 서버가 승인/거절
 	ServerFire();
 }
 
@@ -214,6 +219,7 @@ void UMosesCombatComponent::ServerFire_Implementation()
 
 	UE_LOG(LogMosesCombat, Log, TEXT("[FIRE][SV] Req Owner=%s Slot=%d"), *GetNameSafe(GetOwner()), CurrentSlot);
 
+	// 1) 기본 가드(Dead/Owner/Pawn/Controller/WeaponId/Ammo)
 	EMosesFireGuardFailReason FailReason = EMosesFireGuardFailReason::None;
 	FString Debug;
 	if (!Server_CanFire(FailReason, Debug))
@@ -222,19 +228,34 @@ void UMosesCombatComponent::ServerFire_Implementation()
 		return;
 	}
 
+	// 2) WeaponData resolve
 	FGameplayTag EquippedWeaponId;
 	const UMosesWeaponData* WeaponData = Server_ResolveEquippedWeaponData(EquippedWeaponId);
 	if (!WeaponData)
 	{
-		UE_LOG(LogMosesCombat, Warning, TEXT("[GUARD][SV] Reject Fire (NoWeaponData) Weapon=%s"),
+		UE_LOG(LogMosesCombat, Warning, TEXT("[GUARD][SV] Reject Fire Reason=%d Debug=NoWeaponData Weapon=%s"),
+			(int32)EMosesFireGuardFailReason::NoWeaponData,
 			*EquippedWeaponId.ToString());
 		return;
 	}
 
+	// 3) 쿨다운 체크(몽타주 길이 기반)
+	if (!Server_IsFireCooldownReady(WeaponData))
+	{
+		const float Interval = Server_GetFireIntervalSec_FromWeaponData(WeaponData);
+
+		UE_LOG(LogMosesCombat, Warning, TEXT("[GUARD][SV] Reject Fire Reason=%d Debug=Cooldown Interval=%.3f"),
+			(int32)EMosesFireGuardFailReason::Cooldown,
+			Interval);
+
+		return;
+	}
+
+	// 4) 승인 → 쿨다운 stamp 갱신 → 탄약 차감 → 코스메틱 전파 → 히트스캔/데미지
 	Server_UpdateFireCooldownStamp();
 	Server_ConsumeAmmo_OnApprovedFire(WeaponData);
 
-	// ✅ 승인된 WeaponId를 함께 전파(총마다 다른 AV 보장)
+	// 승인된 WeaponId를 함께 전파(총마다 다른 AV 보장)
 	Server_PropagateFireCosmetics(EquippedWeaponId);
 
 	Server_PerformHitscanAndApplyDamage(WeaponData);
@@ -258,7 +279,7 @@ void UMosesCombatComponent::Server_PropagateFireCosmetics(FGameplayTag ApprovedW
 }
 
 // ============================================================================
-// Guard
+// Guard (basic)
 // ============================================================================
 
 bool UMosesCombatComponent::Server_CanFire(EMosesFireGuardFailReason& OutReason, FString& OutDebug) const
@@ -301,12 +322,7 @@ bool UMosesCombatComponent::Server_CanFire(EMosesFireGuardFailReason& OutReason,
 		return false;
 	}
 
-	if (!Server_IsFireCooldownReady(nullptr))
-	{
-		OutReason = EMosesFireGuardFailReason::Cooldown;
-		OutDebug = TEXT("Cooldown");
-		return false;
-	}
+	// 쿨다운 체크는 WeaponData 필요 → ServerFire에서 수행
 
 	if (GetCurrentMagAmmo() <= 0)
 	{
@@ -363,20 +379,48 @@ void UMosesCombatComponent::Server_ConsumeAmmo_OnApprovedFire(const UMosesWeapon
 }
 
 // ============================================================================
-// Cooldown
+// Cooldown (Montage length based)
 // ============================================================================
 
-bool UMosesCombatComponent::Server_IsFireCooldownReady(const UMosesWeaponData* /*WeaponData*/) const
+float UMosesCombatComponent::Server_GetFireIntervalSec_FromWeaponData(const UMosesWeaponData* WeaponData) const
+{
+	// 개발자 주석:
+	// - 서버 권위: "애니가 끝나야 다음 발사"를 서버가 보장하기 위해
+	//   WeaponData가 가진 FireMontage를 서버가 로드하여 길이를 사용한다.
+	// - 몽타주가 없거나 로드 실패하면 DefaultFireIntervalSec로 fallback.
+
+	if (!WeaponData)
+	{
+		return DefaultFireIntervalSec;
+	}
+
+	// SoftPtr 로드
+	UAnimMontage* Montage = WeaponData->FireMontage.Get();
+	if (!Montage && !WeaponData->FireMontage.IsNull())
+	{
+		Montage = WeaponData->FireMontage.LoadSynchronous();
+	}
+
+	if (!Montage)
+	{
+		return DefaultFireIntervalSec;
+	}
+
+	const float LengthSec = Montage->GetPlayLength();
+	return (LengthSec > 0.f) ? LengthSec : DefaultFireIntervalSec;
+}
+
+bool UMosesCombatComponent::Server_IsFireCooldownReady(const UMosesWeaponData* WeaponData) const
 {
 	const double Now = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0;
-	const double Interval = DefaultFireIntervalSec;
 
 	const double Last =
 		(CurrentSlot == 1) ? Slot1LastFireTimeSec :
 		(CurrentSlot == 2) ? Slot2LastFireTimeSec :
 		(CurrentSlot == 3) ? Slot3LastFireTimeSec : -9999.0;
 
-	return (Now - Last) >= Interval;
+	const float IntervalSec = Server_GetFireIntervalSec_FromWeaponData(WeaponData);
+	return (Now - Last) >= (double)IntervalSec;
 }
 
 void UMosesCombatComponent::Server_UpdateFireCooldownStamp()
@@ -583,6 +627,7 @@ void UMosesCombatComponent::Server_EnsureAmmoInitializedForSlot(int32 SlotIndex,
 	int32 Reserve = 0;
 	GetSlotAmmo_Internal(SlotIndex, Mag, Reserve);
 
+	// 아직 미초기화(0/0)라면 최소값 세팅
 	if (Mag == 0 && Reserve == 0)
 	{
 		Mag = 30;
@@ -634,7 +679,7 @@ void UMosesCombatComponent::SetSlotAmmo_Internal(int32 SlotIndex, int32 NewMag, 
 	{
 		Slot1MagAmmo = NewMag;
 		Slot1ReserveAmmo = NewReserve;
-		OnRep_Slot1Ammo();
+		OnRep_Slot1Ammo(); // 서버에서도 즉시 Delegate 반영
 		return;
 	}
 	if (SlotIndex == 2)

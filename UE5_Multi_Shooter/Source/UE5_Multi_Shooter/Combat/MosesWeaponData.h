@@ -8,14 +8,8 @@
 class USkeletalMesh;
 class USoundBase;
 class UParticleSystem;
+class UAnimMontage;
 
-/**
- * UMosesWeaponData
- *
- * [역할]
- * - 무기별 표시/코스메틱 데이터를 DataAsset로 관리한다.
- * - 서버는 승인(WeaponId 확정)만 하고, 클라는 WeaponData로 코스메틱을 재생한다.
- */
 UCLASS(BlueprintType)
 class UE5_MULTI_SHOOTER_API UMosesWeaponData : public UPrimaryDataAsset
 {
@@ -24,40 +18,31 @@ class UE5_MULTI_SHOOTER_API UMosesWeaponData : public UPrimaryDataAsset
 public:
 	UMosesWeaponData() = default;
 
-	// =========================================================================
-	// AssetManager (Primary Asset)
-	// =========================================================================
 	virtual FPrimaryAssetId GetPrimaryAssetId() const override;
 
 public:
-	// =========================================================================
-	// Weapon Key
-	// =========================================================================
 	UPROPERTY(EditDefaultsOnly, Category = "Moses|Weapon")
 	FGameplayTag WeaponId;
 
-public:
-	// =========================================================================
-	// Cosmetic: Mesh
-	// =========================================================================
 	UPROPERTY(EditDefaultsOnly, Category = "Moses|Weapon|Mesh")
 	TSoftObjectPtr<USkeletalMesh> WeaponSkeletalMesh;
 
-public:
-	// =========================================================================
-	// Cosmetic: Fire SFX/VFX (총마다 다르게)
-	// =========================================================================
 	UPROPERTY(EditDefaultsOnly, Category = "Moses|Weapon|SFX")
 	TSoftObjectPtr<USoundBase> FireSound;
 
-	/** ✅ Cascade ParticleSystem */
+	/** (Cascade 기준) 머즐 FX */
 	UPROPERTY(EditDefaultsOnly, Category = "Moses|Weapon|VFX")
 	TSoftObjectPtr<UParticleSystem> MuzzleFlashFX;
 
-public:
-	// =========================================================================
-	// Socket policy (무기마다 다를 수 있음)
-	// =========================================================================
+	/** 무기별 머즐 소켓 이름(예: MuzzleFlash / AmmoSocket) */
 	UPROPERTY(EditDefaultsOnly, Category = "Moses|Weapon|Socket")
 	FName MuzzleSocketName = TEXT("MuzzleFlash");
+
+	/**
+	 * ✅ 서버 쿨다운(=재발사 간격) 계산용 몽타주
+	 * - 서버가 이 몽타주를 로드해서 GetPlayLength()를 사용한다.
+	 * - 무기마다 다른 발사 애니 길이에 맞춰 "애니가 끝나야 다음 발사"를 보장한다.
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "Moses|Weapon|Timing")
+	TSoftObjectPtr<UAnimMontage> FireMontage;
 };
