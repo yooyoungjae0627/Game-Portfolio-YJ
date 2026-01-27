@@ -1,4 +1,5 @@
 #include "UE5_Multi_Shooter/Character/PlayerCharacter.h"
+#include "UE5_Multi_Shooter/Character/Components/MosesHeroComponent.h"
 
 #include "UE5_Multi_Shooter/Combat/MosesCombatComponent.h"
 #include "UE5_Multi_Shooter/Combat/MosesWeaponRegistrySubsystem.h"
@@ -24,6 +25,7 @@
 #include "NiagaraFunctionLibrary.h"
 #include "NiagaraSystem.h"
 
+
 // ============================================================================
 // Ctor / Lifecycle
 // ============================================================================
@@ -32,6 +34,10 @@ APlayerCharacter::APlayerCharacter()
 {
 	PrimaryActorTick.bCanEverTick = false;
 	bReplicates = true;
+
+	// [중요] HeroComponent는 로컬 입력(EnhancedInput) 바인딩의 "주체"다.
+	// - 이 컴포넌트가 없거나 SetupInputBindings가 호출되지 않으면 WASD/마우스 입력이 Pawn으로 전달되지 않는다.
+	HeroComponent = CreateDefaultSubobject<UMosesHeroComponent>(TEXT("HeroComponent"));
 
 	// [중요] 코스메틱 무기 메시 컴포넌트는 "항상 존재"해야 한다.
 	// - 생성자에서 NewObject로 만들면(특히 CDO 생성 시점) 에디터 TypedElementRegistry 초기화 이전에
@@ -84,9 +90,32 @@ void APlayerCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 
 void APlayerCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
 {
-	// EnhancedInput 바인딩은 HeroComponent가 담당.
 	Super::SetupPlayerInputComponent(PlayerInputComponent);
+
+	// 개발자 주석:
+	// - 프로젝트 정책: EnhancedInput 바인딩은 HeroComponent가 담당한다.
+	// - Pawn은 Input_* 엔드포인트만 제공한다.
+	// - 따라서 바인딩 진입은 반드시 여기서 1회 수행되어야 한다.
+	if (!ensure(PlayerInputComponent))
+	{
+		return;
+	}
+
+	if (!HeroComponent)
+	{
+		UE_LOG(LogMosesSpawn, Error, TEXT("[Hero][Input] No HeroComponent. Input will not work. Pawn=%s"), *GetNameSafe(this));
+		return;
+	}
+
+	// HeroComponent 내부에서 LocalPawn 가드(IsLocalPlayerPawn)를 수행한다.
+	HeroComponent->SetupInputBindings(PlayerInputComponent);
+
+	// 카메라 모드 델리게이트도 로컬에서만 바인딩
+	HeroComponent->TryBindCameraModeDelegate_LocalOnly();
+
+	UE_LOG(LogMosesSpawn, Log, TEXT("[Hero][Input] SetupPlayerInputComponent -> Hero Bind OK Pawn=%s"), *GetNameSafe(this));
 }
+
 
 void APlayerCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
 {
