@@ -1,4 +1,12 @@
+ï»¿// ============================================================================
+// PlayerCharacter.cpp (FULL)
+// - [MOD] Multicast_PlayFireMontage(WeaponId)ì—ì„œ WeaponData resolve -> SFX/VFX ì¬ìƒ
+// - [MOD] Pawnì— FireSound/MuzzleFlashFXë¥¼ ë‘ì§€ ì•ŠëŠ”ë‹¤(ì´ë§ˆë‹¤ ë‹¤ë¥´ê²Œ)
+// - [ì£¼ì˜] ì´ íŒŒì¼ì€ "ì½”ìŠ¤ë©”í‹± í‘œí˜„"ë§Œ í•œë‹¤. SSOT ë³€ê²½ì€ CombatComponent(ì„œë²„)ì—ì„œë§Œ.
+// ============================================================================
+
 #include "UE5_Multi_Shooter/Character/PlayerCharacter.h"
+
 #include "UE5_Multi_Shooter/Character/Components/MosesHeroComponent.h"
 
 #include "UE5_Multi_Shooter/Combat/MosesCombatComponent.h"
@@ -19,12 +27,12 @@
 #include "Engine/World.h"
 #include "Engine/GameInstance.h"
 
+#include "Particles/ParticleSystem.h"
 #include "Kismet/GameplayStatics.h"
 #include "Sound/SoundBase.h"
 
 #include "NiagaraFunctionLibrary.h"
 #include "NiagaraSystem.h"
-
 
 // ============================================================================
 // Ctor / Lifecycle
@@ -35,14 +43,10 @@ APlayerCharacter::APlayerCharacter()
 	PrimaryActorTick.bCanEverTick = false;
 	bReplicates = true;
 
-	// [Áß¿ä] HeroComponent´Â ·ÎÄÃ ÀÔ·Â(EnhancedInput) ¹ÙÀÎµùÀÇ "ÁÖÃ¼"´Ù.
-	// - ÀÌ ÄÄÆ÷³ÍÆ®°¡ ¾ø°Å³ª SetupInputBindings°¡ È£ÃâµÇÁö ¾ÊÀ¸¸é WASD/¸¶¿ì½º ÀÔ·ÂÀÌ PawnÀ¸·Î Àü´ŞµÇÁö ¾Ê´Â´Ù.
+	// ì…ë ¥ ë°”ì¸ë”©ì˜ ì£¼ì²´(ë¡œì»¬ ì „ìš©)ëŠ” HeroComponentë‹¤.
 	HeroComponent = CreateDefaultSubobject<UMosesHeroComponent>(TEXT("HeroComponent"));
 
-	// [Áß¿ä] ÄÚ½º¸ŞÆ½ ¹«±â ¸Ş½Ã ÄÄÆ÷³ÍÆ®´Â "Ç×»ó Á¸Àç"ÇØ¾ß ÇÑ´Ù.
-	// - »ı¼ºÀÚ¿¡¼­ NewObject·Î ¸¸µé¸é(Æ¯È÷ CDO »ı¼º ½ÃÁ¡) ¿¡µğÅÍ TypedElementRegistry ÃÊ±âÈ­ ÀÌÀü¿¡
-	//   ComponentElement »ı¼ºÀÌ ¹ß»ıÇÏ¿© ensure/break°¡ °É¸± ¼ö ÀÖ´Ù.
-	// - CreateDefaultSubobject´Â CDO/ÅÛÇÃ¸´ »ı¼º ÆÄÀÌÇÁ¶óÀÎ°ú È£È¯µÇµµ·Ï ¼³°èµÇ¾î ¾ÈÀüÇÏ´Ù.
+	// ì½”ìŠ¤ë©”í‹± ë¬´ê¸° ë©”ì‹œ ì»´í¬ë„ŒíŠ¸ëŠ” í•­ìƒ ì¡´ì¬í•´ì•¼ í•œë‹¤.
 	WeaponMeshComp = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("WeaponMeshComp"));
 	WeaponMeshComp->SetupAttachment(GetMesh());
 
@@ -55,8 +59,7 @@ void APlayerCharacter::PostInitializeComponents()
 {
 	Super::PostInitializeComponents();
 
-	// [¾ÈÀü] PIE Àç½ÃÀÛ / ¸®ÀÎ½ºÅÏ½º / ¿¡µğÅÍ »óÅÂ¿¡¼­ ¼ÒÄÏ ºÎÂøÀÌ Ç®¸®°Å³ª ¼ø¼­°¡ ²¿ÀÏ ¼ö ÀÖ¾î,
-	// ÀÌ Å¸ÀÌ¹Ö¿¡ "Ç×»ó" ÇÑ ¹ø º¸°­ÇÑ´Ù.
+	// ì†Œì¼“ ë¶€ì°© ë³´ê°•(PIE/ë¦¬ì¸ìŠ¤í„´ìŠ¤ ë“±ì—ì„œ í’€ë¦¬ëŠ” ì¼€ì´ìŠ¤ ë°©ì–´)
 	if (WeaponMeshComp && GetMesh())
 	{
 		WeaponMeshComp->AttachToComponent(
@@ -92,10 +95,7 @@ void APlayerCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCom
 {
 	Super::SetupPlayerInputComponent(PlayerInputComponent);
 
-	// °³¹ßÀÚ ÁÖ¼®:
-	// - ÇÁ·ÎÁ§Æ® Á¤Ã¥: EnhancedInput ¹ÙÀÎµùÀº HeroComponent°¡ ´ã´çÇÑ´Ù.
-	// - PawnÀº Input_* ¿£µåÆ÷ÀÎÆ®¸¸ Á¦°øÇÑ´Ù.
-	// - µû¶ó¼­ ¹ÙÀÎµù ÁøÀÔÀº ¹İµå½Ã ¿©±â¼­ 1È¸ ¼öÇàµÇ¾î¾ß ÇÑ´Ù.
+	// EnhancedInput ë°”ì¸ë”©ì€ HeroComponentê°€ ë‹´ë‹¹í•œë‹¤.
 	if (!ensure(PlayerInputComponent))
 	{
 		return;
@@ -107,19 +107,14 @@ void APlayerCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCom
 		return;
 	}
 
-	// HeroComponent ³»ºÎ¿¡¼­ LocalPawn °¡µå(IsLocalPlayerPawn)¸¦ ¼öÇàÇÑ´Ù.
 	HeroComponent->SetupInputBindings(PlayerInputComponent);
-
-	// Ä«¸Ş¶ó ¸ğµå µ¨¸®°ÔÀÌÆ®µµ ·ÎÄÃ¿¡¼­¸¸ ¹ÙÀÎµù
 	HeroComponent->TryBindCameraModeDelegate_LocalOnly();
-
-	UE_LOG(LogMosesSpawn, Log, TEXT("[Hero][Input] SetupPlayerInputComponent -> Hero Bind OK Pawn=%s"), *GetNameSafe(this));
 }
-
 
 void APlayerCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
 {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+
 	DOREPLIFETIME(APlayerCharacter, bIsSprinting);
 }
 
@@ -166,7 +161,6 @@ bool APlayerCharacter::IsSprinting() const
 
 void APlayerCharacter::Input_Move(const FVector2D& MoveValue)
 {
-	// [DAY3] Á×¾úÀ¸¸é ÀÔ·Â Â÷´Ü(ÄÚ½º¸ŞÆ½/Ã¼°¨ ¾ÈÁ¤È­)
 	if (CachedCombatComponent && CachedCombatComponent->IsDead())
 	{
 		return;
@@ -288,7 +282,7 @@ void APlayerCharacter::Input_FirePressed()
 		return;
 	}
 
-	// Å¬¶ó ÀÔ·ÂÀº '¿äÃ»'¸¸ ÇÑ´Ù.
+	// í´ë¼ ì…ë ¥ì€ ìš”ì²­ë§Œ í•œë‹¤(ìŠ¹ì¸ì€ ì„œë²„ê°€).
 	if (UMosesCombatComponent* CombatComp = GetCombatComponent_Checked())
 	{
 		UE_LOG(LogMosesCombat, Verbose, TEXT("[FIRE][CL] Input FirePressed Pawn=%s"), *GetNameSafe(this));
@@ -380,8 +374,6 @@ void APlayerCharacter::BindCombatComponent()
 	CachedCombatComponent = NewComp;
 
 	CachedCombatComponent->OnEquippedChanged.AddUObject(this, &APlayerCharacter::HandleEquippedChanged);
-
-	// [DAY3] DeadChanged ±¸µ¶(Death ¸ùÅ¸ÁÖ/ÀÔ·Â Â÷´Ü ÆÄÀÌÇÁ¶óÀÎ)
 	CachedCombatComponent->OnDeadChanged.AddUObject(this, &APlayerCharacter::HandleDeadChanged);
 
 	UE_LOG(LogMosesWeapon, Log, TEXT("[WEAPON][Bind] CombatComponent Bound Pawn=%s PS=%s"),
@@ -415,7 +407,6 @@ UMosesCombatComponent* APlayerCharacter::GetCombatComponent_Checked() const
 		return nullptr;
 	}
 
-	// Á¤Ã¥: CombatComponent´Â PlayerState°¡ SSOT·Î ¼ÒÀ¯ÇÑ´Ù.
 	return PS->FindComponentByClass<UMosesCombatComponent>();
 }
 
@@ -440,14 +431,12 @@ void APlayerCharacter::HandleDeadChanged(bool bNewDead)
 		return;
 	}
 
-	// [Áß¿ä] Death ¸ùÅ¸ÁÖ´Â "¼­¹ö¿¡¼­¸¸" Multicast·Î ÀüÆÄÇÑ´Ù.
-	// - Å¬¶ó°¡ ·ÎÄÃ¿¡¼­ DeathMontage¸¦ Á÷Á¢ Àç»ıÇÏ¸é (¼­¹ö Multicast¿Í) ÀÌÁß Àç»ı/ºÒÀÏÄ¡°¡ ³­´Ù.
+	// ì‚¬ë§ ëª½íƒ€ì£¼ëŠ” ì„œë²„ì—ì„œë§Œ Multicastë¡œ ì „íŒŒí•œë‹¤.
 	if (HasAuthority())
 	{
 		Multicast_PlayDeathMontage();
 	}
 
-	// ¸ğµç ¸Ó½Å¿¡¼­ ÀÌµ¿/ÀÔ·Â ÄÚ½º¸ŞÆ½ Â÷´Ü(°°Àº »óÅÂ·Î º¸ÀÌµµ·Ï)
 	ApplyDeadCosmetics_Local();
 }
 
@@ -466,16 +455,9 @@ void APlayerCharacter::RefreshWeaponCosmetic(FGameplayTag WeaponId)
 	}
 
 	UWorld* World = GetWorld();
-	if (!World)
-	{
-		UE_LOG(LogMosesWeapon, Verbose, TEXT("[WEAPON][COS] Skip (NoWorld) Pawn=%s"), *GetNameSafe(this));
-		return;
-	}
-
-	UGameInstance* GI = World->GetGameInstance();
+	UGameInstance* GI = World ? World->GetGameInstance() : nullptr;
 	if (!GI)
 	{
-		UE_LOG(LogMosesWeapon, Verbose, TEXT("[WEAPON][COS] Skip (NoGameInstance) Pawn=%s"), *GetNameSafe(this));
 		return;
 	}
 
@@ -568,49 +550,108 @@ void APlayerCharacter::TryPlayMontage_Local(UAnimMontage* Montage, const TCHAR* 
 		*GetNameSafe(this));
 }
 
-void APlayerCharacter::PlayFireAV_Local() const
+void APlayerCharacter::PlayFireAV_Local(FGameplayTag WeaponId) const
 {
-	// [DAY3 ÃÖ¼Ò °ËÁõ] Fire SFX + Muzzle VFX
 	if (!WeaponMeshComp)
 	{
 		return;
 	}
 
-	const FVector MuzzleLoc = WeaponMeshComp->GetSocketLocation(WeaponMuzzleSocketName);
-	const FRotator MuzzleRot = WeaponMeshComp->GetSocketRotation(WeaponMuzzleSocketName);
-
-	if (FireSound)
+	if (!WeaponId.IsValid())
 	{
-		UGameplayStatics::PlaySoundAtLocation(this, FireSound, MuzzleLoc);
+		UE_LOG(LogMosesWeapon, Verbose, TEXT("[WEAPON][AV] Skip (Invalid WeaponId) Pawn=%s"), *GetNameSafe(this));
+		return;
 	}
 
-	if (MuzzleFlashFX)
+	const UWorld* World = GetWorld();
+	const UGameInstance* GI = World ? World->GetGameInstance() : nullptr;
+	if (!GI)
 	{
-		UNiagaraFunctionLibrary::SpawnSystemAtLocation(
-			this,
-			MuzzleFlashFX,
-			MuzzleLoc,
-			MuzzleRot
+		return;
+	}
+
+	const UMosesWeaponRegistrySubsystem* Registry = GI->GetSubsystem<UMosesWeaponRegistrySubsystem>();
+	if (!Registry)
+	{
+		UE_LOG(LogMosesWeapon, Warning, TEXT("[WEAPON][AV] NoRegistry Weapon=%s Pawn=%s"),
+			*WeaponId.ToString(), *GetNameSafe(this));
+		return;
+	}
+
+	const UMosesWeaponData* Data = Registry->ResolveWeaponData(WeaponId);
+	if (!Data)
+	{
+		UE_LOG(LogMosesWeapon, Warning, TEXT("[WEAPON][AV] ResolveWeaponData FAIL Weapon=%s Pawn=%s"),
+			*WeaponId.ToString(), *GetNameSafe(this));
+		return;
+	}
+
+	// ë¬´ê¸°ë³„ ì†Œì¼“ ì´ë¦„(ì—†ìœ¼ë©´ fallback)
+	const FName MuzzleSocket = Data->MuzzleSocketName.IsNone()
+		? FName(TEXT("MuzzleFlash"))
+		: Data->MuzzleSocketName;
+
+	const FVector MuzzleLoc = WeaponMeshComp->GetSocketLocation(MuzzleSocket);
+	const FRotator MuzzleRot = WeaponMeshComp->GetSocketRotation(MuzzleSocket);
+
+	// SFX (SoftPtr)
+	USoundBase* FireSnd = nullptr;
+	if (!Data->FireSound.IsNull())
+	{
+		FireSnd = Data->FireSound.Get();
+		if (!FireSnd)
+		{
+			FireSnd = Data->FireSound.LoadSynchronous();
+		}
+	}
+
+	// VFX (SoftPtr) âœ… Cascade ParticleSystem
+	UParticleSystem* MuzzleFX = nullptr;
+	if (!Data->MuzzleFlashFX.IsNull())
+	{
+		MuzzleFX = Data->MuzzleFlashFX.Get();
+		if (!MuzzleFX)
+		{
+			MuzzleFX = Data->MuzzleFlashFX.LoadSynchronous();
+		}
+	}
+
+	if (FireSnd)
+	{
+		UGameplayStatics::PlaySoundAtLocation(this, FireSnd, MuzzleLoc);
+	}
+
+	if (MuzzleFX)
+	{
+		UGameplayStatics::SpawnEmitterAtLocation(
+			GetWorld(),
+			MuzzleFX,
+			FTransform(MuzzleRot, MuzzleLoc),
+			/*bAutoDestroy*/ true
 		);
 	}
+
+	UE_LOG(LogMosesWeapon, Verbose, TEXT("[WEAPON][AV] Fire AV OK Weapon=%s Socket=%s SFX=%s VFX=%s Pawn=%s"),
+		*WeaponId.ToString(),
+		*MuzzleSocket.ToString(),
+		*GetNameSafe(FireSnd),
+		*GetNameSafe(MuzzleFX),
+		*GetNameSafe(this));
 }
+
 
 void APlayerCharacter::ApplyDeadCosmetics_Local() const
 {
-	// ÀÌµ¿ Â÷´Ü(¸ğµç ¸Ó½Å)
 	if (UCharacterMovementComponent* MoveComp = GetCharacterMovement())
 	{
 		MoveComp->DisableMovement();
 	}
-
-	// Ãæµ¹/Ä¸½¶ Ã³¸® µîÀº Day5(Respawn/Phase)¿¡¼­ È®Á¤ÇÏ´Â °Ô ¾ÈÀü.
 }
 
-void APlayerCharacter::Multicast_PlayFireMontage_Implementation()
+void APlayerCharacter::Multicast_PlayFireMontage_Implementation(FGameplayTag WeaponId)
 {
-	// ¼­¹ö ½ÂÀÎ ÈÄ¿¡¸¸ È£ÃâµÇ¾î¾ß ÇÑ´Ù(CombatComponent ¼­¹ö ·ÎÁ÷¿¡¼­ È£Ãâ)
 	TryPlayMontage_Local(FireMontage, TEXT("FIRE"));
-	PlayFireAV_Local();
+	PlayFireAV_Local(WeaponId);
 }
 
 void APlayerCharacter::Multicast_PlayHitReactMontage_Implementation()

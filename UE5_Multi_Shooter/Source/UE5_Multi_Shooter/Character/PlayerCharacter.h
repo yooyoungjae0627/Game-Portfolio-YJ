@@ -1,24 +1,4 @@
-// PlayerCharacter.h
-// ============================================================================
-//  Player Pawn ø™«“ ¡§∏Æ (Lyra Ω∫≈∏¿œ / Server Authority / SSOT)
-//
-// [ø™«“(¡ﬂø‰)]
-// - Pawn(APlayerCharacter)¿∫ "¿‘∑¬ ø£µÂ∆˜¿Œ∆Æ"¿Ã¿⁄ "ƒ⁄Ω∫∏ﬁ∆Ω «•«ˆ" ¥„¥Á.
-// - ¿¸≈ı/¿Â¬¯/≈∫æ‡/πﬂªÁ Ω¬¿Œ(¡§¥‰)¿∫ º≠πˆ∞° ≥ª∏Æ∏Á,
-//   SSOT(Single Source of Truth)¥¬ PlayerState º“¿Ø CombatComponent∞° ∞°¡¯¥Ÿ.
-// - Pawn¿∫ ¥Ÿ¿Ω∏∏ ¥„¥Á«—¥Ÿ:
-//   1) HeroComponent∞° ¿¸¥ﬁ«— ¿‘∑¬¿ª º≠πˆ ø‰√ª API∑Œ ø¨∞·
-//   2) RepNotify/Delegate∑Œ ≥ª∑¡ø¬ 'ªÛ≈¬'∏¶ ¿ÃøÎ«ÿ ƒ⁄Ω∫∏ﬁ∆Ω(π´±‚ ∏ﬁΩ√/∏˘≈∏¡÷/SFX/VFX)¿ª ¿Á«ˆ
-//
-// [«ŸΩ… ø¯ƒ¢]
-// - ≈¨∂Û¿Ãæ∆Æ¥¬ "ø‰√ª"∏∏ «—¥Ÿ. (Server RPC / Component Request)
-// - º≠πˆ¥¬ "Ω¬¿Œ + ªÛ≈¬ ∫Ø∞Ê"∏∏ «—¥Ÿ. (SSOT ∫Ø∞Ê)
-// - ∏µÁ ≈¨∂Û¥¬ "ªÛ≈¬ ∫π¡¶ ∞·∞˙"∑Œ µø¿œ«œ∞‘ ∫∏¿Ã∞‘ «—¥Ÿ. (OnRep -> Delegate -> Cosmetic)
-// - HUD/UMG¥¬ Tick ±›¡ˆ(¿Ã ≈¨∑°Ω∫¥¬ ƒ⁄Ω∫∏ﬁ∆Ω∏∏).
-//
-// ============================================================================
-
-#pragma once
+Ôªø#pragma once
 
 #include "CoreMinimal.h"
 #include "GameplayTagContainer.h"
@@ -34,8 +14,6 @@ class UMosesCombatComponent;
 
 class USkeletalMeshComponent;
 class UAnimMontage;
-class USoundBase;
-class UNiagaraSystem;
 
 UCLASS()
 class UE5_MULTI_SHOOTER_API APlayerCharacter : public AMosesCharacter
@@ -45,14 +23,8 @@ class UE5_MULTI_SHOOTER_API APlayerCharacter : public AMosesCharacter
 public:
 	APlayerCharacter();
 
-	// =========================================================================
-	// Query
-	// =========================================================================
 	bool IsSprinting() const;
 
-	// =========================================================================
-	// Input Endpoints (HeroComponent -> Pawn)
-	// =========================================================================
 	void Input_Move(const FVector2D& MoveValue);
 	void Input_Look(const FVector2D& LookValue);
 
@@ -66,25 +38,15 @@ public:
 	void Input_EquipSlot2();
 	void Input_EquipSlot3();
 
-	// Fire ¿‘∑¬(ø‰√ª∏∏)
 	void Input_FirePressed();
 
 protected:
-	// =========================================================================
-	// Actor lifecycle / Possession hooks
-	// =========================================================================
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
 	virtual void SetupPlayerInputComponent(UInputComponent* PlayerInputComponent) override;
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 
-	/**
-	 * PostInitializeComponents
-	 *
-	 * - ª˝º∫¿⁄∫∏¥Ÿ ¥ ∞Ì BeginPlay∫∏¥Ÿ ∫¸∏• æ»¡§ ±∏∞£.
-	 * - ƒ⁄Ω∫∏ﬁ∆Ω ƒƒ∆˜≥Õ∆Æ¿« Attach ∫∏∞≠ ∞∞¿∫ "ø°µ≈Õ/PIE »ÁµÈ∏≤ πÊæÓ"ø° ¿˚«’«œ¥Ÿ.
-	 */
 	virtual void PostInitializeComponents() override;
 
 	virtual void OnRep_Controller() override;
@@ -93,25 +55,16 @@ protected:
 	virtual void OnRep_PlayerState() override;
 
 public:
-	// =========================================================================
-	// Montage Cosmetics (Server approved -> Multicast)
-	// =========================================================================
-
-	// πﬂªÁ/««∞›¿∫ ¿⁄¡÷ πﬂª˝«œπ«∑Œ Unreliable «„øÎ(¿ØΩ«µ«æÓµµ ƒ°∏Ì¿˚¿Ã¡ˆ æ ¿Ω)
 	UFUNCTION(NetMulticast, Unreliable)
-	void Multicast_PlayFireMontage();
+	void Multicast_PlayFireMontage(FGameplayTag WeaponId);
 
 	UFUNCTION(NetMulticast, Unreliable)
 	void Multicast_PlayHitReactMontage();
 
-	// ªÁ∏¡¿∫ ¿ØΩ«µ«∏È æ» µ«π«∑Œ Reliable
 	UFUNCTION(NetMulticast, Reliable)
 	void Multicast_PlayDeathMontage();
 
 private:
-	// =========================================================================
-	// Sprint (Client feel + Server authority)
-	// =========================================================================
 	void ApplySprintSpeed_LocalPredict(bool bNewSprinting);
 	void ApplySprintSpeed_FromAuth(const TCHAR* From);
 
@@ -122,58 +75,41 @@ private:
 	void OnRep_IsSprinting();
 
 private:
-	// =========================================================================
-	// Pickup
-	// =========================================================================
 	APickupBase* FindPickupTarget_Local() const;
 
 	UFUNCTION(Server, Reliable)
 	void Server_TryPickup(APickupBase* Target);
 
 private:
-	// =========================================================================
-	// CombatComponent Bind (RepNotify -> Delegate -> Cosmetic)
-	// =========================================================================
 	void BindCombatComponent();
 	void UnbindCombatComponent();
 
 	void HandleEquippedChanged(int32 SlotIndex, FGameplayTag WeaponId);
-
-	/** [DAY3] SSOT ¡◊¿Ω ªÛ≈¬ ∫Ø∞Ê ºˆΩ≈ */
 	void HandleDeadChanged(bool bNewDead);
 
 	void RefreshWeaponCosmetic(FGameplayTag WeaponId);
 
-	// PlayerState(SSOT)ø°º≠ CombatComponent »πµÊ
 	UMosesCombatComponent* GetCombatComponent_Checked() const;
 
-	// ∏˘≈∏¡÷ ∑Œƒ√ ¿Áª˝ «Ô∆€
+private:
 	void TryPlayMontage_Local(UAnimMontage* Montage, const TCHAR* DebugTag) const;
 
-	// [DAY3] Fire SFX/VFX ∑Œƒ√ ¿Áª˝/Ω∫∆˘ (Multicastø°º≠ »£√‚)
-	void PlayFireAV_Local() const;
+	/** ‚úÖ Î¨¥Í∏∞Î≥Ñ WeaponData resolve ÌõÑ, Cascade FX + Sound Ïû¨ÏÉù */
+	void PlayFireAV_Local(FGameplayTag WeaponId) const;
 
-	// [DAY3] Dead Ω√ ¿Ãµø/¿‘∑¬ ƒ⁄Ω∫∏ﬁ∆Ω ¬˜¥‹(∏µÁ ∏”Ω≈ø°º≠ µø¿œ«œ∞‘)
 	void ApplyDeadCosmetics_Local() const;
 
 private:
-	// =========================================================================
-	// Components
-	// =========================================================================
 	UPROPERTY(VisibleAnywhere, Category = "Moses|Components")
 	TObjectPtr<UMosesHeroComponent> HeroComponent = nullptr;
 
 	UPROPERTY(VisibleAnywhere, Category = "Moses|Components")
 	TObjectPtr<UMosesCameraComponent> MosesCameraComponent = nullptr;
 
-	// ƒ⁄Ω∫∏ﬁ∆Ω π´±‚ «•Ω√øÎ (Actor Ω∫∆˘ X / Replicate X)
 	UPROPERTY(VisibleAnywhere, Category = "Moses|Weapon")
 	TObjectPtr<USkeletalMeshComponent> WeaponMeshComp = nullptr;
 
 private:
-	// =========================================================================
-	// Tunables
-	// =========================================================================
 	UPROPERTY(EditDefaultsOnly, Category = "Moses|Move")
 	float WalkSpeed = 600.0f;
 
@@ -183,18 +119,10 @@ private:
 	UPROPERTY(EditDefaultsOnly, Category = "Moses|Pickup")
 	float PickupTraceDistance = 500.0f;
 
-	// ƒ≥∏Ø≈Õ Ω∫ƒÃ∑π≈Êø° ¡∏¿Á«ÿæﬂ «œ¥¬ º“ƒœ ¿Ã∏ß(WeaponMeshComp∞° ø©±‚∑Œ ∫Ÿ¿Ω)
 	UPROPERTY(EditDefaultsOnly, Category = "Moses|Weapon")
 	FName CharacterWeaponSocketName = TEXT("WeaponSocket");
 
-	// π´±‚(WeaponMeshComp)ø° ¡∏¿Á«ÿæﬂ «œ¥¬ √—±∏ º“ƒœ ¿Ã∏ß(SFX/VFX Ω∫∆˘ ±‚¡ÿ)
-	UPROPERTY(EditDefaultsOnly, Category = "Moses|Weapon")
-	FName WeaponMuzzleSocketName = TEXT("MuzzleSocket");
-
 private:
-	// =========================================================================
-	// Montages / SFX / VFX (BPø°º≠ ºº∆√)
-	// =========================================================================
 	UPROPERTY(EditDefaultsOnly, Category = "Moses|Anim")
 	TObjectPtr<UAnimMontage> FireMontage = nullptr;
 
@@ -204,18 +132,7 @@ private:
 	UPROPERTY(EditDefaultsOnly, Category = "Moses|Anim")
 	TObjectPtr<UAnimMontage> DeathMontage = nullptr;
 
-	// [DAY3] πﬂªÁ ªÁøÓµÂ(¥‹¿œ ∞À¡ıøÎ)
-	UPROPERTY(EditDefaultsOnly, Category = "Moses|Weapon|SFX")
-	TObjectPtr<USoundBase> FireSound = nullptr;
-
-	// [DAY3] √—±∏ º∂±§(¥‹¿œ ∞À¡ıøÎ)
-	UPROPERTY(EditDefaultsOnly, Category = "Moses|Weapon|VFX")
-	TObjectPtr<UNiagaraSystem> MuzzleFlashFX = nullptr;
-
 private:
-	// =========================================================================
-	// Replicated State
-	// =========================================================================
 	UPROPERTY(ReplicatedUsing = OnRep_IsSprinting)
 	bool bIsSprinting = false;
 

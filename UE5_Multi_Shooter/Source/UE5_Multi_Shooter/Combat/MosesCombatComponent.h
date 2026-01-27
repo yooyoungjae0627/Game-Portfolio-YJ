@@ -1,4 +1,9 @@
-﻿#pragma once
+﻿// ============================================================================
+// MosesCombatComponent.h (FULL)
+// - [MOD] 서버 승인 Fire 코스메틱 전파 시 WeaponId를 함께 전달
+// ============================================================================
+
+#pragma once
 
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
@@ -9,11 +14,7 @@ class UMosesWeaponData;
 class AMosesPlayerState;
 class APawn;
 class AController;
-class APlayerCharacter;
 
-/**
- * 델리게이트
- */
 DECLARE_MULTICAST_DELEGATE_TwoParams(FMosesOnEquippedChanged, int32 /*SlotIndex*/, FGameplayTag /*WeaponId*/);
 DECLARE_MULTICAST_DELEGATE_TwoParams(FMosesOnAmmoChangedNative, int32 /*Mag*/, int32 /*Reserve*/);
 DECLARE_MULTICAST_DELEGATE_OneParam(FMosesOnDeadChangedNative, bool /*bNewDead*/);
@@ -45,6 +46,7 @@ class UE5_MULTI_SHOOTER_API UMosesCombatComponent : public UActorComponent
 public:
 	UMosesCombatComponent();
 
+public:
 	// =========================================================================
 	// SSOT Query
 	// =========================================================================
@@ -57,6 +59,7 @@ public:
 
 	bool IsDead() const { return bIsDead; }
 
+public:
 	// =========================================================================
 	// Equip API
 	// =========================================================================
@@ -68,14 +71,16 @@ public:
 	void ServerInitDefaultSlots(const FGameplayTag& InSlot1, const FGameplayTag& InSlot2, const FGameplayTag& InSlot3);
 	void Server_EnsureInitialized_Day2();
 
+public:
 	// =========================================================================
-	// Fire API (Client -> Server) [DAY3]
+	// Fire API
 	// =========================================================================
 	void RequestFire();
 
 	UFUNCTION(Server, Reliable)
 	void ServerFire();
 
+public:
 	// =========================================================================
 	// Delegates
 	// =========================================================================
@@ -83,6 +88,7 @@ public:
 	FMosesOnAmmoChangedNative OnAmmoChanged;
 	FMosesOnDeadChangedNative OnDeadChanged;
 
+public:
 	// =========================================================================
 	// Dead Hook
 	// =========================================================================
@@ -106,6 +112,7 @@ private:
 
 	UFUNCTION() void OnRep_IsDead();
 
+private:
 	// =========================================================================
 	// Broadcast helpers
 	// =========================================================================
@@ -113,6 +120,7 @@ private:
 	void BroadcastAmmoChanged(const TCHAR* ContextTag);
 	void BroadcastDeadChanged(const TCHAR* ContextTag);
 
+private:
 	// =========================================================================
 	// Slot / Ammo helpers
 	// =========================================================================
@@ -123,6 +131,7 @@ private:
 	void GetSlotAmmo_Internal(int32 SlotIndex, int32& OutMag, int32& OutReserve) const;
 	void SetSlotAmmo_Internal(int32 SlotIndex, int32 NewMag, int32 NewReserve);
 
+private:
 	// =========================================================================
 	// Fire helpers (Server only)
 	// =========================================================================
@@ -135,8 +144,8 @@ private:
 
 	void Server_PerformHitscanAndApplyDamage(const UMosesWeaponData* WeaponData);
 
-	// [DAY3] 서버 승인 Fire 성공 시 코스메틱 전파(멀티캐스트 호출) 헬퍼
-	void Server_PropagateFireCosmetics();
+	/** [MOD] 승인된 WeaponId를 Multicast 파라미터로 전달 */
+	void Server_PropagateFireCosmetics(FGameplayTag ApprovedWeaponId);
 
 private:
 	// =========================================================================
@@ -193,7 +202,7 @@ private:
 
 private:
 	// =========================================================================
-	// Fire policy (DAY3 최소)
+	// Fire policy
 	// =========================================================================
 	UPROPERTY(EditDefaultsOnly, Category = "Moses|Fire")
 	float HitscanDistance = 20000.0f;

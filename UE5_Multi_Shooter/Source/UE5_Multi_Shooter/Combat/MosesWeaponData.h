@@ -6,19 +6,15 @@
 #include "MosesWeaponData.generated.h"
 
 class USkeletalMesh;
-
-UENUM(BlueprintType)
-enum class EMosesFireMode : uint8
-{
-	SemiAuto,
-	FullAuto
-};
+class USoundBase;
+class UParticleSystem;
 
 /**
  * UMosesWeaponData
  *
- * Day2 기준: 무기 스펙의 단일 출처(SSOT for spec).
- * - 코스메틱은 Actor 스폰 대신, Character의 WeaponMeshComp에 StaticMesh를 지정하는 방식(간단/안정).
+ * [역할]
+ * - 무기별 표시/코스메틱 데이터를 DataAsset로 관리한다.
+ * - 서버는 승인(WeaponId 확정)만 하고, 클라는 WeaponData로 코스메틱을 재생한다.
  */
 UCLASS(BlueprintType)
 class UE5_MULTI_SHOOTER_API UMosesWeaponData : public UPrimaryDataAsset
@@ -26,45 +22,42 @@ class UE5_MULTI_SHOOTER_API UMosesWeaponData : public UPrimaryDataAsset
 	GENERATED_BODY()
 
 public:
-	UMosesWeaponData();
+	UMosesWeaponData() = default;
 
+	// =========================================================================
+	// AssetManager (Primary Asset)
+	// =========================================================================
 	virtual FPrimaryAssetId GetPrimaryAssetId() const override;
 
 public:
-	// -----------------------
-	// Identity
-	// -----------------------
-	UPROPERTY(EditDefaultsOnly, Category = "Weapon|Id")
+	// =========================================================================
+	// Weapon Key
+	// =========================================================================
+	UPROPERTY(EditDefaultsOnly, Category = "Moses|Weapon")
 	FGameplayTag WeaponId;
 
-	// -----------------------
-	// Cosmetic (간단 버전)
-	// -----------------------
-	UPROPERTY(EditDefaultsOnly, Category = "Weapon|Cosmetic")
+public:
+	// =========================================================================
+	// Cosmetic: Mesh
+	// =========================================================================
+	UPROPERTY(EditDefaultsOnly, Category = "Moses|Weapon|Mesh")
 	TSoftObjectPtr<USkeletalMesh> WeaponSkeletalMesh;
 
-	// -----------------------
-	// Combat Spec (Server Authority Source)
-	// -----------------------
-	UPROPERTY(EditDefaultsOnly, Category = "Weapon|Spec")
-	float Damage = 25.0f;
+public:
+	// =========================================================================
+	// Cosmetic: Fire SFX/VFX (총마다 다르게)
+	// =========================================================================
+	UPROPERTY(EditDefaultsOnly, Category = "Moses|Weapon|SFX")
+	TSoftObjectPtr<USoundBase> FireSound;
 
-	UPROPERTY(EditDefaultsOnly, Category = "Weapon|Spec")
-	float HeadshotMultiplier = 2.0f;
+	/** ✅ Cascade ParticleSystem */
+	UPROPERTY(EditDefaultsOnly, Category = "Moses|Weapon|VFX")
+	TSoftObjectPtr<UParticleSystem> MuzzleFlashFX;
 
-	UPROPERTY(EditDefaultsOnly, Category = "Weapon|Spec")
-	EMosesFireMode FireMode = EMosesFireMode::SemiAuto;
-
-	// 60/RPM
-	UPROPERTY(EditDefaultsOnly, Category = "Weapon|Spec", meta = (ClampMin = "0.01"))
-	float FireIntervalSec = 0.12f;
-
-	UPROPERTY(EditDefaultsOnly, Category = "Weapon|Spec", meta = (ClampMin = "1"))
-	int32 MagSize = 30;
-
-	UPROPERTY(EditDefaultsOnly, Category = "Weapon|Spec", meta = (ClampMin = "0"))
-	int32 MaxReserve = 120;
-
-	UPROPERTY(EditDefaultsOnly, Category = "Weapon|Spec", meta = (ClampMin = "0.0"))
-	float ReloadTime = 1.6f;
+public:
+	// =========================================================================
+	// Socket policy (무기마다 다를 수 있음)
+	// =========================================================================
+	UPROPERTY(EditDefaultsOnly, Category = "Moses|Weapon|Socket")
+	FName MuzzleSocketName = TEXT("MuzzleFlash");
 };

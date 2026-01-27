@@ -1,16 +1,23 @@
-﻿#include "UE5_Multi_Shooter/Combat/MosesCombatComponent.h"
+﻿// ============================================================================
+// MosesCombatComponent.cpp (FULL)
+// - [MOD] Server_PropagateFireCosmetics(ApprovedWeaponId)로 변경
+// - [MOD] 승인된 WeaponId를 Multicast 파라미터로 전달해 "총마다 다른 AV"를 보장
+// ============================================================================
 
-#include "Net/UnrealNetwork.h"
-#include "Engine/World.h"
-#include "GameFramework/Pawn.h"
-#include "GameFramework/Controller.h"
-#include "GameFramework/PlayerController.h"
-#include "Kismet/GameplayStatics.h"
+#include "UE5_Multi_Shooter/Combat/MosesCombatComponent.h"
 
+#include "UE5_Multi_Shooter/Character/PlayerCharacter.h"
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
 #include "UE5_Multi_Shooter/Combat/MosesWeaponData.h"
 #include "UE5_Multi_Shooter/Combat/MosesWeaponRegistrySubsystem.h"
-#include "UE5_Multi_Shooter/Character/PlayerCharacter.h"
+
+#include "Net/UnrealNetwork.h"
+#include "Engine/World.h"
+#include "Engine/GameInstance.h"
+
+#include "GameFramework/Pawn.h"
+#include "GameFramework/Controller.h"
+#include "Kismet/GameplayStatics.h"
 
 UMosesCombatComponent::UMosesCombatComponent()
 {
@@ -42,6 +49,7 @@ void UMosesCombatComponent::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>
 // ============================================================================
 // SSOT Query
 // ============================================================================
+
 FGameplayTag UMosesCombatComponent::GetWeaponIdForSlot(int32 SlotIndex) const
 {
 	return GetSlotWeaponIdInternal(SlotIndex);
@@ -71,6 +79,7 @@ int32 UMosesCombatComponent::GetCurrentReserveAmmo() const
 // ============================================================================
 // Equip API
 // ============================================================================
+
 void UMosesCombatComponent::RequestEquipSlot(int32 SlotIndex)
 {
 	if (!GetOwner())
@@ -108,6 +117,7 @@ void UMosesCombatComponent::ServerEquipSlot_Implementation(int32 SlotIndex)
 	}
 
 	CurrentSlot = SlotIndex;
+
 	Server_EnsureAmmoInitializedForSlot(CurrentSlot, NewWeaponId);
 
 	UE_LOG(LogMosesWeapon, Log, TEXT("[WEAPON][SV] Equip OK Slot=%d Weapon=%s"),
@@ -160,7 +170,7 @@ void UMosesCombatComponent::Server_EnsureInitialized_Day2()
 
 	if (!bHasAnyWeapon)
 	{
-		UE_LOG(LogMosesWeapon, Warning, TEXT("[WEAPON][SV] EnsureInit_Day2: No default weapon ids set yet (skip)"));
+		UE_LOG(LogMosesWeapon, Warning, TEXT("[WEAPON][SV] EnsureInit: No default weapon ids set yet (skip)"));
 		return;
 	}
 
@@ -175,15 +185,16 @@ void UMosesCombatComponent::Server_EnsureInitialized_Day2()
 
 	bInitialized_Day2 = true;
 
-	UE_LOG(LogMosesWeapon, Log, TEXT("[WEAPON][SV] EnsureInit_Day2 OK Slot=%d"), CurrentSlot);
+	UE_LOG(LogMosesWeapon, Log, TEXT("[WEAPON][SV] EnsureInit OK Slot=%d"), CurrentSlot);
 
-	BroadcastEquippedChanged(TEXT("Server_EnsureInitialized_Day2"));
-	BroadcastAmmoChanged(TEXT("Server_EnsureInitialized_Day2"));
+	BroadcastEquippedChanged(TEXT("Server_EnsureInitialized"));
+	BroadcastAmmoChanged(TEXT("Server_EnsureInitialized"));
 }
 
 // ============================================================================
-// [DAY3] Fire API
+// Fire API
 // ============================================================================
+
 void UMosesCombatComponent::RequestFire()
 {
 	if (!GetOwner())
@@ -215,17 +226,16 @@ void UMosesCombatComponent::ServerFire_Implementation()
 	const UMosesWeaponData* WeaponData = Server_ResolveEquippedWeaponData(EquippedWeaponId);
 	if (!WeaponData)
 	{
-		UE_LOG(LogMosesCombat, Warning, TEXT("[GUARD][SV] Reject Fire Reason=%d Debug=WeaponDataMissing Weapon=%s"),
-			(int32)EMosesFireGuardFailReason::NoWeaponData, *EquippedWeaponId.ToString());
+		UE_LOG(LogMosesCombat, Warning, TEXT("[GUARD][SV] Reject Fire (NoWeaponData) Weapon=%s"),
+			*EquippedWeaponId.ToString());
 		return;
 	}
 
-	// 서버 승인 → 쿨다운 stamp 갱신 → 탄약 차감 → 히트스캔/데미지
 	Server_UpdateFireCooldownStamp();
 	Server_ConsumeAmmo_OnApprovedFire(WeaponData);
 
-	// [DAY3 핵심] 서버 승인 Fire 코스메틱(애니+SFX+VFX) 전파
-	Server_PropagateFireCosmetics();
+	// ✅ 승인된 WeaponId를 함께 전파(총마다 다른 AV 보장)
+	Server_PropagateFireCosmetics(EquippedWeaponId);
 
 	Server_PerformHitscanAndApplyDamage(WeaponData);
 
@@ -233,9 +243,8 @@ void UMosesCombatComponent::ServerFire_Implementation()
 		*EquippedWeaponId.ToString(), GetCurrentMagAmmo(), GetCurrentReserveAmmo());
 }
 
-void UMosesCombatComponent::Server_PropagateFireCosmetics()
+void UMosesCombatComponent::Server_PropagateFireCosmetics(FGameplayTag ApprovedWeaponId)
 {
-	// [중요] 코스메틱은 서버 승인 후에만 전파한다.
 	APawn* OwnerPawn = Cast<APawn>(GetOwner());
 	APlayerCharacter* PlayerChar = OwnerPawn ? Cast<APlayerCharacter>(OwnerPawn) : nullptr;
 	if (!PlayerChar)
@@ -245,12 +254,13 @@ void UMosesCombatComponent::Server_PropagateFireCosmetics()
 		return;
 	}
 
-	PlayerChar->Multicast_PlayFireMontage();
+	PlayerChar->Multicast_PlayFireMontage(ApprovedWeaponId);
 }
 
 // ============================================================================
-// [DAY3] Guard
+// Guard
 // ============================================================================
+
 bool UMosesCombatComponent::Server_CanFire(EMosesFireGuardFailReason& OutReason, FString& OutDebug) const
 {
 	if (bIsDead)
@@ -309,8 +319,9 @@ bool UMosesCombatComponent::Server_CanFire(EMosesFireGuardFailReason& OutReason,
 }
 
 // ============================================================================
-// [DAY3] WeaponData Resolve
+// WeaponData Resolve
 // ============================================================================
+
 const UMosesWeaponData* UMosesCombatComponent::Server_ResolveEquippedWeaponData(FGameplayTag& OutWeaponId) const
 {
 	OutWeaponId = GetEquippedWeaponId();
@@ -320,12 +331,7 @@ const UMosesWeaponData* UMosesCombatComponent::Server_ResolveEquippedWeaponData(
 	}
 
 	const UWorld* World = GetWorld();
-	if (!World)
-	{
-		return nullptr;
-	}
-
-	const UGameInstance* GI = World->GetGameInstance();
+	const UGameInstance* GI = World ? World->GetGameInstance() : nullptr;
 	if (!GI)
 	{
 		return nullptr;
@@ -341,8 +347,9 @@ const UMosesWeaponData* UMosesCombatComponent::Server_ResolveEquippedWeaponData(
 }
 
 // ============================================================================
-// [DAY3] Ammo Consume
+// Ammo Consume
 // ============================================================================
+
 void UMosesCombatComponent::Server_ConsumeAmmo_OnApprovedFire(const UMosesWeaponData* /*WeaponData*/)
 {
 	int32 Mag = 0;
@@ -356,8 +363,9 @@ void UMosesCombatComponent::Server_ConsumeAmmo_OnApprovedFire(const UMosesWeapon
 }
 
 // ============================================================================
-// [DAY3] Cooldown
+// Cooldown
 // ============================================================================
+
 bool UMosesCombatComponent::Server_IsFireCooldownReady(const UMosesWeaponData* /*WeaponData*/) const
 {
 	const double Now = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0;
@@ -390,8 +398,9 @@ void UMosesCombatComponent::Server_UpdateFireCooldownStamp()
 }
 
 // ============================================================================
-// [DAY3] Hitscan + Damage
+// Hitscan + Damage
 // ============================================================================
+
 void UMosesCombatComponent::Server_PerformHitscanAndApplyDamage(const UMosesWeaponData* /*WeaponData*/)
 {
 	APawn* OwnerPawn = Cast<APawn>(GetOwner());
@@ -442,6 +451,7 @@ void UMosesCombatComponent::Server_PerformHitscanAndApplyDamage(const UMosesWeap
 // ============================================================================
 // Dead Hook
 // ============================================================================
+
 void UMosesCombatComponent::ServerMarkDead()
 {
 	if (!GetOwner() || !GetOwner()->HasAuthority())
@@ -461,6 +471,7 @@ void UMosesCombatComponent::ServerMarkDead()
 // ============================================================================
 // RepNotifies
 // ============================================================================
+
 void UMosesCombatComponent::OnRep_CurrentSlot()
 {
 	BroadcastEquippedChanged(TEXT("OnRep_CurrentSlot"));
@@ -505,6 +516,7 @@ void UMosesCombatComponent::OnRep_IsDead()
 // ============================================================================
 // Broadcast helpers
 // ============================================================================
+
 void UMosesCombatComponent::BroadcastEquippedChanged(const TCHAR* ContextTag)
 {
 	const FGameplayTag WeaponId = GetEquippedWeaponId();
@@ -537,6 +549,7 @@ void UMosesCombatComponent::BroadcastDeadChanged(const TCHAR* ContextTag)
 // ============================================================================
 // Slot helpers
 // ============================================================================
+
 bool UMosesCombatComponent::IsValidSlotIndex(int32 SlotIndex) const
 {
 	return SlotIndex >= 1 && SlotIndex <= 3;
@@ -553,6 +566,7 @@ FGameplayTag UMosesCombatComponent::GetSlotWeaponIdInternal(int32 SlotIndex) con
 // ============================================================================
 // Ammo helpers
 // ============================================================================
+
 void UMosesCombatComponent::Server_EnsureAmmoInitializedForSlot(int32 SlotIndex, const FGameplayTag& WeaponId)
 {
 	if (!GetOwner() || !GetOwner()->HasAuthority())
@@ -620,7 +634,7 @@ void UMosesCombatComponent::SetSlotAmmo_Internal(int32 SlotIndex, int32 NewMag, 
 	{
 		Slot1MagAmmo = NewMag;
 		Slot1ReserveAmmo = NewReserve;
-		OnRep_Slot1Ammo(); // 서버에서도 즉시 UI/Delegate 반영
+		OnRep_Slot1Ammo();
 		return;
 	}
 	if (SlotIndex == 2)
