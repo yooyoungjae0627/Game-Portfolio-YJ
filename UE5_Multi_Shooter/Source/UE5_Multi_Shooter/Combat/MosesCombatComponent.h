@@ -9,20 +9,15 @@ class UMosesWeaponData;
 class AMosesPlayerState;
 class APawn;
 class AController;
+class APlayerCharacter;
 
 /**
- * 델리게이트(네 기존 구조 유지)
- * - PlayerCharacter가 바인딩하는 EquippedChanged
- * - HUD가 바인딩하는 AmmoChanged
- * - (DAY3) DeadChanged
+ * 델리게이트
  */
 DECLARE_MULTICAST_DELEGATE_TwoParams(FMosesOnEquippedChanged, int32 /*SlotIndex*/, FGameplayTag /*WeaponId*/);
 DECLARE_MULTICAST_DELEGATE_TwoParams(FMosesOnAmmoChangedNative, int32 /*Mag*/, int32 /*Reserve*/);
 DECLARE_MULTICAST_DELEGATE_OneParam(FMosesOnDeadChangedNative, bool /*bNewDead*/);
 
-/**
- * [DAY3] Fire Guard 실패 사유 (증거 로그 고정용)
- */
 UENUM(BlueprintType)
 enum class EMosesFireGuardFailReason : uint8
 {
@@ -42,20 +37,6 @@ enum class EMosesFireGuardFailReason : uint8
 	IsDead,
 };
 
-/**
- * UMosesCombatComponent (SSOT)
- * ============================================================================
- * [역할]
- * - PlayerState 소유 전투 단일 진실(SSOT)
- * - 서버 권위 Equip/Ammo/Fire 승인 + 서버 Hitscan + 서버 Damage
- * - UI는 RepNotify -> Delegate만 구독 (Tick/Binding 금지)
- *
- * [중요]
- * - 이 컴포넌트는 "인터페이스가 깨지면 프로젝트 전체가 깨진다".
- *   (PlayerState/PlayerCharacter가 여러 API에 의존)
- * - 따라서 Day3 기능을 추가하더라도 기존 Day1~Day2 API는 유지한다.
- * ============================================================================
- */
 UCLASS(ClassGroup = (Moses), meta = (BlueprintSpawnableComponent))
 class UE5_MULTI_SHOOTER_API UMosesCombatComponent : public UActorComponent
 {
@@ -65,7 +46,7 @@ public:
 	UMosesCombatComponent();
 
 	// =========================================================================
-	// SSOT Query (PlayerCharacter/HUD에서 사용)
+	// SSOT Query
 	// =========================================================================
 	int32 GetCurrentSlot() const { return CurrentSlot; }
 	FGameplayTag GetWeaponIdForSlot(int32 SlotIndex) const;
@@ -74,27 +55,17 @@ public:
 	int32 GetCurrentMagAmmo() const;
 	int32 GetCurrentReserveAmmo() const;
 
-	// [ADD] Death SSOT 접근
 	bool IsDead() const { return bIsDead; }
 
 	// =========================================================================
-	// Equip API (Client -> Server)
+	// Equip API
 	// =========================================================================
 	void RequestEquipSlot(int32 SlotIndex);
 
 	UFUNCTION(Server, Reliable)
 	void ServerEquipSlot(int32 SlotIndex);
 
-	/**
-	 * (서버 전용) 슬롯 기본 무기 세팅
-	 * - 보통 Experience/PawnData/로드 결과로 서버에서 한 번 호출
-	 */
 	void ServerInitDefaultSlots(const FGameplayTag& InSlot1, const FGameplayTag& InSlot2, const FGameplayTag& InSlot3);
-
-	/**
-	 * DAY2 기존 호출 유지 (MosesPlayerState.cpp에서 호출됨)
-	 * - LateJoin/재접속/초기화 타이밍 흔들림 방지용
-	 */
 	void Server_EnsureInitialized_Day2();
 
 	// =========================================================================
@@ -110,13 +81,10 @@ public:
 	// =========================================================================
 	FMosesOnEquippedChanged OnEquippedChanged;
 	FMosesOnAmmoChangedNative OnAmmoChanged;
-
-	// [DAY3] 사망 상태 변경 이벤트 (Anim/HUD 연결용)
 	FMosesOnDeadChangedNative OnDeadChanged;
 
 	// =========================================================================
-	// [ADD] 외부(HP 시스템)에서 서버가 사망을 확정할 때 호출할 수 있는 API
-	// - 프로젝트마다 HP/데미지 SSOT 위치가 다르므로, Day3에서는 "Hook"만 제공한다.
+	// Dead Hook
 	// =========================================================================
 	void ServerMarkDead();
 
@@ -136,38 +104,29 @@ private:
 	UFUNCTION() void OnRep_Slot2Ammo();
 	UFUNCTION() void OnRep_Slot3Ammo();
 
-	UFUNCTION() void OnRep_IsDead(); // [DAY3]
+	UFUNCTION() void OnRep_IsDead();
 
 	// =========================================================================
-	// Broadcast helpers (RepNotify → Delegate)
+	// Broadcast helpers
 	// =========================================================================
 	void BroadcastEquippedChanged(const TCHAR* ContextTag);
 	void BroadcastAmmoChanged(const TCHAR* ContextTag);
-	void BroadcastDeadChanged(const TCHAR* ContextTag); // [DAY3]
+	void BroadcastDeadChanged(const TCHAR* ContextTag);
 
 	// =========================================================================
-	// Slot helpers
+	// Slot / Ammo helpers
 	// =========================================================================
 	bool IsValidSlotIndex(int32 SlotIndex) const;
 	FGameplayTag GetSlotWeaponIdInternal(int32 SlotIndex) const;
 
-	// =========================================================================
-	// Ammo helpers
-	// =========================================================================
 	void Server_EnsureAmmoInitializedForSlot(int32 SlotIndex, const FGameplayTag& WeaponId);
 	void GetSlotAmmo_Internal(int32 SlotIndex, int32& OutMag, int32& OutReserve) const;
 	void SetSlotAmmo_Internal(int32 SlotIndex, int32 NewMag, int32 NewReserve);
 
 	// =========================================================================
-	// Fire helpers (Server only) [DAY3]
+	// Fire helpers (Server only)
 	// =========================================================================
 	bool Server_CanFire(EMosesFireGuardFailReason& OutReason, FString& OutDebug) const;
-
-	/**
-	 * 무기 데이터 resolve는 "존재 여부 검증" 용도로만 사용.
-	 * - WeaponData 구조가 프로젝트마다 달라 컴파일 깨질 수 있으니,
-	 *   Day3에서는 WeaponData의 필드에 직접 의존하지 않는다.
-	 */
 	const UMosesWeaponData* Server_ResolveEquippedWeaponData(FGameplayTag& OutWeaponId) const;
 
 	void Server_ConsumeAmmo_OnApprovedFire(const UMosesWeaponData* WeaponData);
@@ -176,6 +135,10 @@ private:
 
 	void Server_PerformHitscanAndApplyDamage(const UMosesWeaponData* WeaponData);
 
+	// [DAY3] 서버 승인 Fire 성공 시 코스메틱 전파(멀티캐스트 호출) 헬퍼
+	void Server_PropagateFireCosmetics();
+
+private:
 	// =========================================================================
 	// Replicated SSOT state
 	// =========================================================================
@@ -209,17 +172,16 @@ private:
 	UPROPERTY(ReplicatedUsing = OnRep_Slot3Ammo)
 	int32 Slot3ReserveAmmo = 0;
 
-	// [DAY3] Death SSOT (서버만 변경, 복제)
 	UPROPERTY(ReplicatedUsing = OnRep_IsDead)
 	bool bIsDead = false;
 
+private:
 	// =========================================================================
 	// Runtime guards
 	// =========================================================================
 	UPROPERTY(Transient)
 	bool bInitialized_Day2 = false;
 
-	// 슬롯별 발사 쿨다운 타임스탬프(서버 시간)
 	UPROPERTY(Transient)
 	double Slot1LastFireTimeSec = -9999.0;
 
@@ -229,8 +191,9 @@ private:
 	UPROPERTY(Transient)
 	double Slot3LastFireTimeSec = -9999.0;
 
+private:
 	// =========================================================================
-	// Fire policy (DAY3 최소: 무기별 분기 전)
+	// Fire policy (DAY3 최소)
 	// =========================================================================
 	UPROPERTY(EditDefaultsOnly, Category = "Moses|Fire")
 	float HitscanDistance = 20000.0f;
@@ -242,11 +205,11 @@ private:
 	FName HeadshotBoneName = TEXT("head");
 
 	UPROPERTY(EditDefaultsOnly, Category = "Moses|Fire")
-	float HeadshotDamageMultiplier = 2.0f; // [DAY3] 최소 헤드샷 배율
+	float HeadshotDamageMultiplier = 2.0f;
 
 	UPROPERTY(EditDefaultsOnly, Category = "Moses|Fire")
-	float DefaultFireIntervalSec = 0.12f; // [DAY3] 무기 데이터 없을 때 기본 연사 간격
+	float DefaultFireIntervalSec = 0.12f;
 
 	UPROPERTY(EditDefaultsOnly, Category = "Moses|Fire")
-	float DefaultDamage = 25.0f; // [DAY3] 무기 데이터 없을 때 기본 데미지
+	float DefaultDamage = 25.0f;
 };

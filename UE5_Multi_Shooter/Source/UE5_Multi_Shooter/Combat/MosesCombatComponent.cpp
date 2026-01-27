@@ -10,6 +10,7 @@
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
 #include "UE5_Multi_Shooter/Combat/MosesWeaponData.h"
 #include "UE5_Multi_Shooter/Combat/MosesWeaponRegistrySubsystem.h"
+#include "UE5_Multi_Shooter/Character/PlayerCharacter.h"
 
 UMosesCombatComponent::UMosesCombatComponent()
 {
@@ -72,13 +73,11 @@ int32 UMosesCombatComponent::GetCurrentReserveAmmo() const
 // ============================================================================
 void UMosesCombatComponent::RequestEquipSlot(int32 SlotIndex)
 {
-	AActor* OwnerActor = GetOwner();
-	if (!OwnerActor)
+	if (!GetOwner())
 	{
 		return;
 	}
 
-	// 클라는 요청만, 서버가 결정
 	ServerEquipSlot(SlotIndex);
 }
 
@@ -109,8 +108,6 @@ void UMosesCombatComponent::ServerEquipSlot_Implementation(int32 SlotIndex)
 	}
 
 	CurrentSlot = SlotIndex;
-
-	// 슬롯 탄약이 아직 비어 있으면 서버에서 최소값 보장
 	Server_EnsureAmmoInitializedForSlot(CurrentSlot, NewWeaponId);
 
 	UE_LOG(LogMosesWeapon, Log, TEXT("[WEAPON][SV] Equip OK Slot=%d Weapon=%s"),
@@ -155,7 +152,6 @@ void UMosesCombatComponent::Server_EnsureInitialized_Day2()
 
 	if (bInitialized_Day2)
 	{
-		// 이미 초기화 끝
 		return;
 	}
 
@@ -190,13 +186,11 @@ void UMosesCombatComponent::Server_EnsureInitialized_Day2()
 // ============================================================================
 void UMosesCombatComponent::RequestFire()
 {
-	AActor* OwnerActor = GetOwner();
-	if (!OwnerActor)
+	if (!GetOwner())
 	{
 		return;
 	}
 
-	// 클라는 요청만, 서버가 승인/거절
 	ServerFire();
 }
 
@@ -229,10 +223,29 @@ void UMosesCombatComponent::ServerFire_Implementation()
 	// 서버 승인 → 쿨다운 stamp 갱신 → 탄약 차감 → 히트스캔/데미지
 	Server_UpdateFireCooldownStamp();
 	Server_ConsumeAmmo_OnApprovedFire(WeaponData);
+
+	// [DAY3 핵심] 서버 승인 Fire 코스메틱(애니+SFX+VFX) 전파
+	Server_PropagateFireCosmetics();
+
 	Server_PerformHitscanAndApplyDamage(WeaponData);
 
 	UE_LOG(LogMosesCombat, Log, TEXT("[FIRE][SV] Approved Weapon=%s Mag=%d Reserve=%d"),
 		*EquippedWeaponId.ToString(), GetCurrentMagAmmo(), GetCurrentReserveAmmo());
+}
+
+void UMosesCombatComponent::Server_PropagateFireCosmetics()
+{
+	// [중요] 코스메틱은 서버 승인 후에만 전파한다.
+	APawn* OwnerPawn = Cast<APawn>(GetOwner());
+	APlayerCharacter* PlayerChar = OwnerPawn ? Cast<APlayerCharacter>(OwnerPawn) : nullptr;
+	if (!PlayerChar)
+	{
+		UE_LOG(LogMosesCombat, Warning, TEXT("[FIRE][SV] PropagateCosmetic FAIL (Owner not APlayerCharacter) Owner=%s"),
+			*GetNameSafe(GetOwner()));
+		return;
+	}
+
+	PlayerChar->Multicast_PlayFireMontage();
 }
 
 // ============================================================================
@@ -296,7 +309,7 @@ bool UMosesCombatComponent::Server_CanFire(EMosesFireGuardFailReason& OutReason,
 }
 
 // ============================================================================
-// [DAY3] WeaponData Resolve (존재 검증)
+// [DAY3] WeaponData Resolve
 // ============================================================================
 const UMosesWeaponData* UMosesCombatComponent::Server_ResolveEquippedWeaponData(FGameplayTag& OutWeaponId) const
 {
@@ -324,7 +337,6 @@ const UMosesWeaponData* UMosesCombatComponent::Server_ResolveEquippedWeaponData(
 		return nullptr;
 	}
 
-	// ✅ 네 프로젝트 실제 API는 ResolveWeaponData()
 	return Registry->ResolveWeaponData(OutWeaponId);
 }
 
@@ -344,7 +356,7 @@ void UMosesCombatComponent::Server_ConsumeAmmo_OnApprovedFire(const UMosesWeapon
 }
 
 // ============================================================================
-// [DAY3] Cooldown 정책
+// [DAY3] Cooldown
 // ============================================================================
 bool UMosesCombatComponent::Server_IsFireCooldownReady(const UMosesWeaponData* /*WeaponData*/) const
 {
@@ -378,7 +390,7 @@ void UMosesCombatComponent::Server_UpdateFireCooldownStamp()
 }
 
 // ============================================================================
-// [DAY3] Hitscan + Damage + Headshot log
+// [DAY3] Hitscan + Damage
 // ============================================================================
 void UMosesCombatComponent::Server_PerformHitscanAndApplyDamage(const UMosesWeaponData* /*WeaponData*/)
 {
@@ -428,7 +440,7 @@ void UMosesCombatComponent::Server_PerformHitscanAndApplyDamage(const UMosesWeap
 }
 
 // ============================================================================
-// Dead Hook (외부 HP 시스템이 서버 확정 시 호출)
+// Dead Hook
 // ============================================================================
 void UMosesCombatComponent::ServerMarkDead()
 {
@@ -557,10 +569,8 @@ void UMosesCombatComponent::Server_EnsureAmmoInitializedForSlot(int32 SlotIndex,
 	int32 Reserve = 0;
 	GetSlotAmmo_Internal(SlotIndex, Mag, Reserve);
 
-	// 아직 미초기화(0/0)라면 최소값 세팅
 	if (Mag == 0 && Reserve == 0)
 	{
-		// Day3 최소: 무기별 탄약 정책은 Day4로 미룸
 		Mag = 30;
 		Reserve = 90;
 
@@ -610,7 +620,7 @@ void UMosesCombatComponent::SetSlotAmmo_Internal(int32 SlotIndex, int32 NewMag, 
 	{
 		Slot1MagAmmo = NewMag;
 		Slot1ReserveAmmo = NewReserve;
-		OnRep_Slot1Ammo(); // 서버에서도 즉시 HUD 반영(RepNotify 동일 경로)
+		OnRep_Slot1Ammo(); // 서버에서도 즉시 UI/Delegate 반영
 		return;
 	}
 	if (SlotIndex == 2)

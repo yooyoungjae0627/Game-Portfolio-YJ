@@ -8,7 +8,7 @@
 //   SSOT(Single Source of Truth)는 PlayerState 소유 CombatComponent가 가진다.
 // - Pawn은 다음만 담당한다:
 //   1) HeroComponent가 전달한 입력을 서버 요청 API로 연결
-//   2) RepNotify/Delegate로 내려온 '상태'를 이용해 코스메틱(무기 메시/몽타주)을 재현
+//   2) RepNotify/Delegate로 내려온 '상태'를 이용해 코스메틱(무기 메시/몽타주/SFX/VFX)을 재현
 //
 // [핵심 원칙]
 // - 클라이언트는 "요청"만 한다. (Server RPC / Component Request)
@@ -34,6 +34,8 @@ class UMosesCombatComponent;
 
 class USkeletalMeshComponent;
 class UAnimMontage;
+class USoundBase;
+class UNiagaraSystem;
 
 UCLASS()
 class UE5_MULTI_SHOOTER_API APlayerCharacter : public AMosesCharacter
@@ -46,13 +48,10 @@ public:
 	// =========================================================================
 	// Query
 	// =========================================================================
-	// 현재 스프린트 상태(서버 확정값)
 	bool IsSprinting() const;
 
 	// =========================================================================
 	// Input Endpoints (HeroComponent -> Pawn)
-	// - EnhancedInput 바인딩은 HeroComponent에서 수행하고
-	//   이 함수들을 호출해 Pawn 로직을 트리거한다.
 	// =========================================================================
 	void Input_Move(const FVector2D& MoveValue);
 	void Input_Look(const FVector2D& LookValue);
@@ -73,14 +72,20 @@ public:
 protected:
 	// =========================================================================
 	// Actor lifecycle / Possession hooks
-	// - PlayerState / Controller가 붙는 타이밍이 케이스마다 달라서
-	//   아래 훅들에서 CombatComponent 바인딩을 보강한다.
 	// =========================================================================
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
 	virtual void SetupPlayerInputComponent(UInputComponent* PlayerInputComponent) override;
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
+
+	/**
+	 * PostInitializeComponents
+	 *
+	 * - 생성자보다 늦고 BeginPlay보다 빠른 안정 구간.
+	 * - 코스메틱 컴포넌트의 Attach 보강 같은 "에디터/PIE 흔들림 방어"에 적합하다.
+	 */
+	virtual void PostInitializeComponents() override;
 
 	virtual void OnRep_Controller() override;
 	virtual void PawnClientRestart() override;
@@ -90,11 +95,9 @@ protected:
 public:
 	// =========================================================================
 	// Montage Cosmetics (Server approved -> Multicast)
-	// - 서버가 "발사/피격/사망"을 승인한 뒤에만 호출되어야 한다.
-	// - 실제 호출 주체는 CombatComponent(Server 로직)다.
 	// =========================================================================
 
-	// 발사/피격은 신뢰성 낮아도 OK(자주 발생, 유실되어도 치명적이지 않음)
+	// 발사/피격은 자주 발생하므로 Unreliable 허용(유실되어도 치명적이지 않음)
 	UFUNCTION(NetMulticast, Unreliable)
 	void Multicast_PlayFireMontage();
 
@@ -108,8 +111,6 @@ public:
 private:
 	// =========================================================================
 	// Sprint (Client feel + Server authority)
-	// - 체감: 로컬은 즉시 속도 반영(예측)
-	// - 정답: 서버가 bIsSprinting을 확정하고 Replication으로 내려준다
 	// =========================================================================
 	void ApplySprintSpeed_LocalPredict(bool bNewSprinting);
 	void ApplySprintSpeed_FromAuth(const TCHAR* From);
@@ -122,9 +123,7 @@ private:
 
 private:
 	// =========================================================================
-	// Pickup 
-	// - 로컬에서 타겟 탐색 -> 서버에 TryPickup 요청
-	// - 현재는 placeholder 
+	// Pickup
 	// =========================================================================
 	APickupBase* FindPickupTarget_Local() const;
 
@@ -134,17 +133,16 @@ private:
 private:
 	// =========================================================================
 	// CombatComponent Bind (RepNotify -> Delegate -> Cosmetic)
-	// - PlayerState(SSOT) 소유 CombatComponent의 델리게이트를 구독하여
-	//   장착 상태 변경이 오면 무기 코스메틱을 갱신한다.
 	// =========================================================================
 	void BindCombatComponent();
 	void UnbindCombatComponent();
 
 	void HandleEquippedChanged(int32 SlotIndex, FGameplayTag WeaponId);
-	void RefreshWeaponCosmetic(FGameplayTag WeaponId);
 
-	// 코스메틱 무기 메시 컴포넌트 생성/등록/소켓 부착 보장
-	void EnsureWeaponMeshComponent();
+	/** [DAY3] SSOT 죽음 상태 변경 수신 */
+	void HandleDeadChanged(bool bNewDead);
+
+	void RefreshWeaponCosmetic(FGameplayTag WeaponId);
 
 	// PlayerState(SSOT)에서 CombatComponent 획득
 	UMosesCombatComponent* GetCombatComponent_Checked() const;
@@ -152,21 +150,23 @@ private:
 	// 몽타주 로컬 재생 헬퍼
 	void TryPlayMontage_Local(UAnimMontage* Montage, const TCHAR* DebugTag) const;
 
+	// [DAY3] Fire SFX/VFX 로컬 재생/스폰 (Multicast에서 호출)
+	void PlayFireAV_Local() const;
+
+	// [DAY3] Dead 시 이동/입력 코스메틱 차단(모든 머신에서 동일하게)
+	void ApplyDeadCosmetics_Local() const;
+
 private:
 	// =========================================================================
 	// Components
 	// =========================================================================
-
-	// (정책) 입력은 HeroComponent가 처리하고 Pawn의 Input_*을 호출한다.
 	UPROPERTY(VisibleAnywhere, Category = "Moses|Components")
 	TObjectPtr<UMosesHeroComponent> HeroComponent = nullptr;
 
-	// 카메라 모드 스택(프로젝트 기준 MosesCameraComponent)
 	UPROPERTY(VisibleAnywhere, Category = "Moses|Components")
 	TObjectPtr<UMosesCameraComponent> MosesCameraComponent = nullptr;
 
 	// 코스메틱 무기 표시용 (Actor 스폰 X / Replicate X)
-	// - 장착 변경 시 SkeletalMesh만 교체하여 손 소켓에 붙여 보이게 한다.
 	UPROPERTY(VisibleAnywhere, Category = "Moses|Weapon")
 	TObjectPtr<USkeletalMeshComponent> WeaponMeshComp = nullptr;
 
@@ -183,14 +183,17 @@ private:
 	UPROPERTY(EditDefaultsOnly, Category = "Moses|Pickup")
 	float PickupTraceDistance = 500.0f;
 
-	// 캐릭터 스켈레톤에 존재해야 하는 소켓 이름
+	// 캐릭터 스켈레톤에 존재해야 하는 소켓 이름(WeaponMeshComp가 여기로 붙음)
 	UPROPERTY(EditDefaultsOnly, Category = "Moses|Weapon")
 	FName CharacterWeaponSocketName = TEXT("WeaponSocket");
 
+	// 무기(WeaponMeshComp)에 존재해야 하는 총구 소켓 이름(SFX/VFX 스폰 기준)
+	UPROPERTY(EditDefaultsOnly, Category = "Moses|Weapon")
+	FName WeaponMuzzleSocketName = TEXT("MuzzleSocket");
+
 private:
 	// =========================================================================
-	// Montages (BP에서 세팅)
-	// - 실제 재생되려면 ABP에 Slot/LayeredBlend 구성이 되어 있어야 한다.
+	// Montages / SFX / VFX (BP에서 세팅)
 	// =========================================================================
 	UPROPERTY(EditDefaultsOnly, Category = "Moses|Anim")
 	TObjectPtr<UAnimMontage> FireMontage = nullptr;
@@ -201,20 +204,24 @@ private:
 	UPROPERTY(EditDefaultsOnly, Category = "Moses|Anim")
 	TObjectPtr<UAnimMontage> DeathMontage = nullptr;
 
+	// [DAY3] 발사 사운드(단일 검증용)
+	UPROPERTY(EditDefaultsOnly, Category = "Moses|Weapon|SFX")
+	TObjectPtr<USoundBase> FireSound = nullptr;
+
+	// [DAY3] 총구 섬광(단일 검증용)
+	UPROPERTY(EditDefaultsOnly, Category = "Moses|Weapon|VFX")
+	TObjectPtr<UNiagaraSystem> MuzzleFlashFX = nullptr;
+
 private:
 	// =========================================================================
 	// Replicated State
 	// =========================================================================
-
-	// 서버 확정 스프린트 상태(정답)
 	UPROPERTY(ReplicatedUsing = OnRep_IsSprinting)
 	bool bIsSprinting = false;
 
-	// 로컬 체감용 예측 플래그(네트워크 정답 아님)
 	UPROPERTY(Transient)
 	bool bLocalPredictedSprinting = false;
 
-	// CombatComponent 캐시(델리게이트 바인딩 관리)
 	UPROPERTY(Transient)
 	TObjectPtr<UMosesCombatComponent> CachedCombatComponent = nullptr;
 };

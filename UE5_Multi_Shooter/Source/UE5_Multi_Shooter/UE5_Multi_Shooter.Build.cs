@@ -31,7 +31,8 @@ public class UE5_Multi_Shooter : ModuleRules
 
             "GameplayAbilities",
             "GameplayTasks",
-            "GameplayTags"
+            "GameplayTags",
+            "Niagara",
         });
 
         // ============================
