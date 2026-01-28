@@ -1,8 +1,8 @@
 ﻿// ============================================================================
 // MosesCombatComponent.h (FULL)
-// - 서버 권위 SSOT 전투 컴포넌트
-// - 발사 쿨다운은 WeaponData의 FireMontage 길이(초)로 계산하여
-//   "애니가 끝나야 다음 발사"를 서버가 보장한다.
+// - 서버 권위 SSOT 전투 컴포넌트 (Owner = PlayerState)
+// - [FIX] 발사 쿨다운은 "몽타주 길이"가 아니라 DefaultFireIntervalSec(=발사속도)로 계산한다.
+//         => 몽타주가 안 끝나도 입력이 오면 서버 쿨다운만 통과하면 계속 발사 승인.
 // - 서버 승인된 WeaponId를 Multicast 파라미터로 전파하여
 //   총마다 다른 SFX/VFX를 클라에서 재생할 수 있게 한다.
 // ============================================================================
@@ -16,8 +16,6 @@
 
 class UMosesWeaponData;
 class AMosesPlayerState;
-class APawn;
-class AController;
 
 DECLARE_MULTICAST_DELEGATE_TwoParams(FMosesOnEquippedChanged, int32 /*SlotIndex*/, FGameplayTag /*WeaponId*/);
 DECLARE_MULTICAST_DELEGATE_TwoParams(FMosesOnAmmoChangedNative, int32 /*Mag*/, int32 /*Reserve*/);
@@ -72,10 +70,7 @@ public:
 	UFUNCTION(Server, Reliable)
 	void ServerEquipSlot(int32 SlotIndex);
 
-	// 서버에서 슬롯 기본 무기 세팅(Experience/PawnData 등에서 1회 호출)
 	void ServerInitDefaultSlots(const FGameplayTag& InSlot1, const FGameplayTag& InSlot2, const FGameplayTag& InSlot3);
-
-	// 기존 초기화 흐름 보강(늦게 들어오는 복제/Travel 타이밍 대비)
 	void Server_EnsureInitialized_Day2();
 
 public:
@@ -142,35 +137,18 @@ private:
 	// =========================================================================
 	// Fire helpers (Server only)
 	// =========================================================================
-
-	/**
-	 * Server_CanFire
-	 *
-	 * [역할]
-	 * - "기본 가드"만 수행한다.
-	 * - WeaponData가 있어야 가능한 검증(쿨다운/몽타주 길이 등)은 ServerFire에서 WeaponData resolve 후 수행한다.
-	 */
 	bool Server_CanFire(EMosesFireGuardFailReason& OutReason, FString& OutDebug) const;
-
-	/** 장착 WeaponId를 resolve하고 WeaponData를 가져온다. (서버 전용) */
 	const UMosesWeaponData* Server_ResolveEquippedWeaponData(FGameplayTag& OutWeaponId) const;
 
-	/** 승인된 Fire에서만 탄약을 차감한다. (서버 전용) */
 	void Server_ConsumeAmmo_OnApprovedFire(const UMosesWeaponData* WeaponData);
 
-	/** WeaponData의 FireMontage 길이(초)를 읽어 재발사 간격으로 사용한다. (서버 전용) */
+	// [FIX] 몽타주 길이 기반 쿨다운 제거 -> DefaultFireIntervalSec 기반
 	float Server_GetFireIntervalSec_FromWeaponData(const UMosesWeaponData* WeaponData) const;
 
-	/** WeaponData 기반 쿨다운 체크 (서버 전용) */
 	bool Server_IsFireCooldownReady(const UMosesWeaponData* WeaponData) const;
-
-	/** 승인된 순간 서버 타임스탬프를 갱신한다. */
 	void Server_UpdateFireCooldownStamp();
 
-	/** 히트스캔 + 데미지 적용 (서버 전용) */
 	void Server_PerformHitscanAndApplyDamage(const UMosesWeaponData* WeaponData);
-
-	/** 승인된 WeaponId를 Multicast 파라미터로 전달하여 코스메틱을 전파한다. */
 	void Server_PropagateFireCosmetics(FGameplayTag ApprovedWeaponId);
 
 private:
@@ -243,7 +221,7 @@ private:
 	UPROPERTY(EditDefaultsOnly, Category = "Moses|Fire")
 	float HeadshotDamageMultiplier = 2.0f;
 
-	// WeaponData의 몽타주 길이를 못 읽는 경우 fallback
+	// [FIX] 서버 쿨다운은 이제 이 값이 기준(=연사 속도)
 	UPROPERTY(EditDefaultsOnly, Category = "Moses|Fire")
 	float DefaultFireIntervalSec = 0.12f;
 

@@ -1,8 +1,8 @@
 ﻿// ============================================================================
 // MosesCombatComponent.cpp (FULL)
-// - [MOD] Owner가 PlayerState(SSOT)인 구조를 전제로 Pawn/Controller resolve 헬퍼 추가
-// - [MOD] Server_CanFire / Server_PropagateFireCosmetics / Server_PerformHitscanAndApplyDamage에서
-//         GetOwner()를 Pawn으로 캐스팅하던 부분을 "PS->GetPawn()" 기반으로 교체
+// - Owner = PlayerState(SSOT)
+// - [FIX] 발사 쿨다운을 "몽타주 길이"에서 DefaultFireIntervalSec 기반으로 변경
+//         => 몽타주가 안 끝나도 입력이 계속 오면 서버 쿨다운만 통과하면 발사 승인.
 // ============================================================================
 
 #include "UE5_Multi_Shooter/Combat/MosesCombatComponent.h"
@@ -11,9 +11,7 @@
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
 #include "UE5_Multi_Shooter/Combat/MosesWeaponData.h"
 #include "UE5_Multi_Shooter/Combat/MosesWeaponRegistrySubsystem.h"
-#include "UE5_Multi_Shooter/Player/MosesPlayerState.h" // [MOD] PS->GetPawn() 사용
-
-#include "Animation/AnimMontage.h"
+#include "UE5_Multi_Shooter/Player/MosesPlayerState.h"
 
 #include "Net/UnrealNetwork.h"
 #include "Engine/World.h"
@@ -25,7 +23,6 @@
 
 namespace MosesCombat_Private
 {
-	/** [MOD] SSOT(Owner=PlayerState)에서 실제 Pawn을 얻는 헬퍼 */
 	static AMosesPlayerState* GetOwnerPS(const UActorComponent* Comp)
 	{
 		return Comp ? Cast<AMosesPlayerState>(Comp->GetOwner()) : nullptr;
@@ -34,7 +31,7 @@ namespace MosesCombat_Private
 	static APawn* GetOwnerPawn(const UActorComponent* Comp)
 	{
 		AMosesPlayerState* PS = GetOwnerPS(Comp);
-		return PS ? PS->GetPawn() : nullptr; // APlayerState::GetPawn()
+		return PS ? PS->GetPawn() : nullptr;
 	}
 
 	static AController* GetOwnerController(const UActorComponent* Comp)
@@ -117,7 +114,6 @@ void UMosesCombatComponent::RequestEquipSlot(int32 SlotIndex)
 		return;
 	}
 
-	// 클라는 요청만, 서버가 결정
 	ServerEquipSlot(SlotIndex);
 }
 
@@ -149,7 +145,6 @@ void UMosesCombatComponent::ServerEquipSlot_Implementation(int32 SlotIndex)
 
 	CurrentSlot = SlotIndex;
 
-	// 슬롯 탄약이 아직 비어 있으면 서버에서 최소값 보장
 	Server_EnsureAmmoInitializedForSlot(CurrentSlot, NewWeaponId);
 
 	UE_LOG(LogMosesWeapon, Log, TEXT("[WEAPON][SV] Equip OK Slot=%d Weapon=%s"),
@@ -197,9 +192,7 @@ void UMosesCombatComponent::Server_EnsureInitialized_Day2()
 		return;
 	}
 
-	const bool bHasAnyWeapon =
-		Slot1WeaponId.IsValid() || Slot2WeaponId.IsValid() || Slot3WeaponId.IsValid();
-
+	const bool bHasAnyWeapon = Slot1WeaponId.IsValid() || Slot2WeaponId.IsValid() || Slot3WeaponId.IsValid();
 	if (!bHasAnyWeapon)
 	{
 		UE_LOG(LogMosesWeapon, Warning, TEXT("[WEAPON][SV] EnsureInit: No default weapon ids set yet (skip)"));
@@ -234,78 +227,61 @@ void UMosesCombatComponent::RequestFire()
 		return;
 	}
 
-	// 클라는 요청만, 서버가 승인/거절
+	// Owner=PlayerState 이므로 HasAuthority는 PS 기준으로 판단
+	if (GetOwner()->HasAuthority())
+	{
+		ServerFire_Implementation();
+		return;
+	}
+
 	ServerFire();
 }
 
 void UMosesCombatComponent::ServerFire_Implementation()
 {
+	// 서버 전용
 	if (!GetOwner() || !GetOwner()->HasAuthority())
 	{
 		return;
 	}
 
-	UE_LOG(LogMosesCombat, Log, TEXT("[FIRE][SV] Req Owner=%s Slot=%d"), *GetNameSafe(GetOwner()), CurrentSlot);
-
-	// 1) 기본 가드(Dead/Owner/Pawn/Controller/WeaponId/Ammo)
-	EMosesFireGuardFailReason FailReason = EMosesFireGuardFailReason::None;
+	EMosesFireGuardFailReason Reason = EMosesFireGuardFailReason::None;
 	FString Debug;
-	if (!Server_CanFire(FailReason, Debug))
+	if (!Server_CanFire(Reason, Debug))
 	{
-		UE_LOG(LogMosesCombat, Warning, TEXT("[GUARD][SV] Reject Fire Reason=%d Debug=%s"), (int32)FailReason, *Debug);
+		UE_LOG(LogMosesCombat, VeryVerbose, TEXT("[FIRE][SV] Reject(BasicGuard) Reason=%d Debug=%s Slot=%d Owner=%s"),
+			(int32)Reason, *Debug, CurrentSlot, *GetNameSafe(GetOwner()));
 		return;
 	}
 
-	// 2) WeaponData resolve
-	FGameplayTag EquippedWeaponId;
-	const UMosesWeaponData* WeaponData = Server_ResolveEquippedWeaponData(EquippedWeaponId);
+	FGameplayTag ApprovedWeaponId;
+	const UMosesWeaponData* WeaponData = Server_ResolveEquippedWeaponData(ApprovedWeaponId);
 	if (!WeaponData)
 	{
-		UE_LOG(LogMosesCombat, Warning, TEXT("[GUARD][SV] Reject Fire Reason=%d Debug=NoWeaponData Weapon=%s"),
-			(int32)EMosesFireGuardFailReason::NoWeaponData,
-			*EquippedWeaponId.ToString());
+		UE_LOG(LogMosesCombat, VeryVerbose, TEXT("[FIRE][SV] Reject(NoWeaponData) Weapon=%s"), *ApprovedWeaponId.ToString());
 		return;
 	}
 
-	// 3) 쿨다운 체크(몽타주 길이 기반)
+	// [FIX] 쿨다운은 "몽타주 길이"가 아니라 DefaultFireIntervalSec 기반
 	if (!Server_IsFireCooldownReady(WeaponData))
 	{
-		const float Interval = Server_GetFireIntervalSec_FromWeaponData(WeaponData);
-
-		UE_LOG(LogMosesCombat, Warning, TEXT("[GUARD][SV] Reject Fire Reason=%d Debug=Cooldown Interval=%.3f"),
-			(int32)EMosesFireGuardFailReason::Cooldown,
-			Interval);
-
+		UE_LOG(LogMosesCombat, VeryVerbose, TEXT("[FIRE][SV] Reject(Cooldown) Slot=%d Weapon=%s"),
+			CurrentSlot, *ApprovedWeaponId.ToString());
 		return;
 	}
 
-	// 4) 승인 → 쿨다운 stamp 갱신 → 탄약 차감 → 코스메틱 전파 → 히트스캔/데미지
+	// 승인 확정: 쿨다운 스탬프 갱신 + 탄약 차감 + 데미지 판정 + 코스메틱 전파
 	Server_UpdateFireCooldownStamp();
 	Server_ConsumeAmmo_OnApprovedFire(WeaponData);
 
-	// 승인된 WeaponId를 함께 전파(총마다 다른 AV 보장)
-	Server_PropagateFireCosmetics(EquippedWeaponId);
+	UE_LOG(LogMosesCombat, Log, TEXT("[FIRE][SV] OK Slot=%d Weapon=%s Mag=%d Reserve=%d"),
+		CurrentSlot,
+		*ApprovedWeaponId.ToString(),
+		GetCurrentMagAmmo(),
+		GetCurrentReserveAmmo());
 
 	Server_PerformHitscanAndApplyDamage(WeaponData);
-
-	UE_LOG(LogMosesCombat, Log, TEXT("[FIRE][SV] Approved Weapon=%s Mag=%d Reserve=%d"),
-		*EquippedWeaponId.ToString(), GetCurrentMagAmmo(), GetCurrentReserveAmmo());
-}
-
-void UMosesCombatComponent::Server_PropagateFireCosmetics(FGameplayTag ApprovedWeaponId)
-{
-	// [MOD] Owner는 PlayerState(SSOT). 실제 Pawn을 PS->GetPawn()로 resolve.
-	APlayerCharacter* PlayerChar = MosesCombat_Private::GetOwnerPlayerCharacter(this);
-	if (!PlayerChar)
-	{
-		UE_LOG(LogMosesCombat, Warning,
-			TEXT("[FIRE][SV] PropagateCosmetic FAIL (No Pawn/PlayerChar) Owner=%s Pawn=%s"),
-			*GetNameSafe(GetOwner()),
-			*GetNameSafe(MosesCombat_Private::GetOwnerPawn(this)));
-		return;
-	}
-
-	PlayerChar->Multicast_PlayFireMontage(ApprovedWeaponId);
+	Server_PropagateFireCosmetics(ApprovedWeaponId);
 }
 
 // ============================================================================
@@ -329,7 +305,6 @@ bool UMosesCombatComponent::Server_CanFire(EMosesFireGuardFailReason& OutReason,
 		return false;
 	}
 
-	// [MOD] SSOT Owner=PlayerState. Pawn은 PS->GetPawn()로 찾는다.
 	const APawn* OwnerPawn = MosesCombat_Private::GetOwnerPawn(this);
 	if (!OwnerPawn)
 	{
@@ -352,8 +327,6 @@ bool UMosesCombatComponent::Server_CanFire(EMosesFireGuardFailReason& OutReason,
 		OutDebug = TEXT("NoWeaponId");
 		return false;
 	}
-
-	// 쿨다운 체크는 WeaponData 필요 → ServerFire에서 수행
 
 	if (GetCurrentMagAmmo() <= 0)
 	{
@@ -410,29 +383,14 @@ void UMosesCombatComponent::Server_ConsumeAmmo_OnApprovedFire(const UMosesWeapon
 }
 
 // ============================================================================
-// Cooldown (Montage length based)
+// Cooldown (FIXED: DefaultFireIntervalSec based)
 // ============================================================================
 
-float UMosesCombatComponent::Server_GetFireIntervalSec_FromWeaponData(const UMosesWeaponData* WeaponData) const
+float UMosesCombatComponent::Server_GetFireIntervalSec_FromWeaponData(const UMosesWeaponData* /*WeaponData*/) const
 {
-	if (!WeaponData)
-	{
-		return DefaultFireIntervalSec;
-	}
-
-	UAnimMontage* Montage = WeaponData->FireMontage.Get();
-	if (!Montage && !WeaponData->FireMontage.IsNull())
-	{
-		Montage = WeaponData->FireMontage.LoadSynchronous();
-	}
-
-	if (!Montage)
-	{
-		return DefaultFireIntervalSec;
-	}
-
-	const float LengthSec = Montage->GetPlayLength();
-	return (LengthSec > 0.f) ? LengthSec : DefaultFireIntervalSec;
+	// [FIX] 몽타주 길이를 절대 사용하지 않는다.
+	//      무기별 연사속도 분리는 나중에 WeaponData에 RPM/Interval 필드를 추가해서 해결.
+	return DefaultFireIntervalSec;
 }
 
 bool UMosesCombatComponent::Server_IsFireCooldownReady(const UMosesWeaponData* WeaponData) const
@@ -472,7 +430,6 @@ void UMosesCombatComponent::Server_UpdateFireCooldownStamp()
 
 void UMosesCombatComponent::Server_PerformHitscanAndApplyDamage(const UMosesWeaponData* /*WeaponData*/)
 {
-	// [MOD] Owner는 PlayerState. Pawn/Controller는 PS->GetPawn() 기반으로 사용.
 	APawn* OwnerPawn = MosesCombat_Private::GetOwnerPawn(this);
 	if (!OwnerPawn)
 	{
@@ -494,8 +451,6 @@ void UMosesCombatComponent::Server_PerformHitscanAndApplyDamage(const UMosesWeap
 
 	FHitResult Hit;
 	FCollisionQueryParams Params(SCENE_QUERY_STAT(Moses_FireTrace), true);
-
-	// [MOD] 무시 대상도 Pawn 기준이 맞다.
 	Params.AddIgnoredActor(OwnerPawn);
 
 	const bool bHit = GetWorld()->LineTraceSingleByChannel(Hit, Start, End, FireTraceChannel, Params);
@@ -511,7 +466,6 @@ void UMosesCombatComponent::Server_PerformHitscanAndApplyDamage(const UMosesWeap
 	UE_LOG(LogMosesCombat, Log, TEXT("[HIT][SV] Victim=%s Bone=%s Headshot=%d Damage=%.1f"),
 		*GetNameSafe(Hit.GetActor()), *Hit.BoneName.ToString(), bHeadshot ? 1 : 0, AppliedDamage);
 
-	// [MOD] DamageCauser도 Pawn으로 주는 게 자연스럽다(PS를 causer로 주지 않음)
 	UGameplayStatics::ApplyDamage(
 		Hit.GetActor(),
 		AppliedDamage,
@@ -519,6 +473,25 @@ void UMosesCombatComponent::Server_PerformHitscanAndApplyDamage(const UMosesWeap
 		OwnerPawn,
 		nullptr
 	);
+}
+
+// ============================================================================
+// Cosmetic propagation
+// ============================================================================
+
+void UMosesCombatComponent::Server_PropagateFireCosmetics(FGameplayTag ApprovedWeaponId)
+{
+	APlayerCharacter* PlayerChar = MosesCombat_Private::GetOwnerPlayerCharacter(this);
+	if (!PlayerChar)
+	{
+		UE_LOG(LogMosesCombat, Warning,
+			TEXT("[FIRE][SV] PropagateCosmetic FAIL (No Pawn/PlayerChar) Owner=%s Pawn=%s"),
+			*GetNameSafe(GetOwner()),
+			*GetNameSafe(MosesCombat_Private::GetOwnerPawn(this)));
+		return;
+	}
+
+	PlayerChar->Multicast_PlayFireMontage(ApprovedWeaponId);
 }
 
 // ============================================================================
@@ -707,7 +680,7 @@ void UMosesCombatComponent::SetSlotAmmo_Internal(int32 SlotIndex, int32 NewMag, 
 	{
 		Slot1MagAmmo = NewMag;
 		Slot1ReserveAmmo = NewReserve;
-		OnRep_Slot1Ammo(); // 서버에서도 즉시 Delegate 반영
+		OnRep_Slot1Ammo();
 		return;
 	}
 	if (SlotIndex == 2)

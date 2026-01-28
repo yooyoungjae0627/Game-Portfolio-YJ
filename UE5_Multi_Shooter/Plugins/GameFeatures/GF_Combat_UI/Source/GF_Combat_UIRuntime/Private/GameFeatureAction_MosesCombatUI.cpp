@@ -23,7 +23,7 @@ void UGameFeatureAction_MosesCombatUI::OnGameFeatureActivating(FGameFeatureActiv
 	Super::OnGameFeatureActivating(Context);
 
 	bIsActive = true;
-
+	ㅣ
 	UE_LOG(LogMosesGFUI, Warning, TEXT("[GF_UI] Activating Action=%s"), *GetNameSafe(this));
 
 	// World lifecycle 델리게이트 등록

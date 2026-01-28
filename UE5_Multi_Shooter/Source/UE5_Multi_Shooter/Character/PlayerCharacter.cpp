@@ -1,11 +1,4 @@
-﻿// ============================================================================
-// PlayerCharacter.cpp (FULL)
-// - [MOD] Multicast_PlayFireMontage(WeaponId)에서 WeaponData resolve -> SFX/VFX 재생
-// - [MOD] Pawn에 FireSound/MuzzleFlashFX를 두지 않는다(총마다 다르게)
-// - [주의] 이 파일은 "코스메틱 표현"만 한다. SSOT 변경은 CombatComponent(서버)에서만.
-// ============================================================================
-
-#include "UE5_Multi_Shooter/Character/PlayerCharacter.h"
+﻿#include "UE5_Multi_Shooter/Character/PlayerCharacter.h"
 
 #include "UE5_Multi_Shooter/Character/Components/MosesHeroComponent.h"
 
@@ -16,6 +9,8 @@
 #include "UE5_Multi_Shooter/System/MosesAuthorityGuards.h"
 #include "UE5_Multi_Shooter/Pickup/PickupBase.h"
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
+
+#include "UE5_Multi_Shooter/Camera/MosesCameraComponent.h"
 
 #include "GameFramework/CharacterMovementComponent.h"
 #include "Components/SkeletalMeshComponent.h"
@@ -31,8 +26,44 @@
 #include "Kismet/GameplayStatics.h"
 #include "Sound/SoundBase.h"
 
-#include "NiagaraFunctionLibrary.h"
-#include "NiagaraSystem.h"
+#include "TimerManager.h"
+#include "GameFramework/PlayerController.h"
+
+// ============================================================================
+// Local helpers
+// ============================================================================
+
+// 회전 정책을 “한 군데”에서 강제 고정
+static void Moses_ApplyRotationPolicy(ACharacter* Char, const TCHAR* FromTag)
+{
+	if (!Char)
+	{
+		return;
+	}
+
+	Char->bUseControllerRotationYaw = true;
+	Char->bUseControllerRotationPitch = false;
+	Char->bUseControllerRotationRoll = false;
+
+	if (UCharacterMovementComponent* MoveComp = Char->GetCharacterMovement())
+	{
+		// 이동 방향 회전 금지
+		MoveComp->bOrientRotationToMovement = false;
+
+		// (유지) 컨트롤러 Yaw를 Actor가 직접 따라가는 방식 사용
+		MoveComp->bUseControllerDesiredRotation = false;
+
+		MoveComp->RotationRate = FRotator(0.f, 720.f, 0.f);
+
+		UE_LOG(LogMosesMove, Log,
+			TEXT("[ROT][%s] ApplyPolicy OK OrientToMove=%d UseCtrlDesired=%d RotRateYaw=%.0f Pawn=%s"),
+			FromTag ? FromTag : TEXT("UNK"),
+			MoveComp->bOrientRotationToMovement ? 1 : 0,
+			MoveComp->bUseControllerDesiredRotation ? 1 : 0,
+			MoveComp->RotationRate.Yaw,
+			*GetNameSafe(Char));
+	}
+}
 
 // ============================================================================
 // Ctor / Lifecycle
@@ -43,23 +74,29 @@ APlayerCharacter::APlayerCharacter()
 	PrimaryActorTick.bCanEverTick = false;
 	bReplicates = true;
 
-	// 입력 바인딩의 주체(로컬 전용)는 HeroComponent다.
+	// 입력 바인딩의 주체(로컬 전용)
 	HeroComponent = CreateDefaultSubobject<UMosesHeroComponent>(TEXT("HeroComponent"));
 
-	// 코스메틱 무기 메시 컴포넌트는 항상 존재해야 한다.
+	// 카메라 컴포넌트(모드 스택 기반)
+	MosesCameraComponent = CreateDefaultSubobject<UMosesCameraComponent>(TEXT("MosesCameraComponent"));
+	MosesCameraComponent->SetupAttachment(GetRootComponent());
+
+	// 코스메틱 무기 메시 컴포넌트(복제 X)
 	WeaponMeshComp = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("WeaponMeshComp"));
 	WeaponMeshComp->SetupAttachment(GetMesh());
-
 	WeaponMeshComp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	WeaponMeshComp->SetGenerateOverlapEvents(false);
 	WeaponMeshComp->SetIsReplicated(false);
+
+	// 회전 정책 잠금
+	Moses_ApplyRotationPolicy(this, TEXT("Ctor"));
 }
 
 void APlayerCharacter::PostInitializeComponents()
 {
 	Super::PostInitializeComponents();
 
-	// 소켓 부착 보강(PIE/리인스턴스 등에서 풀리는 케이스 방어)
+	// 소켓 부착 보강
 	if (WeaponMeshComp && GetMesh())
 	{
 		WeaponMeshComp->AttachToComponent(
@@ -71,11 +108,15 @@ void APlayerCharacter::PostInitializeComponents()
 			*CharacterWeaponSocketName.ToString(),
 			*GetNameSafe(this));
 	}
+
+	Moses_ApplyRotationPolicy(this, TEXT("PostInit"));
 }
 
 void APlayerCharacter::BeginPlay()
 {
 	Super::BeginPlay();
+
+	Moses_ApplyRotationPolicy(this, TEXT("BeginPlay"));
 
 	if (UCharacterMovementComponent* MoveComp = GetCharacterMovement())
 	{
@@ -87,6 +128,7 @@ void APlayerCharacter::BeginPlay()
 
 void APlayerCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	StopAutoFire_Local(); // [MOD] 종료 시 타이머 정리
 	UnbindCombatComponent();
 	Super::EndPlay(EndPlayReason);
 }
@@ -95,7 +137,6 @@ void APlayerCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCom
 {
 	Super::SetupPlayerInputComponent(PlayerInputComponent);
 
-	// EnhancedInput 바인딩은 HeroComponent가 담당한다.
 	if (!ensure(PlayerInputComponent))
 	{
 		return;
@@ -125,18 +166,24 @@ void APlayerCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& Out
 void APlayerCharacter::OnRep_Controller()
 {
 	Super::OnRep_Controller();
+
+	Moses_ApplyRotationPolicy(this, TEXT("OnRep_Controller"));
 	BindCombatComponent();
 }
 
 void APlayerCharacter::PawnClientRestart()
 {
 	Super::PawnClientRestart();
+
+	Moses_ApplyRotationPolicy(this, TEXT("PawnClientRestart"));
 	BindCombatComponent();
 }
 
 void APlayerCharacter::PossessedBy(AController* NewController)
 {
 	Super::PossessedBy(NewController);
+
+	Moses_ApplyRotationPolicy(this, TEXT("PossessedBy"));
 	BindCombatComponent();
 }
 
@@ -275,6 +322,10 @@ void APlayerCharacter::Input_EquipSlot3()
 	}
 }
 
+// ============================================================================
+// [MOD] Hold-to-fire
+// ============================================================================
+
 void APlayerCharacter::Input_FirePressed()
 {
 	if (CachedCombatComponent && CachedCombatComponent->IsDead())
@@ -282,10 +333,97 @@ void APlayerCharacter::Input_FirePressed()
 		return;
 	}
 
-	// 클라 입력은 요청만 한다(승인은 서버가).
+	// 이미 누르는 중이면 중복 시작 방지
+	if (bFireHeldLocal)
+	{
+		return;
+	}
+
+	bFireHeldLocal = true;
+
+	UE_LOG(LogMosesCombat, Warning, TEXT("[FIRE][CL] FirePressed -> Held=1 Pawn=%s"), *GetNameSafe(this));
+
+	// 1) 누르는 순간 즉시 1발(체감)
 	if (UMosesCombatComponent* CombatComp = GetCombatComponent_Checked())
 	{
-		UE_LOG(LogMosesCombat, Verbose, TEXT("[FIRE][CL] Input FirePressed Pawn=%s"), *GetNameSafe(this));
+		CombatComp->RequestFire();
+	}
+
+	// 2) 이후 연사 타이머 시작
+	StartAutoFire_Local();
+}
+
+void APlayerCharacter::Input_FireReleased()
+{
+	UE_LOG(LogMosesCombat, Warning, TEXT("[FIRE][CL] FireReleased Pawn=%s"), *GetNameSafe(this));
+	StopAutoFire_Local();
+}
+
+void APlayerCharacter::StartAutoFire_Local()
+{
+	// 로컬 컨트롤러만
+	APlayerController* PC = GetController<APlayerController>();
+	if (!PC || !PC->IsLocalController())
+	{
+		UE_LOG(LogMosesCombat, Warning, TEXT("[FIRE][CL] AutoFire START blocked (NotLocalController) Pawn=%s"), *GetNameSafe(this));
+		return;
+	}
+
+	if (GetWorldTimerManager().IsTimerActive(AutoFireTimerHandle))
+	{
+		UE_LOG(LogMosesCombat, Warning, TEXT("[FIRE][CL] AutoFire already active Pawn=%s"), *GetNameSafe(this));
+		return;
+	}
+
+	// 다음 틱부터 반복 발사
+	GetWorldTimerManager().SetTimer(
+		AutoFireTimerHandle,
+		this,
+		&ThisClass::HandleAutoFireTick_Local,
+		AutoFireTickRate,
+		/*bLoop*/ true,
+		/*FirstDelay*/ AutoFireTickRate
+	);
+
+	UE_LOG(LogMosesCombat, Warning, TEXT("[FIRE][CL] AutoFire START OK Rate=%.3f TimerActive=%d Pawn=%s"),
+		AutoFireTickRate,
+		GetWorldTimerManager().IsTimerActive(AutoFireTimerHandle) ? 1 : 0,
+		*GetNameSafe(this));
+}
+
+void APlayerCharacter::StopAutoFire_Local()
+{
+	if (!bFireHeldLocal)
+	{
+		return;
+	}
+
+	bFireHeldLocal = false;
+	GetWorldTimerManager().ClearTimer(AutoFireTimerHandle);
+
+	UE_LOG(LogMosesCombat, Warning, TEXT("[FIRE][CL] AutoFire STOP OK Pawn=%s"), *GetNameSafe(this));
+}
+
+void APlayerCharacter::HandleAutoFireTick_Local()
+{
+	// 타이머가 돌고 있는지 “증거”로 남김 (Verbose로 낮춰도 됨)
+	UE_LOG(LogMosesCombat, VeryVerbose, TEXT("[FIRE][CL] AutoFire TICK Held=%d Pawn=%s"),
+		bFireHeldLocal ? 1 : 0,
+		*GetNameSafe(this));
+
+	if (!bFireHeldLocal)
+	{
+		return;
+	}
+
+	if (CachedCombatComponent && CachedCombatComponent->IsDead())
+	{
+		StopAutoFire_Local();
+		return;
+	}
+
+	if (UMosesCombatComponent* CombatComp = GetCombatComponent_Checked())
+	{
 		CombatComp->RequestFire();
 	}
 }
@@ -431,7 +569,6 @@ void APlayerCharacter::HandleDeadChanged(bool bNewDead)
 		return;
 	}
 
-	// 사망 몽타주는 서버에서만 Multicast로 전파한다.
 	if (HasAuthority())
 	{
 		Multicast_PlayDeathMontage();
@@ -542,9 +679,15 @@ void APlayerCharacter::TryPlayMontage_Local(UAnimMontage* Montage, const TCHAR* 
 		return;
 	}
 
+	// 클릭/연사 중에도 항상 재생되도록 Restart
+	if (AnimInst->Montage_IsPlaying(Montage))
+	{
+		AnimInst->Montage_Stop(0.0f, Montage);
+	}
+
 	AnimInst->Montage_Play(Montage);
 
-	UE_LOG(LogMosesCombat, Log, TEXT("[ANIM] %s PlayMontage=%s Pawn=%s"),
+	UE_LOG(LogMosesCombat, Log, TEXT("[ANIM] %s PlayMontage(RestartOK)=%s Pawn=%s"),
 		DebugTag ? DebugTag : TEXT("Play"),
 		*GetNameSafe(Montage),
 		*GetNameSafe(this));
@@ -586,7 +729,6 @@ void APlayerCharacter::PlayFireAV_Local(FGameplayTag WeaponId) const
 		return;
 	}
 
-	// 무기별 소켓 이름(없으면 fallback)
 	const FName MuzzleSocket = Data->MuzzleSocketName.IsNone()
 		? FName(TEXT("MuzzleFlash"))
 		: Data->MuzzleSocketName;
@@ -594,7 +736,6 @@ void APlayerCharacter::PlayFireAV_Local(FGameplayTag WeaponId) const
 	const FVector MuzzleLoc = WeaponMeshComp->GetSocketLocation(MuzzleSocket);
 	const FRotator MuzzleRot = WeaponMeshComp->GetSocketRotation(MuzzleSocket);
 
-	// SFX (SoftPtr)
 	USoundBase* FireSnd = nullptr;
 	if (!Data->FireSound.IsNull())
 	{
@@ -605,7 +746,6 @@ void APlayerCharacter::PlayFireAV_Local(FGameplayTag WeaponId) const
 		}
 	}
 
-	// VFX (SoftPtr) ✅ Cascade ParticleSystem
 	UParticleSystem* MuzzleFX = nullptr;
 	if (!Data->MuzzleFlashFX.IsNull())
 	{
@@ -627,7 +767,7 @@ void APlayerCharacter::PlayFireAV_Local(FGameplayTag WeaponId) const
 			GetWorld(),
 			MuzzleFX,
 			FTransform(MuzzleRot, MuzzleLoc),
-			/*bAutoDestroy*/ true
+			true
 		);
 	}
 
@@ -638,7 +778,6 @@ void APlayerCharacter::PlayFireAV_Local(FGameplayTag WeaponId) const
 		*GetNameSafe(MuzzleFX),
 		*GetNameSafe(this));
 }
-
 
 void APlayerCharacter::ApplyDeadCosmetics_Local() const
 {
