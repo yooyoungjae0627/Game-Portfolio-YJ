@@ -1,31 +1,33 @@
-﻿// Copyright ...
-
-using UnrealBuildTool;
+﻿using UnrealBuildTool;
 
 public class GF_Combat_GASRuntime : ModuleRules
 {
-	public GF_Combat_GASRuntime(ReadOnlyTargetRules Target) : base(Target)
-	{
-		PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
+    public GF_Combat_GASRuntime(ReadOnlyTargetRules Target) : base(Target)
+    {
+        PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
 
-		PublicDependencyModuleNames.AddRange(new string[]
-		{
-			"Core",
-			"CoreUObject",
-			"Engine",
+        PublicDependencyModuleNames.AddRange(
+            new string[]
+            {
+                "Core",
+                "CoreUObject",
+                "Engine",
 
-			// GameFeature 기본
-			"GameFeatures",
-			"ModularGameplay",
+				// GameFeature 런타임 훅
+				"GameFeatures",
 
-			// GAS를 여기서 “진짜로” 쓸 거면 유지
-			"GameplayAbilities",
-			"GameplayTags",
-			"GameplayTasks",
-		});
+				// GAS 핵심 3종 모듈 (GameplayAbilities 플러그인이 제공)
+				"GameplayAbilities",
+                "GameplayTags",
+                "GameplayTasks"
+            }
+        );
 
-		PrivateDependencyModuleNames.AddRange(new string[]
-		{
-		});
-	}
+        PrivateDependencyModuleNames.AddRange(
+            new string[]
+            {
+				// 필요 시 추가
+			}
+        );
+    }
 }

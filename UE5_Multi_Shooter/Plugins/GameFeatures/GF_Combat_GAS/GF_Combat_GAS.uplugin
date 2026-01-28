@@ -5,6 +5,9 @@
   "FriendlyName": "GF_Combat_GAS",
   "Description": "",
   "Category": "Game Features",
+
+  "Type": "GameFeature",
+
   "EnabledByDefault": true,
   "CanContainContent": true,
   "IsBetaVersion": false,
@@ -12,12 +15,18 @@
   "Installed": false,
   "ExplicitlyLoaded": true,
   "BuiltInInitialFeatureState": "Registered",
+
   "Plugins": [
     {
       "Name": "GameFeatures",
       "Enabled": true
+    },
+    {
+      "Name": "GameplayAbilities",
+      "Enabled": true
     }
   ],
+
   "Modules": [
     {
       "Name": "GF_Combat_GASRuntime",
@@ -25,5 +34,6 @@
       "LoadingPhase": "Default"
     }
   ],
+
   "GameFeatureData": "/GF_Combat_GAS/GF_Combat_GAS.GF_Combat_GAS"
 }
