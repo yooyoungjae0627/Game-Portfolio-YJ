@@ -8,6 +8,7 @@
 
 class UProgressBar;
 class UTextBlock;
+class UButton;
 
 class UMosesMatchAnnouncementWidget;
 class UMosesMatchRulePopupWidget;
@@ -66,6 +67,10 @@ private:
 	/** 초 -> "MM:SS" 변환 */
 	static FString ToMMSS(int32 TotalSeconds);
 
+	/** Rules 버튼 클릭 처리. (Popup 토글) */
+	UFUNCTION()
+	void HandleRulesClicked();
+
 private:
 	// =====================================================================
 	// BindWidgetOptional: BP 디자이너 위젯 이름과 동일해야 자동 바인딩된다.
@@ -111,10 +116,16 @@ private:
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UMosesMatchRulePopupWidget> RulePopupWidget = nullptr;
 
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UButton> ToggleButton = nullptr;
+
 private:
 	// =====================================================================
 	// 캐시: Delegate 해제를 위해 보관
 	// =====================================================================
 	TWeakObjectPtr<AMosesPlayerState> CachedPlayerState;
 	TWeakObjectPtr<AMosesMatchGameState> CachedMatchGameState;
+
+	// HUD 내부 토글 상태 (PopupRoot가 Collapsed인지 여부)
+	bool bRulesPopupVisible = false;
 };

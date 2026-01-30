@@ -35,19 +35,5 @@ private:
 	void ApplyInputModeForPopup(bool bPopupVisible);
 
 private:
-	UPROPERTY(meta = (BindWidgetOptional))
-	TObjectPtr<UButton> ToggleButton = nullptr;
-
-	UPROPERTY(meta = (BindWidgetOptional))
-	TObjectPtr<UButton> CloseButton = nullptr;
-
-	/** 팝업 루트(딤+본문을 포함하는 최상위 Overlay/Border 등) */
-	UPROPERTY(meta = (BindWidgetOptional))
-	TObjectPtr<UOverlay> PopupRoot = nullptr;
-
-	UPROPERTY(meta = (BindWidgetOptional))
-	TObjectPtr<UTextBlock> RulesText = nullptr;
-
-private:
 	bool bPopupVisible = false;
 };

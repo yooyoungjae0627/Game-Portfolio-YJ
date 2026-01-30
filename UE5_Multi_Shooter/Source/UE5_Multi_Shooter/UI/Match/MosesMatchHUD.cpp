@@ -6,6 +6,7 @@
 
 #include "Components/ProgressBar.h"
 #include "Components/TextBlock.h"
+#include "Components/Button.h"
 
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
 #include "UE5_Multi_Shooter/Player/MosesPlayerState.h"
@@ -27,9 +28,21 @@ void UMosesMatchHUD::NativeOnInitialized()
 		*GetNameSafe(this),
 		*GetNameSafe(GetOwningPlayer()));
 
+	if (ToggleButton)
+	{
+		ToggleButton->OnClicked.AddDynamic(this, &ThisClass::HandleRulesClicked);
+	}
+
 	BindToPlayerState();
 	BindToGameState_Match();
 	RefreshInitial();
+
+	// Popup 기본 상태: 닫힘
+	bRulesPopupVisible = false;
+	if (RulePopupWidget)
+	{
+		RulePopupWidget->SetVisibility(ESlateVisibility::Collapsed);
+	}
 }
 
 void UMosesMatchHUD::NativeDestruct()
@@ -219,4 +232,26 @@ FString UMosesMatchHUD::ToMMSS(int32 TotalSeconds)
 	const int32 MM = Clamped / 60;
 	const int32 SS = Clamped % 60;
 	return FString::Printf(TEXT("%02d:%02d"), MM, SS);
+}
+
+void UMosesMatchHUD::HandleRulesClicked()
+{
+	// RulePopupWidget이 디자이너에 배치되어야 함 (BindWidgetOptional)
+	if (!RulePopupWidget)
+	{
+		UE_LOG(LogMosesHUD, Warning, TEXT("[HUD][CL] RulesClicked: RulePopupWidget is NULL (Check BP instance name)"));
+		return;
+	}
+
+	bRulesPopupVisible = !bRulesPopupVisible;
+	if (bRulesPopupVisible)
+	{
+		RulePopupWidget->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+	}
+	else
+	{
+		RulePopupWidget->SetVisibility(ESlateVisibility::Collapsed);
+	}
+
+	UE_LOG(LogMosesHUD, Verbose, TEXT("[HUD][CL] RulesPopup -> %s"), bRulesPopupVisible ? TEXT("OPEN") : TEXT("CLOSE"));
 }
