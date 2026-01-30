@@ -76,6 +76,8 @@ void AMosesMatchGameMode::BeginPlay()
 		UE_LOG(LogMosesSpawn, Warning, TEXT("%s [MatchGM] AutoReturnToLobby in %.2f sec"),
 			MOSES_TAG_COMBAT_SV, AutoReturnToLobbySeconds);
 	}
+
+	StartWarmup_WhenExperienceReady();
 }
 
 void AMosesMatchGameMode::PostLogin(APlayerController* NewPlayer)
@@ -239,6 +241,11 @@ AMosesMatchGameState* AMosesMatchGameMode::GetMatchGameState() const
 void AMosesMatchGameMode::SetMatchPhase(EMosesMatchPhase NewPhase)
 {
 	MOSES_GUARD_AUTHORITY_VOID(this, "Phase", TEXT("Client attempted SetMatchPhase"));
+
+	UE_LOG(LogMosesPhase, Warning, TEXT("[PHASE][SV] SetMatchPhase CALLED New=%s World=%s GM=%s"),
+		*UEnum::GetValueAsString(NewPhase),
+		*GetNameSafe(GetWorld()),
+		*GetNameSafe(this));
 
 	if (CurrentPhase == NewPhase)
 	{
@@ -558,4 +565,73 @@ void AMosesMatchGameMode::DumpReservedStarts(const TCHAR* Where) const
 		Where,
 		ReservedPlayerStarts.Num(),
 		AssignedStartByController.Num());
+}
+
+void AMosesMatchGameMode::StartWarmup_WhenExperienceReady()
+{
+	MOSES_GUARD_AUTHORITY_VOID(this, "Phase", TEXT("Client attempted StartWarmup_WhenExperienceReady"));
+
+	// 중복 방지
+	if (ExperienceReadyPollHandle.IsValid())
+	{
+		return;
+	}
+
+	ExperienceReadyPollCount = 0;
+
+	GetWorldTimerManager().SetTimer(
+		ExperienceReadyPollHandle,
+		this,
+		&ThisClass::PollExperienceReady_AndStartWarmup,
+		ExperienceReadyPollInterval,
+		true);
+
+	UE_LOG(LogMosesExp, Warning, TEXT("%s [MatchGM][MOD] StartWarmup_WhenExperienceReady -> Poll START Interval=%.2f"),
+		MOSES_TAG_COMBAT_SV,
+		ExperienceReadyPollInterval);
+}
+
+void AMosesMatchGameMode::PollExperienceReady_AndStartWarmup()
+{
+	MOSES_GUARD_AUTHORITY_VOID(this, "Phase", TEXT("Client attempted PollExperienceReady_AndStartWarmup"));
+
+	ExperienceReadyPollCount++;
+
+	UMosesExperienceManagerComponent* ExpMgr = GetExperienceManager();
+	if (!ExpMgr)
+	{
+		if (ExperienceReadyPollCount >= ExperienceReadyPollMaxCount)
+		{
+			GetWorldTimerManager().ClearTimer(ExperienceReadyPollHandle);
+			UE_LOG(LogMosesExp, Warning, TEXT("%s [MatchGM][MOD] Poll GIVEUP (No ExpMgr)"),
+				MOSES_TAG_COMBAT_SV);
+		}
+		return;
+	}
+
+	// ✅ 여기서 “Experience가 로드됐는지” 판단해야 하는데,
+	// 네 ExpMgr API 명이 프로젝트마다 다를 수 있으니, 가장 안전한 방식:
+	// - CurrentExperience가 null이 아니면 Ready로 간주
+	// (만약 네 컴포넌트에 다른 getter가 있으면 그걸로 바꿔도 됨)
+	const UMosesExperienceDefinition* CurrentExp = ExpMgr->GetCurrentExperienceOrNull();
+	if (!CurrentExp)
+	{
+		if (ExperienceReadyPollCount >= ExperienceReadyPollMaxCount)
+		{
+			GetWorldTimerManager().ClearTimer(ExperienceReadyPollHandle);
+			UE_LOG(LogMosesExp, Warning, TEXT("%s [MatchGM][MOD] Poll GIVEUP (Experience not ready)"),
+				MOSES_TAG_COMBAT_SV);
+		}
+		return;
+	}
+
+	// Ready 확인됨 → 폴링 종료
+	GetWorldTimerManager().ClearTimer(ExperienceReadyPollHandle);
+
+	UE_LOG(LogMosesExp, Warning, TEXT("%s [MatchGM][MOD] Experience READY -> StartMatchFlow Exp=%s"),
+		MOSES_TAG_COMBAT_SV,
+		*GetNameSafe(CurrentExp));
+
+	// 기존 너 로직 그대로 사용
+	StartMatchFlow_AfterExperienceReady();
 }

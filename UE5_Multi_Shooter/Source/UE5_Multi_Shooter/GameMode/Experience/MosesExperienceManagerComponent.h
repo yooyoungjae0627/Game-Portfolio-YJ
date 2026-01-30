@@ -82,6 +82,11 @@ public:
 	/** Experience READY 이벤트(외부가 구독) */
 	FOnMosesExperienceLoaded OnExperienceLoaded;
 
+public:
+	/** 현재 로드 완료된 ExperienceDefinition을 반환. 아직 준비 전이면 nullptr. */
+	const UMosesExperienceDefinition* GetCurrentExperienceOrNull() const;
+
+
 private:
 	// ----------------------------
 	// Replication

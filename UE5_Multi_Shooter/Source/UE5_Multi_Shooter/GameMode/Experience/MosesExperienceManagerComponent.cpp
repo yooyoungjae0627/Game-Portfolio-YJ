@@ -526,3 +526,14 @@ void UMosesExperienceManagerComponent::ApplyServerSideAbilitySet(const FSoftObje
 	}
 }
 
+const UMosesExperienceDefinition* UMosesExperienceManagerComponent::GetCurrentExperienceOrNull() const
+{
+	// Experience가 완전히 Loaded 상태가 아니면 nullptr.
+	if (!IsExperienceLoaded())
+	{
+		return nullptr;
+	}
+
+	// Loaded 상태라면 CurrentExperience는 반드시 유효해야 한다.
+	return CurrentExperience;
+}

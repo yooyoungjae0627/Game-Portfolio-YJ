@@ -1,7 +1,11 @@
 ﻿// ============================================================================
 // MosesMatchGameState.h (FULL)
-// - Match 전용 GameState (Phase/RemainingSeconds/Announcement)
+// - Match 전용 GameState (Phase / RemainingSeconds / Announcement)
 // - 부모: AMosesGameState (ExperienceManagerComponent 공통 보장)
+// - 정책:
+//   - 서버만 변경(Server Authority 100%)
+//   - 클라는 RepNotify -> Delegate로 HUD 갱신 (Tick/Binding 금지)
+// - [MOD] PushModel 대응: 서버에서 값 변경 시 Dirty 마킹/ForceNetUpdate를 사용한다.
 // ============================================================================
 
 #pragma once
@@ -10,9 +14,9 @@
 #include "Net/UnrealNetwork.h"
 
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
-#include "UE5_Multi_Shooter/GameMode/GameState/MosesGameState.h"      // [중요] 부모
-#include "UE5_Multi_Shooter/GameMode/GameState/MosesMatchTypes.h"     // AnnouncementState
-#include "UE5_Multi_Shooter/GameMode/GameState/MosesMatchPhase.h"     // EMosesMatchPhase
+#include "UE5_Multi_Shooter/GameMode/GameState/MosesGameState.h"
+#include "UE5_Multi_Shooter/GameMode/GameState/MosesMatchTypes.h"
+#include "UE5_Multi_Shooter/GameMode/GameState/MosesMatchPhase.h"
 
 #include "MosesMatchGameState.generated.h"
 
@@ -21,17 +25,6 @@ DECLARE_MULTICAST_DELEGATE_OneParam(FOnMosesMatchTimeChangedNative, int32 /*Rema
 DECLARE_MULTICAST_DELEGATE_OneParam(FOnMosesMatchPhaseChangedNative, EMosesMatchPhase /*Phase*/);
 DECLARE_MULTICAST_DELEGATE_OneParam(FOnMosesAnnouncementChangedNative, const FMosesAnnouncementState& /*State*/);
 
-/**
- * AMosesMatchGameState
- *
- * - 매치 전용 복제 상태판
- *   MatchPhase / RemainingSeconds / Announcement
- *
- * 정책:
- * - 서버만 변경
- * - 클라는 RepNotify -> Delegate로 HUD 갱신
- * - Tick/Binding 금지
- */
 UCLASS()
 class UE5_MULTI_SHOOTER_API AMosesMatchGameState : public AMosesGameState
 {

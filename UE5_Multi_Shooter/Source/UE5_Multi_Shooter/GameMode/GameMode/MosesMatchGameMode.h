@@ -119,6 +119,18 @@ private:
 	// -------------------------------------------------------------------------
 	UClass* ResolvePawnClassFromSelectedId(int32 SelectedId) const;
 
+	// [MOD] Experience Ready 폴링(틱 금지)로 Warmup 시작 보장
+private:
+	void StartWarmup_WhenExperienceReady();
+	void PollExperienceReady_AndStartWarmup();
+
+private:
+	FTimerHandle ExperienceReadyPollHandle;
+	int32 ExperienceReadyPollCount = 0;
+
+	static constexpr float ExperienceReadyPollInterval = 0.2f;
+	static constexpr int32  ExperienceReadyPollMaxCount = 50; // 10초
+
 private:
 	// -------------------------------------------------------------------------
 	// Phase config

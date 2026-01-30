@@ -1,21 +1,65 @@
-﻿#include "UE5_Multi_Shooter/UI/Match/MosesMatchHUD.h"
+﻿// ============================================================================
+// MosesMatchHUD.cpp
+// ============================================================================
+
+#include "UE5_Multi_Shooter/UI/Match/MosesMatchHUD.h"
 
 #include "Components/ProgressBar.h"
 #include "Components/TextBlock.h"
 
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
 #include "UE5_Multi_Shooter/Player/MosesPlayerState.h"
-#include "UE5_Multi_Shooter/GameMode/GameState/MosesMatchGameState.h"          // [MOD] 핵심 include
+#include "UE5_Multi_Shooter/GameMode/GameState/MosesMatchGameState.h"
 #include "UE5_Multi_Shooter/UI/Match/MosesMatchAnnouncementWidget.h"
 #include "UE5_Multi_Shooter/UI/Match/MosesMatchRulePopupWidget.h"
+
+UMosesMatchHUD::UMosesMatchHUD(const FObjectInitializer& ObjectInitializer)
+	: Super(ObjectInitializer)
+{
+}
 
 void UMosesMatchHUD::NativeOnInitialized()
 {
 	Super::NativeOnInitialized();
 
+	// UI는 클라 전용(DS에서는 생성되지 않는 것이 정상).
+	UE_LOG(LogMosesHUD, Warning, TEXT("[HUD][CL] Init MatchHUD=%s OwningPlayer=%s"),
+		*GetNameSafe(this),
+		*GetNameSafe(GetOwningPlayer()));
+
 	BindToPlayerState();
 	BindToGameState_Match();
 	RefreshInitial();
+}
+
+void UMosesMatchHUD::NativeDestruct()
+{
+	// Delegate 해제(레벨 이동, GF 토글, PIE 재시작 등에서 안전)
+	if (AMosesPlayerState* PS = CachedPlayerState.Get())
+	{
+		PS->OnHealthChanged.RemoveAll(this);
+		PS->OnShieldChanged.RemoveAll(this);
+		PS->OnScoreChanged.RemoveAll(this);
+		PS->OnDeathsChanged.RemoveAll(this);
+		PS->OnAmmoChanged.RemoveAll(this);
+		PS->OnGrenadeChanged.RemoveAll(this);
+
+		UE_LOG(LogMosesHUD, Warning, TEXT("[HUD][CL] Unbound PlayerState delegates PS=%s"), *GetNameSafe(PS));
+	}
+
+	if (AMosesMatchGameState* GS = CachedMatchGameState.Get())
+	{
+		GS->OnMatchTimeChanged.RemoveAll(this);
+		GS->OnMatchPhaseChanged.RemoveAll(this);
+		GS->OnAnnouncementChanged.RemoveAll(this);
+
+		UE_LOG(LogMosesHUD, Warning, TEXT("[HUD][CL] Unbound MatchGameState delegates GS=%s"), *GetNameSafe(GS));
+	}
+
+	CachedPlayerState.Reset();
+	CachedMatchGameState.Reset();
+
+	Super::NativeDestruct();
 }
 
 void UMosesMatchHUD::BindToPlayerState()
@@ -23,14 +67,18 @@ void UMosesMatchHUD::BindToPlayerState()
 	APlayerController* PC = GetOwningPlayer();
 	if (!PC)
 	{
+		UE_LOG(LogMosesHUD, Verbose, TEXT("[HUD][CL] BindToPlayerState: No PC"));
 		return;
 	}
 
 	AMosesPlayerState* PS = PC->GetPlayerState<AMosesPlayerState>();
 	if (!PS)
 	{
+		UE_LOG(LogMosesHUD, Verbose, TEXT("[HUD][CL] BindToPlayerState: No PS PC=%s"), *GetNameSafe(PC));
 		return;
 	}
+
+	CachedPlayerState = PS;
 
 	PS->OnHealthChanged.AddUObject(this, &ThisClass::HandleHealthChanged);
 	PS->OnShieldChanged.AddUObject(this, &ThisClass::HandleShieldChanged);
@@ -39,7 +87,7 @@ void UMosesMatchHUD::BindToPlayerState()
 	PS->OnAmmoChanged.AddUObject(this, &ThisClass::HandleAmmoChanged);
 	PS->OnGrenadeChanged.AddUObject(this, &ThisClass::HandleGrenadeChanged);
 
-	UE_LOG(LogMosesSpawn, Warning, TEXT("[HUD][CL] Bound PlayerState delegates PS=%s"), *GetNameSafe(PS));
+	UE_LOG(LogMosesHUD, Warning, TEXT("[HUD][CL] Bound PlayerState delegates PS=%s"), *GetNameSafe(PS));
 }
 
 void UMosesMatchHUD::BindToGameState_Match()
@@ -47,21 +95,24 @@ void UMosesMatchHUD::BindToGameState_Match()
 	UWorld* World = GetWorld();
 	if (!World)
 	{
+		UE_LOG(LogMosesHUD, Verbose, TEXT("[HUD][CL] BindToGameState: No World"));
 		return;
 	}
 
 	AMosesMatchGameState* GS = World->GetGameState<AMosesMatchGameState>();
 	if (!GS)
 	{
-		UE_LOG(LogMosesSpawn, Warning, TEXT("[HUD][CL] No AMosesMatchGameState World=%s"), *GetNameSafe(World));
+		UE_LOG(LogMosesHUD, Warning, TEXT("[HUD][CL] No AMosesMatchGameState World=%s"), *GetNameSafe(World));
 		return;
 	}
+
+	CachedMatchGameState = GS;
 
 	GS->OnMatchTimeChanged.AddUObject(this, &ThisClass::HandleMatchTimeChanged);
 	GS->OnMatchPhaseChanged.AddUObject(this, &ThisClass::HandleMatchPhaseChanged);
 	GS->OnAnnouncementChanged.AddUObject(this, &ThisClass::HandleAnnouncementChanged);
 
-	UE_LOG(LogMosesSpawn, Warning, TEXT("[HUD][CL] Bound MatchGameState delegates GS=%s"), *GetNameSafe(GS));
+	UE_LOG(LogMosesHUD, Warning, TEXT("[HUD][CL] Bound MatchGameState delegates GS=%s"), *GetNameSafe(GS));
 
 	// Tick/Binding 없이 초기 반영
 	HandleMatchTimeChanged(GS->GetRemainingSeconds());
@@ -71,6 +122,7 @@ void UMosesMatchHUD::BindToGameState_Match()
 
 void UMosesMatchHUD::RefreshInitial()
 {
+	// "초기값"은 안전한 디폴트 표시. 실제 값은 Delegate로 즉시 덮어써진다.
 	HandleMatchTimeChanged(0);
 	HandleScoreChanged(0);
 	HandleDeathsChanged(0);

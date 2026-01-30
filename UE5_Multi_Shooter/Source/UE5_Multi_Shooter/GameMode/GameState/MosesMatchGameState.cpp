@@ -3,23 +3,17 @@
 // ============================================================================
 
 #include "UE5_Multi_Shooter/GameMode/GameState/MosesMatchGameState.h"
-#include "UE5_Multi_Shooter/GameMode/Experience/MosesExperienceManagerComponent.h" 
 
+#include "UE5_Multi_Shooter/GameMode/Experience/MosesExperienceManagerComponent.h"
 #include "TimerManager.h"
+
+// [MOD] PushModel dirty 마킹
+#include "Net/Core/PushModel/PushModel.h"
 
 AMosesMatchGameState::AMosesMatchGameState(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
 {
 	bReplicates = true;
-
-	// MatchLevel 진입 시 GameMode에서 GlobalPhase를 Match로 바꾸는 게 정석이지만,
-	// 안전하게 생성자 기본값을 Match로 둘 수도 있다.
-	// (원하면 제거하고 GameMode에서 ServerSetPhase로만 제어해도 된다.)
-	if (HasAuthority())
-	{
-		// 생성자에서 HasAuthority는 월드 컨텍스트에 따라 애매할 수 있으므로
-		// 여기서는 "기본값을 Match로 두고" GameMode가 확정하도록 맡기는 편이 안전하다.
-	}
 }
 
 void AMosesMatchGameState::BeginPlay()
@@ -44,12 +38,20 @@ void AMosesMatchGameState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>&
 
 void AMosesMatchGameState::ServerStartMatchTimer(int32 TotalSeconds)
 {
+	// [MOD] “진짜 호출되는지”부터 강제 로그
+	UE_LOG(LogMosesPhase, Warning, TEXT("[MatchTime][SV] ServerStartMatchTimer CALLED Total=%d HasAuth=%d World=%s"),
+		TotalSeconds,
+		HasAuthority() ? 1 : 0,
+		*GetNameSafe(GetWorld()));
+
 	if (!HasAuthority())
 	{
 		return;
 	}
 
 	TotalSeconds = FMath::Max(0, TotalSeconds);
+
+	// 초기 값 세팅(Rep + Delegate)
 	ServerSetRemainingSeconds(TotalSeconds);
 
 	GetWorldTimerManager().ClearTimer(MatchTimerHandle);
@@ -72,9 +74,21 @@ void AMosesMatchGameState::ServerTick_1s()
 {
 	check(HasAuthority());
 
+	// ---------------------------------------------------------------------
+	// Match RemainingSeconds
+	// ---------------------------------------------------------------------
 	RemainingSeconds = FMath::Max(0, RemainingSeconds - 1);
+
+	// [MOD] PushModel: Replicated 변경 Dirty 마킹 필수
+	MARK_PROPERTY_DIRTY_FROM_NAME(AMosesMatchGameState, RemainingSeconds, this);
+	ForceNetUpdate();
+
+	// 서버에서도 UI 갱신을 위해 RepNotify를 직접 호출(Delegate 목적)
 	OnRep_RemainingSeconds();
 
+	// ---------------------------------------------------------------------
+	// Announcement tick
+	// ---------------------------------------------------------------------
 	if (AnnouncementState.bActive)
 	{
 		AnnouncementState.RemainingSeconds = FMath::Max(0, AnnouncementState.RemainingSeconds - 1);
@@ -87,6 +101,10 @@ void AMosesMatchGameState::ServerTick_1s()
 				FText::AsNumber(AnnouncementState.RemainingSeconds));
 		}
 
+		// [MOD] PushModel: struct도 Dirty 마킹
+		MARK_PROPERTY_DIRTY_FROM_NAME(AMosesMatchGameState, AnnouncementState, this);
+		ForceNetUpdate();
+
 		OnRep_AnnouncementState();
 
 		if (AnnouncementState.RemainingSeconds <= 0)
@@ -95,6 +113,9 @@ void AMosesMatchGameState::ServerTick_1s()
 		}
 	}
 
+	// ---------------------------------------------------------------------
+	// Finished
+	// ---------------------------------------------------------------------
 	if (RemainingSeconds <= 0)
 	{
 		ServerStopMatchTimer();
@@ -117,6 +138,11 @@ void AMosesMatchGameState::ServerSetRemainingSeconds(int32 NewSeconds)
 	}
 
 	RemainingSeconds = NewSeconds;
+
+	// [MOD] PushModel dirty
+	MARK_PROPERTY_DIRTY_FROM_NAME(AMosesMatchGameState, RemainingSeconds, this);
+	ForceNetUpdate();
+
 	OnRep_RemainingSeconds();
 }
 
@@ -133,6 +159,11 @@ void AMosesMatchGameState::ServerSetMatchPhase(EMosesMatchPhase NewPhase)
 	}
 
 	MatchPhase = NewPhase;
+
+	// [MOD] PushModel dirty
+	MARK_PROPERTY_DIRTY_FROM_NAME(AMosesMatchGameState, MatchPhase, this);
+	ForceNetUpdate();
+
 	OnRep_MatchPhase();
 
 	UE_LOG(LogMosesPhase, Log, TEXT("[PHASE][SV] MatchPhase=%s"), *UEnum::GetValueAsString(MatchPhase));
@@ -151,6 +182,10 @@ void AMosesMatchGameState::ServerStartAnnouncementText(const FText& InText, int3
 	AnnouncementState.bCountdown = false;
 	AnnouncementState.Text = InText;
 	AnnouncementState.RemainingSeconds = DurationSeconds;
+
+	// [MOD] PushModel dirty
+	MARK_PROPERTY_DIRTY_FROM_NAME(AMosesMatchGameState, AnnouncementState, this);
+	ForceNetUpdate();
 
 	UE_LOG(LogMosesPhase, Warning, TEXT("[ANN][SV] Start Text Duration=%d"), DurationSeconds);
 
@@ -176,6 +211,10 @@ void AMosesMatchGameState::ServerStartAnnouncementCountdown(const FText& PrefixT
 		ServerAnnouncePrefixText,
 		FText::AsNumber(AnnouncementState.RemainingSeconds));
 
+	// [MOD] PushModel dirty
+	MARK_PROPERTY_DIRTY_FROM_NAME(AMosesMatchGameState, AnnouncementState, this);
+	ForceNetUpdate();
+
 	UE_LOG(LogMosesPhase, Warning, TEXT("[ANN][SV] Start Countdown From=%d"), CountdownFromSeconds);
 
 	OnRep_AnnouncementState();
@@ -194,6 +233,10 @@ void AMosesMatchGameState::ServerStopAnnouncement()
 	}
 
 	AnnouncementState = FMosesAnnouncementState();
+
+	// [MOD] PushModel dirty
+	MARK_PROPERTY_DIRTY_FROM_NAME(AMosesMatchGameState, AnnouncementState, this);
+	ForceNetUpdate();
 
 	UE_LOG(LogMosesPhase, Warning, TEXT("[ANN][SV] Stop"));
 
