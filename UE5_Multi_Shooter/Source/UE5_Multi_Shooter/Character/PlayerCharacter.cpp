@@ -724,9 +724,157 @@ void APlayerCharacter::TryPlayMontage_Local(UAnimMontage* Montage, const TCHAR* 
 		*GetNameSafe(this));
 }
 
+// ============================================================================
+// Fire AV (Muzzle FX + Fire SFX) - WeaponData 기반
+// - Server approved -> Multicast로 모든 클라에서 동일 재생
+// - DS는 코스메틱 재생 금지
+// - SoftObjectPtr는 필요 시 LoadSynchronous로 로드
+// ============================================================================
+
 void APlayerCharacter::PlayFireAV_Local(FGameplayTag WeaponId) const
 {
-	// (네 기존 구현 유지 - 생략)
+	// Dedicated Server는 Anim/VFX/SFX 재생 대상이 아니다.
+	if (GetNetMode() == NM_DedicatedServer)
+	{
+		return;
+	}
+
+	UE_LOG(LogMosesCombat, VeryVerbose,
+		TEXT("[FIRE][COS] AV Enter Weapon=%s Pawn=%s"),
+		*WeaponId.ToString(),
+		*GetNameSafe(this));
+
+	if (!WeaponId.IsValid())
+	{
+		UE_LOG(LogMosesCombat, Warning, TEXT("[FIRE][COS] AV Skip (InvalidWeaponId) Pawn=%s"), *GetNameSafe(this));
+		return;
+	}
+
+	// 무기 메시가 없으면 머즐 소켓도 없고, Attach도 불가
+	if (!WeaponMeshComp || !WeaponMeshComp->GetSkeletalMeshAsset())
+	{
+		UE_LOG(LogMosesCombat, Warning, TEXT("[FIRE][COS] AV Skip (NoWeaponMesh) Pawn=%s"), *GetNameSafe(this));
+		return;
+	}
+
+	// WeaponData resolve (GI Subsystem)
+	UWorld* World = GetWorld();
+	UGameInstance* GI = World ? World->GetGameInstance() : nullptr;
+	if (!GI)
+	{
+		UE_LOG(LogMosesCombat, Warning, TEXT("[FIRE][COS] AV Skip (NoGameInstance) Pawn=%s"), *GetNameSafe(this));
+		return;
+	}
+
+	const UMosesWeaponRegistrySubsystem* Registry = GI->GetSubsystem<UMosesWeaponRegistrySubsystem>();
+	if (!Registry)
+	{
+		UE_LOG(LogMosesCombat, Warning, TEXT("[FIRE][COS] AV Skip (NoWeaponRegistry) Pawn=%s"), *GetNameSafe(this));
+		return;
+	}
+
+	const UMosesWeaponData* Data = Registry->ResolveWeaponData(WeaponId);
+	if (!Data)
+	{
+		UE_LOG(LogMosesCombat, Warning, TEXT("[FIRE][COS] AV Skip (NoWeaponData) Weapon=%s Pawn=%s"),
+			*WeaponId.ToString(), *GetNameSafe(this));
+		return;
+	}
+
+	// 무기별 머즐 소켓 이름 (DataAsset)
+	const FName MuzzleSocket = Data->MuzzleSocketName;
+
+	if (!MuzzleSocket.IsNone() && !WeaponMeshComp->DoesSocketExist(MuzzleSocket))
+	{
+		UE_LOG(LogMosesCombat, Warning,
+			TEXT("[FIRE][COS] AV Skip (NoMuzzleSocket=%s) WeaponMesh=%s Pawn=%s"),
+			*MuzzleSocket.ToString(),
+			*GetNameSafe(WeaponMeshComp->GetSkeletalMeshAsset()),
+			*GetNameSafe(this));
+		return;
+	}
+
+	// ---------------------------------------------------------------------
+	// 1) Muzzle FX (Cascade)
+	// ---------------------------------------------------------------------
+	UParticleSystem* MuzzleFX = nullptr;
+
+	if (!Data->MuzzleFlashFX.IsNull())
+	{
+		MuzzleFX = Data->MuzzleFlashFX.Get();
+		if (!MuzzleFX)
+		{
+			// [MOD] Soft load (에셋 미리 로딩이 안 되어 있어도 동작)
+			MuzzleFX = Data->MuzzleFlashFX.LoadSynchronous();
+		}
+	}
+
+	if (MuzzleFX)
+	{
+		UGameplayStatics::SpawnEmitterAttached(
+			MuzzleFX,
+			WeaponMeshComp,
+			MuzzleSocket,
+			FVector::ZeroVector,
+			FRotator::ZeroRotator,
+			EAttachLocation::SnapToTarget,
+			true);
+
+		UE_LOG(LogMosesCombat, VeryVerbose,
+			TEXT("[FIRE][COS] MuzzleFX OK FX=%s Socket=%s Pawn=%s"),
+			*GetNameSafe(MuzzleFX),
+			*MuzzleSocket.ToString(),
+			*GetNameSafe(this));
+	}
+	else
+	{
+		UE_LOG(LogMosesCombat, VeryVerbose,
+			TEXT("[FIRE][COS] MuzzleFX None Weapon=%s Pawn=%s"),
+			*WeaponId.ToString(),
+			*GetNameSafe(this));
+	}
+
+	// ---------------------------------------------------------------------
+	// 2) Fire Sound
+	// ---------------------------------------------------------------------
+	USoundBase* FireSnd = nullptr;
+
+	if (!Data->FireSound.IsNull())
+	{
+		FireSnd = Data->FireSound.Get();
+		if (!FireSnd)
+		{
+			// [MOD] Soft load
+			FireSnd = Data->FireSound.LoadSynchronous();
+		}
+	}
+
+	if (FireSnd)
+	{
+		// [FIX] PlaySoundAttached는 없음 -> SpawnSoundAttached 사용
+		UGameplayStatics::SpawnSoundAttached(
+			FireSnd,
+			WeaponMeshComp,
+			MuzzleSocket);
+
+		UE_LOG(LogMosesCombat, VeryVerbose,
+			TEXT("[FIRE][COS] FireSound OK Snd=%s Socket=%s Pawn=%s"),
+			*GetNameSafe(FireSnd),
+			*MuzzleSocket.ToString(),
+			*GetNameSafe(this));
+	}
+	else
+	{
+		UE_LOG(LogMosesCombat, VeryVerbose,
+			TEXT("[FIRE][COS] FireSound None Weapon=%s Pawn=%s"),
+			*WeaponId.ToString(),
+			*GetNameSafe(this));
+	}
+
+	UE_LOG(LogMosesCombat, VeryVerbose,
+		TEXT("[FIRE][COS] AV Exit Weapon=%s Pawn=%s"),
+		*WeaponId.ToString(),
+		*GetNameSafe(this));
 }
 
 void APlayerCharacter::ApplyDeadCosmetics_Local() const
