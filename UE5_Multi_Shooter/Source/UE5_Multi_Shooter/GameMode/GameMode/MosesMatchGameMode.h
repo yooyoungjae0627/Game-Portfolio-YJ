@@ -1,6 +1,8 @@
 ﻿#pragma once
 
+#include "CoreMinimal.h"
 #include "UE5_Multi_Shooter/GameMode/GameMode/MosesGameModeBase.h"
+#include "UE5_Multi_Shooter/GameMode/GameState/MosesMatchPhase.h" // [MOD] enum 분리(순환 방지)
 #include "MosesMatchGameMode.generated.h"
 
 class APlayerStart;
@@ -10,16 +12,22 @@ class UMosesPawnData;
 class UMSCharacterCatalog;
 class UMosesExperienceManagerComponent;
 class UMosesExperienceDefinition;
+class AMosesMatchGameState;
 
-UENUM(BlueprintType)
-enum class EMosesMatchPhase : uint8
-{
-	WaitingForPlayers UMETA(DisplayName = "WaitingForPlayers"),
-	Warmup            UMETA(DisplayName = "Warmup"),
-	Combat            UMETA(DisplayName = "Combat"),
-	Result            UMETA(DisplayName = "Result"),
-};
-
+/**
+ * AMosesMatchGameMode
+ *
+ * 역할:
+ * - 서버 권위 Phase 머신(WaitingForPlayers → Warmup → Combat → Result)
+ * - Phase에 맞춰 Experience 전환(네 구조 유지)
+ * - MatchGameState에 Phase/RemainingSeconds/Announcement를 확정한다.
+ *
+ * 정책:
+ * - Server Authority 100%
+ * - GameMode=결정(Phase/Experience/ServerTravel)
+ * - GameState=복제(클라 HUD 갱신용 데이터)
+ * - RemainingSeconds는 "MatchGameState의 서버 타이머"가 단일 진실로 관리한다.
+ */
 UCLASS()
 class UE5_MULTI_SHOOTER_API AMosesMatchGameMode : public AMosesGameModeBase
 {
@@ -35,9 +43,9 @@ public:
 	float AutoReturnToLobbySeconds = 0.0f;
 
 protected:
-	// ------------------------------------------------------------
+	// -------------------------------------------------------------------------
 	// Engine
-	// ------------------------------------------------------------
+	// -------------------------------------------------------------------------
 	virtual void InitGame(const FString& MapName, const FString& Options, FString& ErrorMessage) override;
 	virtual void BeginPlay() override;
 
@@ -53,15 +61,15 @@ protected:
 	virtual UClass* GetDefaultPawnClassForController_Implementation(AController* InController) override;
 
 protected:
-	// ------------------------------------------------------------
+	// -------------------------------------------------------------------------
 	// Experience READY Hook
-	// ------------------------------------------------------------
+	// -------------------------------------------------------------------------
 	virtual void HandleDoD_AfterExperienceReady(const UMosesExperienceDefinition* CurrentExperience) override;
 
 private:
-	// ------------------------------------------------------------
+	// -------------------------------------------------------------------------
 	// Match Phase (Server Authoritative)
-	// ------------------------------------------------------------
+	// -------------------------------------------------------------------------
 	void StartMatchFlow_AfterExperienceReady();
 	void SetMatchPhase(EMosesMatchPhase NewPhase);
 	void AdvancePhase();
@@ -69,17 +77,24 @@ private:
 
 	float GetPhaseDurationSeconds(EMosesMatchPhase Phase) const;
 
-	// ------------------------------------------------------------
+private:
+	// -------------------------------------------------------------------------
 	// Phase -> Experience Switch
-	// ------------------------------------------------------------
+	// -------------------------------------------------------------------------
 	static FName GetExperienceNameForPhase(EMosesMatchPhase Phase);
 	void ServerSwitchExperienceByPhase(EMosesMatchPhase Phase);
 	UMosesExperienceManagerComponent* GetExperienceManager() const;
 
 private:
-	// ------------------------------------------------------------
+	// -------------------------------------------------------------------------
+	// MatchGameState access
+	// -------------------------------------------------------------------------
+	AMosesMatchGameState* GetMatchGameState() const;
+
+private:
+	// -------------------------------------------------------------------------
 	// Travel / Debug
-	// ------------------------------------------------------------
+	// -------------------------------------------------------------------------
 	FString GetLobbyMapURL() const;
 	void HandleAutoReturn();
 
@@ -89,9 +104,9 @@ private:
 	bool CanDoServerTravel() const;
 
 private:
-	// ------------------------------------------------------------
+	// -------------------------------------------------------------------------
 	// PlayerStart helpers
-	// ------------------------------------------------------------
+	// -------------------------------------------------------------------------
 	void CollectMatchPlayerStarts(TArray<APlayerStart*>& OutStarts) const;
 	void FilterFreeStarts(const TArray<APlayerStart*>& InAll, TArray<APlayerStart*>& OutFree) const;
 	void ReserveStartForController(AController* Player, APlayerStart* Start);
@@ -99,15 +114,15 @@ private:
 	void DumpReservedStarts(const TCHAR* Where) const;
 
 private:
-	// ------------------------------------------------------------
+	// -------------------------------------------------------------------------
 	// PawnClass Resolve
-	// ------------------------------------------------------------
+	// -------------------------------------------------------------------------
 	UClass* ResolvePawnClassFromSelectedId(int32 SelectedId) const;
 
 private:
-	// ------------------------------------------------------------
+	// -------------------------------------------------------------------------
 	// Phase config
-	// ------------------------------------------------------------
+	// -------------------------------------------------------------------------
 	UPROPERTY(EditDefaultsOnly, Category = "Match|Phase")
 	float WarmupSeconds = 120.0f;
 
@@ -118,24 +133,24 @@ private:
 	float ResultSeconds = 30.0f;
 
 private:
-	// ------------------------------------------------------------
-	// Phase runtime state (Server only)
-	// ------------------------------------------------------------
+	// -------------------------------------------------------------------------
+	// Phase runtime (Server only)
+	// -------------------------------------------------------------------------
 	EMosesMatchPhase CurrentPhase = EMosesMatchPhase::WaitingForPlayers;
 
 	FTimerHandle PhaseTimerHandle;
 	double PhaseEndTimeSeconds = 0.0;
 
 private:
-	// ------------------------------------------------------------
+	// -------------------------------------------------------------------------
 	// Misc timers
-	// ------------------------------------------------------------
+	// -------------------------------------------------------------------------
 	FTimerHandle AutoReturnTimerHandle;
 
 private:
-	// ------------------------------------------------------------
+	// -------------------------------------------------------------------------
 	// PlayerStart reservation
-	// ------------------------------------------------------------
+	// -------------------------------------------------------------------------
 	UPROPERTY()
 	TSet<TWeakObjectPtr<APlayerStart>> ReservedPlayerStarts;
 
@@ -143,9 +158,9 @@ private:
 	TMap<TWeakObjectPtr<AController>, TWeakObjectPtr<APlayerStart>> AssignedStartByController;
 
 private:
-	// ------------------------------------------------------------
+	// -------------------------------------------------------------------------
 	// Assets
-	// ------------------------------------------------------------
+	// -------------------------------------------------------------------------
 	UPROPERTY(EditDefaultsOnly, Category = "Match|Pawn")
 	TObjectPtr<UMosesPawnData> MatchPawnData = nullptr;
 

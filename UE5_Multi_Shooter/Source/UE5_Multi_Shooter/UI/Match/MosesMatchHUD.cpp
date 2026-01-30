@@ -1,18 +1,20 @@
-﻿#include "MosesMatchHUD.h"
+﻿#include "UE5_Multi_Shooter/UI/Match/MosesMatchHUD.h"
 
 #include "Components/ProgressBar.h"
 #include "Components/TextBlock.h"
 
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
 #include "UE5_Multi_Shooter/Player/MosesPlayerState.h"
-#include "UE5_Multi_Shooter/GameMode/GameState/MosesGameState.h"
+#include "UE5_Multi_Shooter/GameMode/GameState/MosesMatchGameState.h"          // [MOD] 핵심 include
+#include "UE5_Multi_Shooter/UI/Match/MosesMatchAnnouncementWidget.h"
+#include "UE5_Multi_Shooter/UI/Match/MosesMatchRulePopupWidget.h"
 
 void UMosesMatchHUD::NativeOnInitialized()
 {
 	Super::NativeOnInitialized();
 
 	BindToPlayerState();
-	BindToGameState();
+	BindToGameState_Match();
 	RefreshInitial();
 }
 
@@ -40,7 +42,7 @@ void UMosesMatchHUD::BindToPlayerState()
 	UE_LOG(LogMosesSpawn, Warning, TEXT("[HUD][CL] Bound PlayerState delegates PS=%s"), *GetNameSafe(PS));
 }
 
-void UMosesMatchHUD::BindToGameState()
+void UMosesMatchHUD::BindToGameState_Match()
 {
 	UWorld* World = GetWorld();
 	if (!World)
@@ -48,20 +50,27 @@ void UMosesMatchHUD::BindToGameState()
 		return;
 	}
 
-	AMosesGameState* GS = World->GetGameState<AMosesGameState>();
+	AMosesMatchGameState* GS = World->GetGameState<AMosesMatchGameState>();
 	if (!GS)
 	{
+		UE_LOG(LogMosesSpawn, Warning, TEXT("[HUD][CL] No AMosesMatchGameState World=%s"), *GetNameSafe(World));
 		return;
 	}
 
 	GS->OnMatchTimeChanged.AddUObject(this, &ThisClass::HandleMatchTimeChanged);
+	GS->OnMatchPhaseChanged.AddUObject(this, &ThisClass::HandleMatchPhaseChanged);
+	GS->OnAnnouncementChanged.AddUObject(this, &ThisClass::HandleAnnouncementChanged);
 
-	UE_LOG(LogMosesSpawn, Warning, TEXT("[HUD][CL] Bound GameState delegates GS=%s"), *GetNameSafe(GS));
+	UE_LOG(LogMosesSpawn, Warning, TEXT("[HUD][CL] Bound MatchGameState delegates GS=%s"), *GetNameSafe(GS));
+
+	// Tick/Binding 없이 초기 반영
+	HandleMatchTimeChanged(GS->GetRemainingSeconds());
+	HandleMatchPhaseChanged(GS->GetMatchPhase());
+	HandleAnnouncementChanged(GS->GetAnnouncementState());
 }
 
 void UMosesMatchHUD::RefreshInitial()
 {
-	// 초기값은 Delegate가 곧 들어오지만, 안전하게 기본값 세팅
 	HandleMatchTimeChanged(0);
 	HandleScoreChanged(0);
 	HandleDeathsChanged(0);
@@ -136,6 +145,19 @@ void UMosesMatchHUD::HandleMatchTimeChanged(int32 RemainingSeconds)
 	if (MatchCountdownText)
 	{
 		MatchCountdownText->SetText(FText::FromString(ToMMSS(RemainingSeconds)));
+	}
+}
+
+void UMosesMatchHUD::HandleMatchPhaseChanged(EMosesMatchPhase NewPhase)
+{
+	UE_LOG(LogMosesPhase, Verbose, TEXT("[HUD][CL] Phase=%s"), *UEnum::GetValueAsString(NewPhase));
+}
+
+void UMosesMatchHUD::HandleAnnouncementChanged(const FMosesAnnouncementState& State)
+{
+	if (AnnouncementWidget)
+	{
+		AnnouncementWidget->UpdateAnnouncement(State);
 	}
 }
 

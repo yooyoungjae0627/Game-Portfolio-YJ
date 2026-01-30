@@ -1,9 +1,12 @@
 ﻿// ============================================================================
-// MosesLobbyGameState.h
+// MosesLobbyGameState.h (FULL)
+// - Lobby 전용 GameState (RoomList/Chat 등)
+// - 부모: AMosesGameState (ExperienceManagerComponent 공통 보장)
 // ============================================================================
 
 #pragma once
 
+#include "CoreMinimal.h"
 #include "Net/Serialization/FastArraySerializer.h"
 #include "Net/UnrealNetwork.h"
 
@@ -12,7 +15,6 @@
 #include "MosesLobbyGameState.generated.h"
 
 class AMosesPlayerState;
-
 struct FLobbyChatMessage;
 
 UENUM()
@@ -32,9 +34,6 @@ struct FMosesLobbyRoomItem : public FFastArraySerializerItem
 	GENERATED_BODY()
 
 public:
-	/*====================================================
-	= Functions
-	====================================================*/
 	bool IsFull() const;
 	bool Contains(const FGuid& Pid) const;
 	bool IsAllReady() const;
@@ -47,9 +46,6 @@ public:
 	void PreReplicatedRemove(const struct FMosesLobbyRoomList& InArraySerializer);
 
 public:
-	/*====================================================
-	= Variables
-	====================================================*/
 	UPROPERTY()
 	FGuid RoomId;
 
@@ -113,23 +109,21 @@ class UE5_MULTI_SHOOTER_API AMosesLobbyGameState : public AMosesGameState
 	GENERATED_BODY()
 
 public:
-	AMosesLobbyGameState(const FObjectInitializer& ObjectInitializer);
-
-public:
-	/*====================================================
-	= Engine
-	====================================================*/
-	virtual void PostInitializeComponents() override;
-	virtual void BeginPlay() override;
-	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
+	AMosesLobbyGameState(const FObjectInitializer& ObjectInitializer = FObjectInitializer::Get());
 
 protected:
+	// -------------------------------------------------------------------------
+	// Engine
+	// -------------------------------------------------------------------------
+	virtual void PostInitializeComponents() override;
+	virtual void BeginPlay() override;
 	virtual void Tick(float DeltaSeconds) override;
+	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 
 public:
-	/*====================================================
-	= Server APIs (Room)
-	====================================================*/
+	// -------------------------------------------------------------------------
+	// Server APIs (Room)
+	// -------------------------------------------------------------------------
 	FGuid Server_CreateRoom(AMosesPlayerState* RequestPS, const FString& RoomTitle, int32 MaxPlayers);
 	bool Server_JoinRoom(AMosesPlayerState* RequestPS, const FGuid& RoomId);
 	bool Server_JoinRoomWithResult(AMosesPlayerState* RequestPS, const FGuid& RoomId, EMosesRoomJoinResult& OutResult);
@@ -141,30 +135,29 @@ public:
 	bool Server_CanStartMatch(const FGuid& RoomId, FString& OutReason) const;
 
 public:
-	/*====================================================
-	= Server APIs (Chat)
-	====================================================*/
+	// -------------------------------------------------------------------------
+	// Server APIs (Chat)
+	// -------------------------------------------------------------------------
 	void Server_AddChatMessage(AMosesPlayerState* SenderPS, const FString& Text);
 
 public:
-	/*====================================================
-	= Client/UI Read-only accessors
-	====================================================*/
+	// -------------------------------------------------------------------------
+	// Client/UI Read-only accessors
+	// -------------------------------------------------------------------------
 	const FMosesLobbyRoomItem* FindRoom(const FGuid& RoomId) const;
 	const TArray<FMosesLobbyRoomItem>& GetRooms() const { return RoomList.Items; }
-
 	const TArray<FLobbyChatMessage>& GetChatHistory() const { return ChatHistory; }
 
 public:
-	/*====================================================
-	= UI Notify (single entry)
-	====================================================*/
+	// -------------------------------------------------------------------------
+	// UI Notify (single entry)
+	// -------------------------------------------------------------------------
 	void NotifyRoomStateChanged_LocalPlayers() const;
 
 protected:
-	/*====================================================
-	= RepNotify (backup)
-	====================================================*/
+	// -------------------------------------------------------------------------
+	// RepNotify
+	// -------------------------------------------------------------------------
 	UFUNCTION()
 	void OnRep_RoomList();
 
@@ -172,9 +165,9 @@ protected:
 	void OnRep_ChatHistory();
 
 private:
-	/*====================================================
-	= Internal helpers
-	====================================================*/
+	// -------------------------------------------------------------------------
+	// Internal helpers
+	// -------------------------------------------------------------------------
 	static FGuid GetPidChecked(const AMosesPlayerState* PS);
 
 	FMosesLobbyRoomItem* FindRoomMutable(const FGuid& RoomId);
@@ -184,8 +177,9 @@ private:
 
 private:
 	/*====================================================
-	= Logs
+	= Logs (server)
 	====================================================*/
+	// [MOD] cpp에서 정의된 LogRoom_* 함수들을 클래스 멤버로 선언 복구
 	void LogRoom_Create(const FMosesLobbyRoomItem& Room) const;
 	void LogRoom_JoinAccepted(const FMosesLobbyRoomItem& Room) const;
 	void LogRoom_JoinRejected(EMosesRoomJoinResult Reason, const FGuid& RoomId, const AMosesPlayerState* JoinPS) const;
@@ -194,12 +188,14 @@ private:
 	/*====================================================
 	= Internal helpers
 	====================================================*/
+	// [MOD] cpp에 존재하는 IsServerAuth 선언 복구
 	bool IsServerAuth() const;
 
+
 private:
-	/*====================================================
-	= Replicated state
-	====================================================*/
+	// -------------------------------------------------------------------------
+	// Replicated state
+	// -------------------------------------------------------------------------
 	UPROPERTY(ReplicatedUsing = OnRep_RoomList)
 	FMosesLobbyRoomList RoomList;
 

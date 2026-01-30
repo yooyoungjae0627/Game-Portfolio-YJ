@@ -25,6 +25,9 @@ public:
 
 	bool IsSprinting() const;
 
+	// =========================================================================
+	// Input Endpoints (HeroComponent -> Pawn)
+	// =========================================================================
 	void Input_Move(const FVector2D& MoveValue);
 	void Input_Look(const FVector2D& LookValue);
 
@@ -72,7 +75,24 @@ private:
 	// =========================================================================
 	// Sprint
 	// =========================================================================
+
+	/**
+	 * [MOD] Sprint 게이팅 규칙 (Tick 없이 입력 이벤트로만 처리)
+	 *
+	 * - Shift만 누르면 Sprint가 켜지면 안 된다.
+	 * - Shift + WASD(= Move 입력이 0이 아님)일 때만 Sprint ON.
+	 * - Shift가 눌려있어도 Move 입력이 0이면 Sprint OFF.
+	 *
+	 * 처리 타이밍
+	 * - Input_Move에서 매번 Move 입력을 캐시하고, 조건을 평가해 서버에 요청
+	 * - Input_SprintPressed/Released에서도 조건 평가(즉시 반영)
+	 */
+	void UpdateSprintRequest_Local(const TCHAR* FromTag);
+
+	/** 로컬 체감용: 속도만 즉시 반영 (서버 승인 전이라도 "느낌"은 좋아짐) */
 	void ApplySprintSpeed_LocalPredict(bool bNewSprinting);
+
+	/** 서버 승인/OnRep로 내려온 값 기준으로 최종 확정(SSOT) */
 	void ApplySprintSpeed_FromAuth(const TCHAR* From);
 
 	UFUNCTION(Server, Reliable)
@@ -80,6 +100,13 @@ private:
 
 	UFUNCTION()
 	void OnRep_IsSprinting();
+
+	/**
+	 * [MOD] Sprint 몽타주 코스메틱
+	 * - 서버 승인 후에만 Multicast로 재생/정지한다(모든 클라에서 동일 연출)
+	 */
+	UFUNCTION(NetMulticast, Unreliable)
+	void Multicast_PlaySprintMontage(bool bStart);
 
 private:
 	// =========================================================================
@@ -140,8 +167,9 @@ private:
 	UPROPERTY(EditDefaultsOnly, Category = "Moses|Move")
 	float WalkSpeed = 600.0f;
 
+	/** [MOD] 요구사항: Sprint MaxSpeed = 800 */
 	UPROPERTY(EditDefaultsOnly, Category = "Moses|Move")
-	float SprintSpeed = 900.0f;
+	float SprintSpeed = 800.0f;
 
 	UPROPERTY(EditDefaultsOnly, Category = "Moses|Pickup")
 	float PickupTraceDistance = 500.0f;
@@ -162,6 +190,10 @@ private:
 	UPROPERTY(EditDefaultsOnly, Category = "Moses|Anim")
 	TObjectPtr<UAnimMontage> DeathMontage = nullptr;
 
+	/** [MOD] SprintStart 같은 짧은 몽타주 추천 */
+	UPROPERTY(EditDefaultsOnly, Category = "Moses|Anim")
+	TObjectPtr<UAnimMontage> SprintMontage = nullptr;
+
 private:
 	// =========================================================================
 	// Replicated state
@@ -177,16 +209,23 @@ private:
 
 private:
 	// =========================================================================
+	// [MOD] Sprint 입력 캐시 (Tick 없이 게이팅)
+	// =========================================================================
+	UPROPERTY(Transient)
+	bool bSprintKeyDownLocal = false;
+
+	UPROPERTY(Transient)
+	FVector2D LastMoveInputLocal = FVector2D::ZeroVector;
+
+private:
+	// =========================================================================
 	// Hold-to-fire runtime state
 	// =========================================================================
 	UPROPERTY(Transient)
 	bool bFireHeldLocal = false;
 
-	// [MOD] TimerHandle 타입은 헤더에서 선언 가능(Engine 타입)
-	// - cpp에서 TimerManager.h include 필요
 	FTimerHandle AutoFireTimerHandle;
 
-	// 타이머 틱은 서버가 아니라 "클라 요청 빈도"임. 서버는 FireInterval로 최종 승인.
 	UPROPERTY(EditDefaultsOnly, Category = "Moses|Fire")
 	float AutoFireTickRate = 0.06f;
 };

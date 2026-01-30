@@ -1,113 +1,58 @@
-#include "MosesGameState.h"
+// ============================================================================
+// MosesGameState.cpp (FULL)
+// ============================================================================
 
-#include "Net/UnrealNetwork.h"
-#include "TimerManager.h"
+#include "UE5_Multi_Shooter/GameMode/GameState/MosesGameState.h"
 
-#include "UE5_Multi_Shooter/MosesLogChannels.h"
 #include "UE5_Multi_Shooter/GameMode/Experience/MosesExperienceManagerComponent.h"
 
 AMosesGameState::AMosesGameState(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
 {
-	// Experience ·Îµù ´ã´ç ÄÄÆ÷³ÍÆ® »ı¼º
+	// [í•µì‹¬]
+	// GameModeBase::InitGameState()ì—ì„œ ë°˜ë“œì‹œ ì¡´ì¬í•´ì•¼ í•˜ë¯€ë¡œ
+	// GameState ìƒì„±ìì—ì„œ ê¸°ë³¸ ì„œë¸Œì˜¤ë¸Œì íŠ¸ë¡œ ê³ ì •í•œë‹¤.
 	ExperienceManagerComponent =
 		CreateDefaultSubobject<UMosesExperienceManagerComponent>(TEXT("ExperienceManagerComponent"));
 
 	bReplicates = true;
 
-	/**
-	 * ¼­¹ö ÃÊ±â »óÅÂ °íÁ¤
-	 * - Lobby¿¡¼­ ½ÃÀÛ
-	 * - SpawnGate ´İÈû
-	 * - Start ¿äÃ» ¾øÀ½
-	 */
+	// ì„œë²„ ê¸°ë³¸: Lobbyì—ì„œ ì‹œì‘í•˜ëŠ” í”Œë¡œìš°ê°€ ì¼ë°˜ì ì´ë¯€ë¡œ ê¸°ë³¸ê°’ì„ Lobbyë¡œ ë‘”ë‹¤.
+	// (MatchLevelì—ì„œ ë°”ë¡œ ì‹œì‘í•˜ëŠ” ê²½ìš°, GameModeì—ì„œ ServerSetPhaseë¡œ ë®ì–´ì¨ë„ ëœë‹¤.)
 	CurrentPhase = EMosesServerPhase::Lobby;
-	bSpawnGateOpen = false;
-	bStartRequested = false;
 }
 
 void AMosesGameState::BeginPlay()
 {
 	Super::BeginPlay();
 
-	// ¼­¹ö / Å¬¶óÀÌ¾ğÆ® ±¸ºĞ È®ÀÎ¿ë ·Î±×
 	UE_LOG(LogMosesExp, Warning,
-		TEXT("[GS] BeginPlay World=%s NetMode=%d"),
+		TEXT("[GameStateBase] BeginPlay World=%s NetMode=%d Phase=%s ExpComp=%s"),
 		*GetNameSafe(GetWorld()),
-		(int32)GetNetMode());
-
-	if (HasAuthority())
-	{
-		RemainingSeconds = MatchTotalSeconds;
-		OnRep_RemainingSeconds();
-
-		// ¼­¹ö°¡ 1ÃÊ¸¶´Ù °¨¼Ò(Áõ°Å/µ¥¸ğ¿ë)
-		GetWorldTimerManager().SetTimer(
-			MatchTimeTimerHandle,
-			this,
-			&ThisClass::ServerTickMatchTime,
-			1.0f,
-			true);
-
-		UE_LOG(LogMosesExp, Warning, TEXT("[MatchTime][SV] Start Total=%d"), MatchTotalSeconds);
-	}
+		(int32)GetNetMode(),
+		*UEnum::GetValueAsString(CurrentPhase),
+		*GetNameSafe(ExperienceManagerComponent));
 }
 
 void AMosesGameState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
 {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 
-	// ¼­¹ö »óÅÂ¸¦ Å¬¶óÀÌ¾ğÆ®·Î º¹Á¦
 	DOREPLIFETIME(AMosesGameState, CurrentPhase);
-	DOREPLIFETIME(AMosesGameState, bSpawnGateOpen);
-	DOREPLIFETIME(AMosesGameState, bStartRequested);
-	DOREPLIFETIME(AMosesGameState, StartRequesterPid);
-	DOREPLIFETIME(AMosesGameState, RemainingSeconds);
 }
 
 void AMosesGameState::OnRep_CurrentPhase()
 {
-	// Å¬¶óÀÌ¾ğÆ® UI °»½Å¿ë
-}
-
-void AMosesGameState::OnRep_SpawnGateOpen()
-{
-	// Å¬¶óÀÌ¾ğÆ® ½ºÆù Çã¿ë ¿©ºÎ ¹İ¿µ
-}
-
-void AMosesGameState::OnRep_StartRequested()
-{
-	// Start ¹öÆ° UI ºñÈ°¼ºÈ­ µî Ã³¸® °¡´É
-}
-
-void AMosesGameState::ServerTickMatchTime()
-{
-	check(HasAuthority());
-
-	RemainingSeconds = FMath::Max(0, RemainingSeconds - 1);
-	OnRep_RemainingSeconds();
-
-	if (RemainingSeconds <= 0)
-	{
-		GetWorldTimerManager().ClearTimer(MatchTimeTimerHandle);
-		UE_LOG(LogMosesExp, Warning, TEXT("[MatchTime][SV] Finished"));
-	}
-}
-
-void AMosesGameState::OnRep_RemainingSeconds()
-{
-	OnMatchTimeChanged.Broadcast(RemainingSeconds);
+	// í•„ìš” ì‹œ: ë¡œë¹„ UIë‚˜ ë§¤ì¹˜ UIì—ì„œ ì „ì—­ Phase ë³€í™” ê°ì§€ í¬ì¸íŠ¸ë¡œ ì‚¬ìš© ê°€ëŠ¥.
 }
 
 void AMosesGameState::ServerSetPhase(EMosesServerPhase NewPhase)
 {
-	// ¼­¹ö¸¸ º¯°æ °¡´É
 	if (!HasAuthority())
 	{
 		return;
 	}
 
-	// Áßº¹ º¯°æ ¹æÁö
 	if (CurrentPhase == NewPhase)
 	{
 		return;
@@ -115,79 +60,8 @@ void AMosesGameState::ServerSetPhase(EMosesServerPhase NewPhase)
 
 	CurrentPhase = NewPhase;
 
-	// ¼­¹ö ·Î±× ±âÁØ °íÁ¤ (DoD Áõ°Å)
-	if (CurrentPhase == EMosesServerPhase::Lobby)
-	{
-		UE_LOG(LogMosesPhase, Log, TEXT("[PHASE] Current = Lobby"));
-	}
-	else if (CurrentPhase == EMosesServerPhase::Match)
-	{
-		UE_LOG(LogMosesPhase, Log, TEXT("[PHASE] Current = Match"));
-	}
-}
+	UE_LOG(LogMosesPhase, Log, TEXT("[PHASE][SV] GlobalPhase=%s"), *UEnum::GetValueAsString(CurrentPhase));
 
-void AMosesGameState::ServerRequestStart_ReserveOnly(const FGuid& RequesterPid)
-{
-	if (!HasAuthority())
-	{
-		return;
-	}
-
-	/**
-	 * ÀÌ¹Ì Start°¡ ´­·È´Ù¸é ¹«½Ã
-	 * ¡æ ¼­¹ö ´ÜÀÏ Áø½Ç À¯Áö
-	 */
-	if (bStartRequested)
-	{
-		UE_LOG(LogMosesPhase, Log,
-			TEXT("[PHASE] Start Requested IGNORE (AlreadyRequested)"));
-		return;
-	}
-
-	// Start ¿äÃ» ±â·Ï
-	bStartRequested = true;
-	StartRequesterPid = RequesterPid;
-
-	UE_LOG(LogMosesPhase, Log,
-		TEXT("[PHASE] Start Requested by Host Pid=%s"),
-		*RequesterPid.ToString(EGuidFormats::DigitsWithHyphensLower));
-
-	/**
-	 * Ready ¡Á Spawn
-	 * ¡æ Start¸¦ ´­·¯µµ ½ºÆùÀº Àı´ë ¿­¸®Áö ¾Ê´Â´Ù
-	 */
-	ServerCloseSpawnGate();
-}
-
-void AMosesGameState::ServerCloseSpawnGate()
-{
-	if (!HasAuthority())
-	{
-		return;
-	}
-
-	// ÀÌ¹Ì ´İÇô ÀÖ¾îµµ ·Î±×´Â ³²±è (ÆÇ´Ü ±Ù°Å)
-	if (!bSpawnGateOpen)
-	{
-		UE_LOG(LogMosesSpawn, Log, TEXT("[SPAWN] SpawnGate Closed"));
-		return;
-	}
-
-	bSpawnGateOpen = false;
-	UE_LOG(LogMosesSpawn, Log, TEXT("[SPAWN] SpawnGate Closed"));
-}
-
-bool AMosesGameState::IsStartRequested() const
-{
-	return bStartRequested;
-}
-
-bool AMosesGameState::IsSpawnGateOpen() const
-{
-	return bSpawnGateOpen;
-}
-
-EMosesServerPhase AMosesGameState::GetCurrentPhase() const
-{
-	return CurrentPhase;
+	// ë¦¬ìŠ¨ì„œë²„ ì¦‰ì‹œ ë°˜ì˜ìš©
+	OnRep_CurrentPhase();
 }
