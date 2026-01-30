@@ -37,12 +37,4 @@ public:
 	/** 무기별 머즐 소켓 이름(예: MuzzleFlash / AmmoSocket) */
 	UPROPERTY(EditDefaultsOnly, Category = "Moses|Weapon|Socket")
 	FName MuzzleSocketName = TEXT("MuzzleFlash");
-
-	/**
-	 * ✅ 서버 쿨다운(=재발사 간격) 계산용 몽타주
-	 * - 서버가 이 몽타주를 로드해서 GetPlayLength()를 사용한다.
-	 * - 무기마다 다른 발사 애니 길이에 맞춰 "애니가 끝나야 다음 발사"를 보장한다.
-	 */
-	UPROPERTY(EditDefaultsOnly, Category = "Moses|Weapon|Timing")
-	TSoftObjectPtr<UAnimMontage> FireMontage;
 };
