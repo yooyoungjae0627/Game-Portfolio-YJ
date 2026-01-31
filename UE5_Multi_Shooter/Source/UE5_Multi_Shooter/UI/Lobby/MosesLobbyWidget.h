@@ -18,7 +18,7 @@ class UHorizontalBox;
 class UTextBlock;
 class UEditableText;
 class UUserWidget;
-
+class UMosesMatchRulePopupWidget;
 class AMosesLobbyGameState;
 class AMosesPlayerState;
 class AMosesPlayerController;
@@ -128,6 +128,10 @@ protected:
 	UFUNCTION()
 	void OnRoomItemClicked(UObject* ClickedItem);
 
+	/** Rules 버튼 클릭 처리. (Popup 토글) */
+	UFUNCTION()
+	void HandleRulesClicked();
+
 	// ChatEditText(EditableTextBox)에서 Enter 치면 호출되는 커밋 이벤트
 	UFUNCTION()
 	void OnChatTextCommitted(const FText& Text, ETextCommit::Type CommitMethod);
@@ -219,6 +223,13 @@ private:
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UTextBlock> NickNameText = nullptr;
 
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UButton> ToggleButton = nullptr;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UMosesMatchRulePopupWidget> RulePopupWidget = nullptr;
+
+
 	// ---------------------------
 	// Chat
 	// ---------------------------
@@ -273,4 +284,8 @@ private:
 
 	UPROPERTY(Transient)
 	bool bChatEventsBound = false;
+
+	// HUD 내부 토글 상태 (PopupRoot가 Collapsed인지 여부)
+	bool bRulesPopupVisible = false;
+
 };

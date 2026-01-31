@@ -1,22 +1,22 @@
 ﻿// ============================================================================
 // MosesCombatComponent.cpp (FULL)
-// - Owner = PlayerState(SSOT)
-// - [FIX] 발사 쿨다운을 "몽타주 길이"에서 DefaultFireIntervalSec 기반으로 변경
-//         => 몽타주가 안 끝나도 입력이 계속 오면 서버 쿨다운만 통과하면 발사 승인.
+// ----------------------------------------------------------------------------
+// Owner = PlayerState (SSOT)
+// ----------------------------------------------------------------------------
+// [FIX] 발사 쿨다운을 "몽타주 길이"에서 DefaultFireIntervalSec 기반으로 변경
+//       => 몽타주가 안 끝나도 입력이 계속 오면 서버 쿨다운만 통과하면 발사 승인.
 // ============================================================================
 
 #include "UE5_Multi_Shooter/Combat/MosesCombatComponent.h"
 
 #include "UE5_Multi_Shooter/Character/PlayerCharacter.h"
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
-#include "UE5_Multi_Shooter/Combat/MosesWeaponData.h"
-#include "UE5_Multi_Shooter/Combat/MosesWeaponRegistrySubsystem.h"
+#include "UE5_Multi_Shooter/Weapon/MosesWeaponData.h"
+#include "UE5_Multi_Shooter/Weapon/MosesWeaponRegistrySubsystem.h"
 #include "UE5_Multi_Shooter/Player/MosesPlayerState.h"
 
-#include "Net/UnrealNetwork.h"
 #include "Engine/World.h"
 #include "Engine/GameInstance.h"
-
 #include "GameFramework/Pawn.h"
 #include "GameFramework/Controller.h"
 #include "Kismet/GameplayStatics.h"
@@ -45,6 +45,10 @@ namespace MosesCombat_Private
 		return Cast<APlayerCharacter>(GetOwnerPawn(Comp));
 	}
 }
+
+// ============================================================================
+// Ctor / Replication
+// ============================================================================
 
 UMosesCombatComponent::UMosesCombatComponent()
 {
@@ -239,7 +243,6 @@ void UMosesCombatComponent::RequestFire()
 
 void UMosesCombatComponent::ServerFire_Implementation()
 {
-	// 서버 전용
 	if (!GetOwner() || !GetOwner()->HasAuthority())
 	{
 		return;
@@ -247,6 +250,7 @@ void UMosesCombatComponent::ServerFire_Implementation()
 
 	EMosesFireGuardFailReason Reason = EMosesFireGuardFailReason::None;
 	FString Debug;
+
 	if (!Server_CanFire(Reason, Debug))
 	{
 		UE_LOG(LogMosesCombat, VeryVerbose, TEXT("[FIRE][SV] Reject(BasicGuard) Reason=%d Debug=%s Slot=%d Owner=%s"),
@@ -262,7 +266,7 @@ void UMosesCombatComponent::ServerFire_Implementation()
 		return;
 	}
 
-	// [FIX] 쿨다운은 "몽타주 길이"가 아니라 DefaultFireIntervalSec 기반
+	// [FIX] 쿨다운은 DefaultFireIntervalSec 기반
 	if (!Server_IsFireCooldownReady(WeaponData))
 	{
 		UE_LOG(LogMosesCombat, VeryVerbose, TEXT("[FIRE][SV] Reject(Cooldown) Slot=%d Weapon=%s"),
@@ -270,7 +274,6 @@ void UMosesCombatComponent::ServerFire_Implementation()
 		return;
 	}
 
-	// 승인 확정: 쿨다운 스탬프 갱신 + 탄약 차감 + 데미지 판정 + 코스메틱 전파
 	Server_UpdateFireCooldownStamp();
 	Server_ConsumeAmmo_OnApprovedFire(WeaponData);
 
@@ -388,8 +391,7 @@ void UMosesCombatComponent::Server_ConsumeAmmo_OnApprovedFire(const UMosesWeapon
 
 float UMosesCombatComponent::Server_GetFireIntervalSec_FromWeaponData(const UMosesWeaponData* /*WeaponData*/) const
 {
-	// [FIX] 몽타주 길이를 절대 사용하지 않는다.
-	//      무기별 연사속도 분리는 나중에 WeaponData에 RPM/Interval 필드를 추가해서 해결.
+	// [FIX] 몽타주 길이는 절대 사용하지 않는다.
 	return DefaultFireIntervalSec;
 }
 

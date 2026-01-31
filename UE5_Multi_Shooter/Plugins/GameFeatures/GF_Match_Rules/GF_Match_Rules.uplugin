@@ -1,0 +1,24 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "1.0",
+	"FriendlyName": "GF_Match_Rules",
+	"Description": "Server-only match rule switches (Flag enable gate).",
+	"Category": "GameFeatures",
+	"EnabledByDefault": false,
+
+	"Plugins": [
+		{
+			"Name": "GameFeatures",
+			"Enabled": true
+		}
+	],
+
+	"Modules": [
+		{
+			"Name": "GF_Match_RulesRuntime",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
+		}
+	]
+}

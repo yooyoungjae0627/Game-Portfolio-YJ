@@ -12,7 +12,7 @@ AMosesCharacter::AMosesCharacter()
 	bReplicates = true;
 	PrimaryActorTick.bCanEverTick = false;
 
-	// Pawn에 전투 SSOT를 넣지 말라는 정책을 자동 감지(프로젝트에 이미 존재한다고 가정)
+	// Pawn에 전투 SSOT를 넣지 말라는 정책을 자동 감지
 	PawnSSOTGuard = CreateDefaultSubobject<UMosesPawnSSOTGuardComponent>(TEXT("PawnSSOTGuard"));
 }
 
@@ -56,7 +56,6 @@ void AMosesCharacter::TryInitASC_FromPawn(const TCHAR* Reason)
 		return;
 	}
 
-	// 프로젝트에 존재하는 초기화 함수라고 가정(너 코드베이스 기준)
 	PS->TryInitASC(this);
 
 	UE_LOG(LogMosesGAS, Verbose, TEXT("[GAS] TryInitASC FromPawn=%s Pawn=%s PS=%s"),
@@ -76,7 +75,6 @@ void AMosesCharacter::HandleDeath(AActor* DeathCauser)
 	UE_LOG(LogMosesCombat, Warning, TEXT("[Death] Pawn=%s Causer=%s"),
 		*GetNameSafe(this), *GetNameSafe(DeathCauser));
 
-	// 서버만 이동 정지 확정
 	if (!HasAuthority())
 	{
 		return;
@@ -109,7 +107,7 @@ void AMosesCharacter::ServerNotifyDeath(AActor* DeathCauser)
 }
 
 // ============================================================================
-// Cosmetic triggers (All clients) - 최소 기본 버전
+// Cosmetic triggers (All clients)
 // ============================================================================
 
 void AMosesCharacter::Multicast_PlayHitReactCosmetic_Implementation()

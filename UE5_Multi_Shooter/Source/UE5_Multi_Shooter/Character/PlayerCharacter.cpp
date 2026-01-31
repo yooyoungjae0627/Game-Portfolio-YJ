@@ -3,12 +3,13 @@
 #include "UE5_Multi_Shooter/Character/Components/MosesHeroComponent.h"
 
 #include "UE5_Multi_Shooter/Combat/MosesCombatComponent.h"
-#include "UE5_Multi_Shooter/Combat/MosesWeaponRegistrySubsystem.h"
-#include "UE5_Multi_Shooter/Combat/MosesWeaponData.h"
+#include "UE5_Multi_Shooter/Weapon/MosesWeaponRegistrySubsystem.h"
+#include "UE5_Multi_Shooter/Weapon/MosesWeaponData.h"
 #include "UE5_Multi_Shooter/Player/MosesPlayerState.h"
 #include "UE5_Multi_Shooter/System/MosesAuthorityGuards.h"
-#include "UE5_Multi_Shooter/Pickup/PickupBase.h"
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
+
+#include "UE5_Multi_Shooter/Player/MosesInteractionComponent.h" // [MOD]
 
 #include "UE5_Multi_Shooter/Camera/MosesCameraComponent.h"
 
@@ -33,7 +34,6 @@
 // Local helpers
 // ============================================================================
 
-// 회전 정책을 “한 군데”에서 강제 고정
 static void Moses_ApplyRotationPolicy(ACharacter* Char, const TCHAR* FromTag)
 {
 	if (!Char)
@@ -74,6 +74,9 @@ APlayerCharacter::APlayerCharacter()
 
 	MosesCameraComponent = CreateDefaultSubobject<UMosesCameraComponent>(TEXT("MosesCameraComponent"));
 	MosesCameraComponent->SetupAttachment(GetRootComponent());
+
+	// [MOD] InteractionComponent 생성 (E Hold 라우팅)
+	InteractionComponent = CreateDefaultSubobject<UMosesInteractionComponent>(TEXT("InteractionComponent"));
 
 	WeaponMeshComp = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("WeaponMeshComp"));
 	WeaponMeshComp->SetupAttachment(GetMesh());
@@ -142,6 +145,10 @@ void APlayerCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCom
 
 	HeroComponent->SetupInputBindings(PlayerInputComponent);
 	HeroComponent->TryBindCameraModeDelegate_LocalOnly();
+
+	// 개발자 주석:
+	// - Interact Press/Release 바인딩은 HeroComponent 내부(EnhancedInput)에서
+	//   APlayerCharacter::Input_InteractPressed/Released를 호출하는 형태를 권장한다.
 }
 
 void APlayerCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
@@ -210,7 +217,6 @@ void APlayerCharacter::Input_Move(const FVector2D& MoveValue)
 		return;
 	}
 
-	// [Sprint 게이팅용] 마지막 이동 입력 캐시
 	LastMoveInputLocal = MoveValue;
 
 	const FRotator YawRot(0.0f, Controller->GetControlRotation().Yaw, 0.0f);
@@ -220,7 +226,6 @@ void APlayerCharacter::Input_Move(const FVector2D& MoveValue)
 	AddMovementInput(Forward, MoveValue.Y);
 	AddMovementInput(Right, MoveValue.X);
 
-	// [MOD] Shift + WASD 조건으로 Sprint 요청 판단
 	UpdateSprintRequest_Local(TEXT("Move"));
 }
 
@@ -242,9 +247,7 @@ void APlayerCharacter::Input_SprintPressed()
 		return;
 	}
 
-	// Shift만 눌렀다고 Sprint를 켜면 안 된다.
 	bSprintKeyDownLocal = true;
-
 	UpdateSprintRequest_Local(TEXT("SprintPressed"));
 }
 
@@ -256,8 +259,6 @@ void APlayerCharacter::Input_SprintReleased()
 	}
 
 	bSprintKeyDownLocal = false;
-
-	// Shift를 떼면 즉시 Sprint OFF
 	UpdateSprintRequest_Local(TEXT("SprintReleased"));
 }
 
@@ -271,6 +272,7 @@ void APlayerCharacter::Input_JumpPressed()
 	Jump();
 }
 
+// [MOD] Interact Press/Release -> InteractionComponent 라우팅
 void APlayerCharacter::Input_InteractPressed()
 {
 	if (CachedCombatComponent && CachedCombatComponent->IsDead())
@@ -278,10 +280,22 @@ void APlayerCharacter::Input_InteractPressed()
 		return;
 	}
 
-	APickupBase* Target = FindPickupTarget_Local();
-	if (Target)
+	if (InteractionComponent)
 	{
-		Server_TryPickup(Target);
+		InteractionComponent->RequestInteractPressed();
+	}
+}
+
+void APlayerCharacter::Input_InteractReleased()
+{
+	if (CachedCombatComponent && CachedCombatComponent->IsDead())
+	{
+		return;
+	}
+
+	if (InteractionComponent)
+	{
+		InteractionComponent->RequestInteractReleased();
 	}
 }
 
@@ -423,7 +437,6 @@ void APlayerCharacter::HandleAutoFireTick_Local()
 
 void APlayerCharacter::UpdateSprintRequest_Local(const TCHAR* FromTag)
 {
-	// 로컬 입력은 로컬 컨트롤러만 만든다.
 	APlayerController* PC = GetController<APlayerController>();
 	if (!PC || !PC->IsLocalController())
 	{
@@ -433,10 +446,8 @@ void APlayerCharacter::UpdateSprintRequest_Local(const TCHAR* FromTag)
 	const bool bHasMoveInput = (LastMoveInputLocal.SizeSquared() > 0.0001f);
 	const bool bWantsSprint = (bSprintKeyDownLocal && bHasMoveInput);
 
-	// 로컬 체감: 속도만 즉시 반영 (몽타주는 서버 Multicast만)
 	ApplySprintSpeed_LocalPredict(bWantsSprint);
 
-	// 서버 요청은 "상태가 달라질 때만"
 	if (bIsSprinting != bWantsSprint)
 	{
 		Server_SetSprinting(bWantsSprint);
@@ -483,13 +494,9 @@ void APlayerCharacter::Server_SetSprinting_Implementation(bool bNewSprinting)
 
 	bIsSprinting = bNewSprinting;
 
-	// 서버가 이동의 단일 진실을 확정한다.
 	ApplySprintSpeed_FromAuth(TEXT("SV"));
-
-	// 코스메틱: 모든 클라에 몽타주 전파
 	Multicast_PlaySprintMontage(bIsSprinting);
 
-	// 리슨서버는 RepNotify 자동 호출이 없으므로 직접 호출
 	OnRep_IsSprinting();
 }
 
@@ -500,7 +507,6 @@ void APlayerCharacter::OnRep_IsSprinting()
 
 void APlayerCharacter::Multicast_PlaySprintMontage_Implementation(bool bStart)
 {
-	// Dedicated Server는 AnimInstance가 없으니 무시
 	if (GetNetMode() == NM_DedicatedServer)
 	{
 		return;
@@ -538,24 +544,6 @@ void APlayerCharacter::Multicast_PlaySprintMontage_Implementation(bool bStart)
 		AnimInst->Montage_Stop(0.1f, SprintMontage);
 		UE_LOG(LogMosesMove, Verbose, TEXT("[MOVE][COS] SprintMontage STOP Pawn=%s"), *GetNameSafe(this));
 	}
-}
-
-// ============================================================================
-// Pickup (placeholder)
-// ============================================================================
-
-APickupBase* APlayerCharacter::FindPickupTarget_Local() const
-{
-	return nullptr;
-}
-
-void APlayerCharacter::Server_TryPickup_Implementation(APickupBase* Target)
-{
-	MOSES_GUARD_AUTHORITY_VOID(this, "Pickup", TEXT("Client attempted Server_TryPickup"));
-
-	UE_LOG(LogMosesCombat, Warning, TEXT("[PICKUP][SV] NotImplemented Target=%s Pawn=%s"),
-		*GetNameSafe(Target),
-		*GetNameSafe(this));
 }
 
 // ============================================================================
@@ -645,7 +633,6 @@ void APlayerCharacter::HandleDeadChanged(bool bNewDead)
 
 void APlayerCharacter::RefreshWeaponCosmetic(FGameplayTag WeaponId)
 {
-	// (네 기존 구현 유지 - 생략 없이 그대로)
 	if (!WeaponId.IsValid() || !WeaponMeshComp)
 	{
 		return;
@@ -689,7 +676,7 @@ void APlayerCharacter::RefreshWeaponCosmetic(FGameplayTag WeaponId)
 }
 
 // ============================================================================
-// Montage Cosmetics (Server approved -> Multicast)
+// Montage Cosmetics
 // ============================================================================
 
 void APlayerCharacter::TryPlayMontage_Local(UAnimMontage* Montage, const TCHAR* DebugTag) const
@@ -725,87 +712,59 @@ void APlayerCharacter::TryPlayMontage_Local(UAnimMontage* Montage, const TCHAR* 
 }
 
 // ============================================================================
-// Fire AV (Muzzle FX + Fire SFX) - WeaponData 기반
-// - Server approved -> Multicast로 모든 클라에서 동일 재생
-// - DS는 코스메틱 재생 금지
-// - SoftObjectPtr는 필요 시 LoadSynchronous로 로드
+// Fire AV - WeaponData 기반 (Field name unified)
 // ============================================================================
 
 void APlayerCharacter::PlayFireAV_Local(FGameplayTag WeaponId) const
 {
-	// Dedicated Server는 Anim/VFX/SFX 재생 대상이 아니다.
 	if (GetNetMode() == NM_DedicatedServer)
 	{
 		return;
 	}
 
-	UE_LOG(LogMosesCombat, VeryVerbose,
-		TEXT("[FIRE][COS] AV Enter Weapon=%s Pawn=%s"),
-		*WeaponId.ToString(),
-		*GetNameSafe(this));
-
 	if (!WeaponId.IsValid())
 	{
-		UE_LOG(LogMosesCombat, Warning, TEXT("[FIRE][COS] AV Skip (InvalidWeaponId) Pawn=%s"), *GetNameSafe(this));
 		return;
 	}
 
-	// 무기 메시가 없으면 머즐 소켓도 없고, Attach도 불가
 	if (!WeaponMeshComp || !WeaponMeshComp->GetSkeletalMeshAsset())
 	{
-		UE_LOG(LogMosesCombat, Warning, TEXT("[FIRE][COS] AV Skip (NoWeaponMesh) Pawn=%s"), *GetNameSafe(this));
 		return;
 	}
 
-	// WeaponData resolve (GI Subsystem)
 	UWorld* World = GetWorld();
 	UGameInstance* GI = World ? World->GetGameInstance() : nullptr;
 	if (!GI)
 	{
-		UE_LOG(LogMosesCombat, Warning, TEXT("[FIRE][COS] AV Skip (NoGameInstance) Pawn=%s"), *GetNameSafe(this));
 		return;
 	}
 
 	const UMosesWeaponRegistrySubsystem* Registry = GI->GetSubsystem<UMosesWeaponRegistrySubsystem>();
 	if (!Registry)
 	{
-		UE_LOG(LogMosesCombat, Warning, TEXT("[FIRE][COS] AV Skip (NoWeaponRegistry) Pawn=%s"), *GetNameSafe(this));
 		return;
 	}
 
 	const UMosesWeaponData* Data = Registry->ResolveWeaponData(WeaponId);
 	if (!Data)
 	{
-		UE_LOG(LogMosesCombat, Warning, TEXT("[FIRE][COS] AV Skip (NoWeaponData) Weapon=%s Pawn=%s"),
-			*WeaponId.ToString(), *GetNameSafe(this));
 		return;
 	}
 
-	// 무기별 머즐 소켓 이름 (DataAsset)
 	const FName MuzzleSocket = Data->MuzzleSocketName;
-
 	if (!MuzzleSocket.IsNone() && !WeaponMeshComp->DoesSocketExist(MuzzleSocket))
 	{
-		UE_LOG(LogMosesCombat, Warning,
-			TEXT("[FIRE][COS] AV Skip (NoMuzzleSocket=%s) WeaponMesh=%s Pawn=%s"),
-			*MuzzleSocket.ToString(),
-			*GetNameSafe(WeaponMeshComp->GetSkeletalMeshAsset()),
-			*GetNameSafe(this));
 		return;
 	}
 
-	// ---------------------------------------------------------------------
-	// 1) Muzzle FX (Cascade)
-	// ---------------------------------------------------------------------
+	// 1) Muzzle VFX (Cascade)
 	UParticleSystem* MuzzleFX = nullptr;
-
-	if (!Data->MuzzleFlashFX.IsNull())
+	if (!Data->MuzzleVFX.IsNull())
 	{
-		MuzzleFX = Data->MuzzleFlashFX.Get();
+		MuzzleFX = Data->MuzzleVFX.Get();
 		if (!MuzzleFX)
 		{
-			// [MOD] Soft load (에셋 미리 로딩이 안 되어 있어도 동작)
-			MuzzleFX = Data->MuzzleFlashFX.LoadSynchronous();
+			MuzzleFX = Data->MuzzleVFX.LoadSynchronous();
 		}
 	}
 
@@ -819,62 +778,26 @@ void APlayerCharacter::PlayFireAV_Local(FGameplayTag WeaponId) const
 			FRotator::ZeroRotator,
 			EAttachLocation::SnapToTarget,
 			true);
-
-		UE_LOG(LogMosesCombat, VeryVerbose,
-			TEXT("[FIRE][COS] MuzzleFX OK FX=%s Socket=%s Pawn=%s"),
-			*GetNameSafe(MuzzleFX),
-			*MuzzleSocket.ToString(),
-			*GetNameSafe(this));
-	}
-	else
-	{
-		UE_LOG(LogMosesCombat, VeryVerbose,
-			TEXT("[FIRE][COS] MuzzleFX None Weapon=%s Pawn=%s"),
-			*WeaponId.ToString(),
-			*GetNameSafe(this));
 	}
 
-	// ---------------------------------------------------------------------
-	// 2) Fire Sound
-	// ---------------------------------------------------------------------
+	// 2) Fire SFX
 	USoundBase* FireSnd = nullptr;
-
-	if (!Data->FireSound.IsNull())
+	if (!Data->FireSFX.IsNull())
 	{
-		FireSnd = Data->FireSound.Get();
+		FireSnd = Data->FireSFX.Get();
 		if (!FireSnd)
 		{
-			// [MOD] Soft load
-			FireSnd = Data->FireSound.LoadSynchronous();
+			FireSnd = Data->FireSFX.LoadSynchronous();
 		}
 	}
 
 	if (FireSnd)
 	{
-		// [FIX] PlaySoundAttached는 없음 -> SpawnSoundAttached 사용
 		UGameplayStatics::SpawnSoundAttached(
 			FireSnd,
 			WeaponMeshComp,
 			MuzzleSocket);
-
-		UE_LOG(LogMosesCombat, VeryVerbose,
-			TEXT("[FIRE][COS] FireSound OK Snd=%s Socket=%s Pawn=%s"),
-			*GetNameSafe(FireSnd),
-			*MuzzleSocket.ToString(),
-			*GetNameSafe(this));
 	}
-	else
-	{
-		UE_LOG(LogMosesCombat, VeryVerbose,
-			TEXT("[FIRE][COS] FireSound None Weapon=%s Pawn=%s"),
-			*WeaponId.ToString(),
-			*GetNameSafe(this));
-	}
-
-	UE_LOG(LogMosesCombat, VeryVerbose,
-		TEXT("[FIRE][COS] AV Exit Weapon=%s Pawn=%s"),
-		*WeaponId.ToString(),
-		*GetNameSafe(this));
 }
 
 void APlayerCharacter::ApplyDeadCosmetics_Local() const

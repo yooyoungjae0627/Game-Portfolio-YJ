@@ -1,10 +1,20 @@
 ﻿// ============================================================================
 // MosesCombatComponent.h (FULL)
-// - 서버 권위 SSOT 전투 컴포넌트 (Owner = PlayerState)
-// - [FIX] 발사 쿨다운은 "몽타주 길이"가 아니라 DefaultFireIntervalSec(=발사속도)로 계산한다.
-//         => 몽타주가 안 끝나도 입력이 오면 서버 쿨다운만 통과하면 계속 발사 승인.
+// ----------------------------------------------------------------------------
+// Owner = PlayerState (SSOT)
+// ----------------------------------------------------------------------------
+// [역할]
+// - 서버 권위 전투 SSOT 컴포넌트
+// - 장착/발사/탄약/사망 상태를 "PlayerState 소유"로 유지한다.
+// - 모든 HUD 갱신은 RepNotify -> Native Delegate 기반 (Tick/Binding 금지)
+//
+// [발사 정책]
+// - [FIX] 발사 쿨다운은 "몽타주 길이"가 아니라 DefaultFireIntervalSec(=발사속도) 기반.
+//   => 몽타주가 끝나지 않아도 서버 쿨다운만 통과하면 계속 발사 승인 가능.
+//
+// [코스메틱 정책]
 // - 서버 승인된 WeaponId를 Multicast 파라미터로 전파하여
-//   총마다 다른 SFX/VFX를 클라에서 재생할 수 있게 한다.
+//   무기별 SFX/VFX를 클라에서 재생한다. (Dedicated Server는 코스메틱 재생 금지)
 // ============================================================================
 
 #pragma once
@@ -12,6 +22,8 @@
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
 #include "GameplayTagContainer.h"
+#include "Net/UnrealNetwork.h"
+
 #include "MosesCombatComponent.generated.h"
 
 class UMosesWeaponData;
@@ -48,7 +60,6 @@ class UE5_MULTI_SHOOTER_API UMosesCombatComponent : public UActorComponent
 public:
 	UMosesCombatComponent();
 
-public:
 	// =========================================================================
 	// SSOT Query
 	// =========================================================================
@@ -61,7 +72,6 @@ public:
 
 	bool IsDead() const { return bIsDead; }
 
-public:
 	// =========================================================================
 	// Equip API (Client -> Server)
 	// =========================================================================
@@ -70,10 +80,12 @@ public:
 	UFUNCTION(Server, Reliable)
 	void ServerEquipSlot(int32 SlotIndex);
 
+	// 서버: 기본 슬롯 초기화(Day2 초기화용)
 	void ServerInitDefaultSlots(const FGameplayTag& InSlot1, const FGameplayTag& InSlot2, const FGameplayTag& InSlot3);
+
+	// 서버: 안전장치(슬롯/탄 초기화가 누락된 상황을 보정)
 	void Server_EnsureInitialized_Day2();
 
-public:
 	// =========================================================================
 	// Fire API (Client -> Server)
 	// =========================================================================
@@ -82,7 +94,6 @@ public:
 	UFUNCTION(Server, Reliable)
 	void ServerFire();
 
-public:
 	// =========================================================================
 	// Delegates (RepNotify -> Delegate)
 	// =========================================================================
@@ -90,7 +101,6 @@ public:
 	FMosesOnAmmoChangedNative OnAmmoChanged;
 	FMosesOnDeadChangedNative OnDeadChanged;
 
-public:
 	// =========================================================================
 	// Dead Hook (서버에서만 확정)
 	// =========================================================================

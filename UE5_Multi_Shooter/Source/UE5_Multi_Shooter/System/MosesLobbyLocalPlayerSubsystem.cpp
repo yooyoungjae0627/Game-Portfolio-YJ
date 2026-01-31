@@ -7,7 +7,7 @@
 
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
 #include "UE5_Multi_Shooter/UI/Lobby/MosesLobbyWidget.h"
-#include "UE5_Multi_Shooter/Lobby/LobbyPreviewActor.h"
+#include "UE5_Multi_Shooter/Character/LobbyPreviewActor.h"
 
 #include "Camera/CameraActor.h"
 #include "Engine/GameInstance.h"

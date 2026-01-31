@@ -30,6 +30,8 @@
 #include "UE5_Multi_Shooter/UI/Lobby/MSLobbyRoomListviewEntryWidget.h"
 #include "UE5_Multi_Shooter/UI/Lobby/MosesLobbyChatRowItem.h"
 
+#include "UE5_Multi_Shooter/UI/Match/MosesMatchRulePopupWidget.h"
+
 namespace MosesLobbyWidget_Internal
 {
 	FORCEINLINE const TCHAR* NetModeToString(ENetMode Mode)
@@ -67,6 +69,12 @@ void UMosesLobbyWidget::NativeConstruct()
 	if (RoomListViewOverlay)
 	{
 		RoomListViewOverlay->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+	}
+
+	bRulesPopupVisible = false;
+	if (RulePopupWidget)
+	{
+		RulePopupWidget->SetVisibility(ESlateVisibility::Collapsed);
 	}
 
 	// Subsystem 캐시 + 바인딩
@@ -195,6 +203,11 @@ void UMosesLobbyWidget::BindLobbyButtons()
 	if (BTN_SendChat)
 	{
 		BTN_SendChat->OnClicked.AddDynamic(this, &UMosesLobbyWidget::OnClicked_SendChat);
+	}
+
+	if (ToggleButton)
+	{
+		ToggleButton->OnClicked.AddDynamic(this, &UMosesLobbyWidget::HandleRulesClicked);
 	}
 }
 
@@ -953,4 +966,16 @@ void UMosesLobbyWidget::RefreshFromState(const AMosesLobbyGameState* InMosesLobb
 
 	// Host/Client 컨트롤 갱신
 	RefreshRightPanelControlsByRole();
+}
+
+void UMosesLobbyWidget::HandleRulesClicked()
+{
+	if (!RulePopupWidget)
+	{
+	
+		return;
+	}
+
+	bRulesPopupVisible = !bRulesPopupVisible;
+	RulePopupWidget->SetVisibility(bRulesPopupVisible ? ESlateVisibility::SelfHitTestInvisible : ESlateVisibility::Collapsed);
 }

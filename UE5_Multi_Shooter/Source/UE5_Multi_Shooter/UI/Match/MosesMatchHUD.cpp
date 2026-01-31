@@ -1,5 +1,9 @@
 ﻿// ============================================================================
-// MosesMatchHUD.cpp
+// MosesMatchHUD.cpp (FULL)
+// - [MOD] PhaseText: Warmup -> "워밍업"(흰), Combat -> "매치"(빨강), Result -> "결과"(흰)
+// - Tick/Binding 금지: Delegate 이벤트에서만 SetText/SetColor
+// - [MOD] 클라2 간헐 타이머 미갱신: GameState 바인딩 타이밍 이슈 → Timer 재시도
+// - [MOD] Phase rollback 방지 (Combat인데 Warmup이 늦게 와서 덮어쓰는 문제)
 // ============================================================================
 
 #include "UE5_Multi_Shooter/UI/Match/MosesMatchHUD.h"
@@ -8,11 +12,14 @@
 #include "Components/TextBlock.h"
 #include "Components/Button.h"
 
+#include "Engine/World.h"
+#include "TimerManager.h"
+#include "GameFramework/PlayerController.h"
+
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
 #include "UE5_Multi_Shooter/Player/MosesPlayerState.h"
 #include "UE5_Multi_Shooter/GameMode/GameState/MosesMatchGameState.h"
 #include "UE5_Multi_Shooter/UI/Match/MosesMatchAnnouncementWidget.h"
-#include "UE5_Multi_Shooter/UI/Match/MosesMatchRulePopupWidget.h"
 
 UMosesMatchHUD::UMosesMatchHUD(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
@@ -23,31 +30,31 @@ void UMosesMatchHUD::NativeOnInitialized()
 {
 	Super::NativeOnInitialized();
 
-	// UI는 클라 전용(DS에서는 생성되지 않는 것이 정상).
 	UE_LOG(LogMosesHUD, Warning, TEXT("[HUD][CL] Init MatchHUD=%s OwningPlayer=%s"),
 		*GetNameSafe(this),
 		*GetNameSafe(GetOwningPlayer()));
 
-	if (ToggleButton)
-	{
-		ToggleButton->OnClicked.AddDynamic(this, &ThisClass::HandleRulesClicked);
-	}
+	UE_LOG(LogMosesHUD, Warning, TEXT("[HUD][CL] PhaseText Bind=%s (Check WBP name == PhaseText)"),
+		*GetNameSafe(PhaseText));
 
 	BindToPlayerState();
 	BindToGameState_Match();
+
+	// [MOD] 초기 표시 (바인딩 실패해도 일단 기본값 노출)
 	RefreshInitial();
 
-	// Popup 기본 상태: 닫힘
-	bRulesPopupVisible = false;
-	if (RulePopupWidget)
-	{
-		RulePopupWidget->SetVisibility(ESlateVisibility::Collapsed);
-	}
+	// [MOD] 클라2 타이밍 이슈 방지: 바인딩 재시도
+	ScheduleBindRetry();
 }
 
 void UMosesMatchHUD::NativeDestruct()
 {
-	// Delegate 해제(레벨 이동, GF 토글, PIE 재시작 등에서 안전)
+	// [MOD] Bind 재시도 타이머 정리
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(BindRetryHandle);
+	}
+
 	if (AMosesPlayerState* PS = CachedPlayerState.Get())
 	{
 		PS->OnHealthChanged.RemoveAll(this);
@@ -75,6 +82,90 @@ void UMosesMatchHUD::NativeDestruct()
 	Super::NativeDestruct();
 }
 
+// ============================================================================
+// Bind Retry (Tick 금지 → Timer 기반)
+// ============================================================================
+
+bool UMosesMatchHUD::IsBoundToPlayerState() const
+{
+	return CachedPlayerState.IsValid();
+}
+
+bool UMosesMatchHUD::IsBoundToMatchGameState() const
+{
+	return CachedMatchGameState.IsValid();
+}
+
+void UMosesMatchHUD::ScheduleBindRetry()
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	if (BindRetryHandle.IsValid())
+	{
+		return;
+	}
+
+	BindRetryCount = 0;
+
+	World->GetTimerManager().SetTimer(
+		BindRetryHandle,
+		this,
+		&ThisClass::TryBindRetry,
+		BindRetryInterval,
+		true);
+
+	UE_LOG(LogMosesHUD, Warning, TEXT("[HUD][CL] BindRetry START Interval=%.2f"), BindRetryInterval);
+}
+
+void UMosesMatchHUD::TryBindRetry()
+{
+	BindRetryCount++;
+
+	// 이미 다 물렸으면 종료
+	if (IsBoundToPlayerState() && IsBoundToMatchGameState())
+	{
+		if (UWorld* World = GetWorld())
+		{
+			World->GetTimerManager().ClearTimer(BindRetryHandle);
+		}
+
+		UE_LOG(LogMosesHUD, Warning, TEXT("[HUD][CL] BindRetry DONE"));
+		return;
+	}
+
+	// 아직 덜 물렸으면 계속 시도
+	if (!IsBoundToPlayerState())
+	{
+		BindToPlayerState();
+	}
+
+	if (!IsBoundToMatchGameState())
+	{
+		BindToGameState_Match();
+	}
+
+	// 너무 오래 걸리면 포기 (증거 로그)
+	if (BindRetryCount >= BindRetryMaxCount)
+	{
+		if (UWorld* World = GetWorld())
+		{
+			World->GetTimerManager().ClearTimer(BindRetryHandle);
+		}
+
+		UE_LOG(LogMosesHUD, Error, TEXT("[HUD][CL] BindRetry GIVEUP (PlayerState=%d GameState=%d)"),
+			IsBoundToPlayerState() ? 1 : 0,
+			IsBoundToMatchGameState() ? 1 : 0);
+	}
+}
+
+// ============================================================================
+// Bind
+// ============================================================================
+
 void UMosesMatchHUD::BindToPlayerState()
 {
 	APlayerController* PC = GetOwningPlayer();
@@ -89,6 +180,23 @@ void UMosesMatchHUD::BindToPlayerState()
 	{
 		UE_LOG(LogMosesHUD, Verbose, TEXT("[HUD][CL] BindToPlayerState: No PS PC=%s"), *GetNameSafe(PC));
 		return;
+	}
+
+	// [MOD] 중복 바인딩 방지: 이미 같은 PS면 스킵
+	if (CachedPlayerState.Get() == PS)
+	{
+		return;
+	}
+
+	// [MOD] 기존 PS 바인딩 해제
+	if (AMosesPlayerState* OldPS = CachedPlayerState.Get())
+	{
+		OldPS->OnHealthChanged.RemoveAll(this);
+		OldPS->OnShieldChanged.RemoveAll(this);
+		OldPS->OnScoreChanged.RemoveAll(this);
+		OldPS->OnDeathsChanged.RemoveAll(this);
+		OldPS->OnAmmoChanged.RemoveAll(this);
+		OldPS->OnGrenadeChanged.RemoveAll(this);
 	}
 
 	CachedPlayerState = PS;
@@ -115,8 +223,22 @@ void UMosesMatchHUD::BindToGameState_Match()
 	AMosesMatchGameState* GS = World->GetGameState<AMosesMatchGameState>();
 	if (!GS)
 	{
-		UE_LOG(LogMosesHUD, Warning, TEXT("[HUD][CL] No AMosesMatchGameState World=%s"), *GetNameSafe(World));
+		UE_LOG(LogMosesHUD, Verbose, TEXT("[HUD][CL] No AMosesMatchGameState yet World=%s"), *GetNameSafe(World));
 		return;
+	}
+
+	// [MOD] 중복 바인딩 방지: 이미 같은 GS면 스킵
+	if (CachedMatchGameState.Get() == GS)
+	{
+		return;
+	}
+
+	// [MOD] 기존 GS 바인딩 해제
+	if (AMosesMatchGameState* OldGS = CachedMatchGameState.Get())
+	{
+		OldGS->OnMatchTimeChanged.RemoveAll(this);
+		OldGS->OnMatchPhaseChanged.RemoveAll(this);
+		OldGS->OnAnnouncementChanged.RemoveAll(this);
 	}
 
 	CachedMatchGameState = GS;
@@ -127,7 +249,7 @@ void UMosesMatchHUD::BindToGameState_Match()
 
 	UE_LOG(LogMosesHUD, Warning, TEXT("[HUD][CL] Bound MatchGameState delegates GS=%s"), *GetNameSafe(GS));
 
-	// Tick/Binding 없이 초기 반영
+	// Tick/Binding 없이 현재 상태를 즉시 반영
 	HandleMatchTimeChanged(GS->GetRemainingSeconds());
 	HandleMatchPhaseChanged(GS->GetMatchPhase());
 	HandleAnnouncementChanged(GS->GetAnnouncementState());
@@ -135,7 +257,6 @@ void UMosesMatchHUD::BindToGameState_Match()
 
 void UMosesMatchHUD::RefreshInitial()
 {
-	// "초기값"은 안전한 디폴트 표시. 실제 값은 Delegate로 즉시 덮어써진다.
 	HandleMatchTimeChanged(0);
 	HandleScoreChanged(0);
 	HandleDeathsChanged(0);
@@ -143,7 +264,15 @@ void UMosesMatchHUD::RefreshInitial()
 	HandleGrenadeChanged(0);
 	HandleHealthChanged(100.f, 100.f);
 	HandleShieldChanged(100.f, 100.f);
+
+	// [MOD] 초기 표시
+	LastAppliedPhase = EMosesMatchPhase::WaitingForPlayers;
+	HandleMatchPhaseChanged(EMosesMatchPhase::Warmup);
 }
+
+// ============================================================================
+// PlayerState Handlers
+// ============================================================================
 
 void UMosesMatchHUD::HandleHealthChanged(float Current, float Max)
 {
@@ -205,6 +334,10 @@ void UMosesMatchHUD::HandleGrenadeChanged(int32 Grenade)
 	}
 }
 
+// ============================================================================
+// MatchGameState Handlers
+// ============================================================================
+
 void UMosesMatchHUD::HandleMatchTimeChanged(int32 RemainingSeconds)
 {
 	if (MatchCountdownText)
@@ -215,7 +348,33 @@ void UMosesMatchHUD::HandleMatchTimeChanged(int32 RemainingSeconds)
 
 void UMosesMatchHUD::HandleMatchPhaseChanged(EMosesMatchPhase NewPhase)
 {
-	UE_LOG(LogMosesPhase, Verbose, TEXT("[HUD][CL] Phase=%s"), *UEnum::GetValueAsString(NewPhase));
+	const int32 OldP = GetPhasePriority(LastAppliedPhase);
+	const int32 NewP = GetPhasePriority(NewPhase);
+
+	// [MOD] 역행(Combat인데 Warmup이 늦게 도착 등)은 무시
+	if (NewP < OldP)
+	{
+		UE_LOG(LogMosesPhase, Warning,
+			TEXT("[HUD][CL] PhaseChanged IGNORE (rollback) New=%s Old=%s"),
+			*UEnum::GetValueAsString(NewPhase),
+			*UEnum::GetValueAsString(LastAppliedPhase));
+		return;
+	}
+
+	LastAppliedPhase = NewPhase;
+
+	UE_LOG(LogMosesPhase, Warning, TEXT("[HUD][CL] PhaseChanged APPLY New=%s"),
+		*UEnum::GetValueAsString(NewPhase));
+
+	if (PhaseText)
+	{
+		PhaseText->SetText(GetPhaseText_KR(NewPhase));
+		PhaseText->SetColorAndOpacity(GetPhaseColor(NewPhase)); // [MOD] 색상 반영
+	}
+	else
+	{
+		UE_LOG(LogMosesHUD, Warning, TEXT("[HUD][CL] PhaseText is NULL (Check WBP name == 'PhaseText')"));
+	}
 }
 
 void UMosesMatchHUD::HandleAnnouncementChanged(const FMosesAnnouncementState& State)
@@ -226,6 +385,10 @@ void UMosesMatchHUD::HandleAnnouncementChanged(const FMosesAnnouncementState& St
 	}
 }
 
+// ============================================================================
+// Util
+// ============================================================================
+
 FString UMosesMatchHUD::ToMMSS(int32 TotalSeconds)
 {
 	const int32 Clamped = FMath::Max(0, TotalSeconds);
@@ -234,24 +397,39 @@ FString UMosesMatchHUD::ToMMSS(int32 TotalSeconds)
 	return FString::Printf(TEXT("%02d:%02d"), MM, SS);
 }
 
-void UMosesMatchHUD::HandleRulesClicked()
+FText UMosesMatchHUD::GetPhaseText_KR(EMosesMatchPhase Phase)
 {
-	// RulePopupWidget이 디자이너에 배치되어야 함 (BindWidgetOptional)
-	if (!RulePopupWidget)
+	switch (Phase)
 	{
-		UE_LOG(LogMosesHUD, Warning, TEXT("[HUD][CL] RulesClicked: RulePopupWidget is NULL (Check BP instance name)"));
-		return;
+	case EMosesMatchPhase::Warmup: return FText::FromString(TEXT("워밍업"));
+	case EMosesMatchPhase::Combat: return FText::FromString(TEXT("매치"));
+	case EMosesMatchPhase::Result: return FText::FromString(TEXT("결과"));
+	default:                       return FText::FromString(TEXT("알 수 없음"));
 	}
+}
 
-	bRulesPopupVisible = !bRulesPopupVisible;
-	if (bRulesPopupVisible)
+FSlateColor UMosesMatchHUD::GetPhaseColor(EMosesMatchPhase Phase)
+{
+	// [MOD] Warmup/Result = White, Combat = Red
+	switch (Phase)
 	{
-		RulePopupWidget->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+	case EMosesMatchPhase::Combat:
+		return FSlateColor(FLinearColor(1.f, 0.f, 0.f, 1.f)); // 빨강
+	case EMosesMatchPhase::Warmup:
+	case EMosesMatchPhase::Result:
+	default:
+		return FSlateColor(FLinearColor(1.f, 1.f, 1.f, 1.f)); // 흰색
 	}
-	else
-	{
-		RulePopupWidget->SetVisibility(ESlateVisibility::Collapsed);
-	}
+}
 
-	UE_LOG(LogMosesHUD, Verbose, TEXT("[HUD][CL] RulesPopup -> %s"), bRulesPopupVisible ? TEXT("OPEN") : TEXT("CLOSE"));
+int32 UMosesMatchHUD::GetPhasePriority(EMosesMatchPhase Phase)
+{
+	switch (Phase)
+	{
+	case EMosesMatchPhase::WaitingForPlayers: return 0;
+	case EMosesMatchPhase::Warmup:           return 1;
+	case EMosesMatchPhase::Combat:           return 2;
+	case EMosesMatchPhase::Result:           return 3;
+	default:                                 return -1;
+	}
 }

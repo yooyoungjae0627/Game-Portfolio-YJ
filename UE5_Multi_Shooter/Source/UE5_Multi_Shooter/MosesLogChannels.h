@@ -49,17 +49,27 @@ DECLARE_LOG_CATEGORY_EXTERN(LogMosesHP, Log, All);
 DECLARE_LOG_CATEGORY_EXTERN(LogMosesAsset, Log, All);
 
 // ============================================================
+// [MOD] Day5 Flag/Capture & Match/Broadcast 카테고리 추가
+// - 빌드 에러: LogMosesFlag / LogMosesMatch C2065 해결용
+// - LogMosesMatch: BroadcastComponent, Match HUD 관련 로그
+// - LogMosesFlag : FlagSpot, CaptureComponent, Capture UI 관련 로그
+// ============================================================
+
+DECLARE_LOG_CATEGORY_EXTERN(LogMosesMatch, Log, All);   // [MOD]
+DECLARE_LOG_CATEGORY_EXTERN(LogMosesFlag, Log, All);    // [MOD]
+
+// ============================================================
 //  "세분화 카테고리"(선택)
 // - 이미 LogMosesCombat/LogMosesHP/LogMosesSpawn로도 충분하지만,
 //   면접/증거 로그 분리용으로 카테고리를 더 나누고 싶다면 사용.
 // - 쓰기 싫으면 .cpp에서도 DEFINE를 빼고, 여기 선언도 삭제하면 됨.
 // ============================================================
 
-DECLARE_LOG_CATEGORY_EXTERN(LogMosesAmmo, Log, All);    
-DECLARE_LOG_CATEGORY_EXTERN(LogMosesDeath, Log, All);    
-DECLARE_LOG_CATEGORY_EXTERN(LogMosesRespawn, Log, All);   
-DECLARE_LOG_CATEGORY_EXTERN(LogMosesScore, Log, All);     
-DECLARE_LOG_CATEGORY_EXTERN(LogMosesHUD, Log, All);       
+DECLARE_LOG_CATEGORY_EXTERN(LogMosesAmmo, Log, All);
+DECLARE_LOG_CATEGORY_EXTERN(LogMosesDeath, Log, All);
+DECLARE_LOG_CATEGORY_EXTERN(LogMosesRespawn, Log, All);
+DECLARE_LOG_CATEGORY_EXTERN(LogMosesScore, Log, All);
+DECLARE_LOG_CATEGORY_EXTERN(LogMosesHUD, Log, All);
 
 DECLARE_LOG_CATEGORY_EXTERN(LogMosesWeapon, Log, All);
 
@@ -107,12 +117,23 @@ DECLARE_LOG_CATEGORY_EXTERN(LogMosesWeapon, Log, All);
 #define MOSES_TAG_BLOCKED_CL  TEXT("[BLOCK][CL]")
 
 // ============================================================
+// [MOD] Day5 Flag/Match 태그 추가 (선택이지만 로그 통일에 유용)
+// ============================================================
+
+#define MOSES_TAG_FLAG_SV     TEXT("[FLAG][SV]")        // [MOD]
+#define MOSES_TAG_FLAG_CL     TEXT("[FLAG][CL]")        // [MOD]
+#define MOSES_TAG_MATCH_SV    TEXT("[MATCH][SV]")       // [MOD]
+#define MOSES_TAG_MATCH_CL    TEXT("[MATCH][CL]")       // [MOD]
+#define MOSES_TAG_BROADCAST_SV TEXT("[BROADCAST][SV]")  // [MOD]
+#define MOSES_TAG_BROADCAST_CL TEXT("[BROADCAST][CL]")  // [MOD]
+
+// ============================================================
 // 로그 부가정보 헬퍼 (Null 안전)
 // - 서버 권위 가드/증거 로그에서 World/NetMode를 같이 찍고 싶을 때 사용.
 // ============================================================
 
 namespace MosesLog
 {
-	const TCHAR* GetWorldNameSafe(const UObject* WorldContext);       
-	const TCHAR* GetNetModeNameSafe(const UObject* WorldContext);     
+	const TCHAR* GetWorldNameSafe(const UObject* WorldContext);
+	const TCHAR* GetNetModeNameSafe(const UObject* WorldContext);
 }

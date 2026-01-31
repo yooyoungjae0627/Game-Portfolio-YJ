@@ -31,8 +31,11 @@ AMosesMatchGameMode::AMosesMatchGameMode()
 	// [중요] 매치 레벨에서는 MatchGameState를 사용한다.
 	GameStateClass = AMosesMatchGameState::StaticClass();
 
-	UE_LOG(LogMosesSpawn, Warning, TEXT("%s [MatchGM] Ctor OK (GameStateClass=MatchGameState)"),
-		MOSES_TAG_RESPAWN_SV);
+	// [MOD] Warmup 30초 요구사항 강제 기본값(단, BP/ini가 덮어쓸 수 있으므로 BeginPlay에서도 한번 더 강제한다)
+	WarmupSeconds = 30.0f;
+
+	UE_LOG(LogMosesSpawn, Warning, TEXT("%s [MatchGM] Ctor OK (GameStateClass=MatchGameState) WarmupSeconds=%.2f"),
+		MOSES_TAG_RESPAWN_SV, WarmupSeconds);
 }
 
 void AMosesMatchGameMode::InitGame(const FString& MapName, const FString& Options, FString& ErrorMessage)
@@ -54,6 +57,18 @@ void AMosesMatchGameMode::InitGame(const FString& MapName, const FString& Option
 void AMosesMatchGameMode::BeginPlay()
 {
 	Super::BeginPlay();
+
+	// [MOD] BP/ini가 WarmupSeconds를 120으로 덮어썼을 가능성이 높다.
+	//       요구사항은 "워밍업 30초"이므로 서버에서 강제 고정한다.
+	if (HasAuthority())
+	{
+		const float Before = WarmupSeconds;
+		WarmupSeconds = 30.0f;
+
+		UE_LOG(LogMosesPhase, Warning,
+			TEXT("[PHASE][SV] WarmupSeconds FORCE 30 (Before=%.2f After=%.2f) GM=%s"),
+			Before, WarmupSeconds, *GetNameSafe(this));
+	}
 
 	UE_LOG(LogMosesExp, Warning, TEXT("%s [DOD][Travel] MatchGM Seamless=%d"),
 		MOSES_TAG_COMBAT_SV, bUseSeamlessTravel ? 1 : 0);
@@ -180,7 +195,9 @@ float AMosesMatchGameMode::GetPhaseDurationSeconds(EMosesMatchPhase Phase) const
 {
 	switch (Phase)
 	{
-	case EMosesMatchPhase::Warmup: return WarmupSeconds;
+		// [MOD] 요구사항: Warmup은 무조건 30초 (BP/ini/실수로 120이 들어와도 여기서 차단)
+	case EMosesMatchPhase::Warmup: return 30.0f;
+
 	case EMosesMatchPhase::Combat: return CombatSeconds;
 	case EMosesMatchPhase::Result: return ResultSeconds;
 	default: break;
@@ -277,17 +294,20 @@ void AMosesMatchGameMode::SetMatchPhase(EMosesMatchPhase NewPhase)
 
 		const int32 DurationInt = (Duration > 0.f) ? FMath::CeilToInt(Duration) : 0;
 
+		UE_LOG(LogMosesPhase, Warning, TEXT("[PHASE][SV] ApplyTimer Phase=%s DurationInt=%d (Warmup must be 30)"),
+			*UEnum::GetValueAsString(CurrentPhase), DurationInt);
+
 		// ✅ RemainingSeconds 감소는 MatchGameState의 서버 타이머가 담당한다(단일 진실).
 		GS->ServerStartMatchTimer(DurationInt);
 
-		// 방송(증거/데모)
+		// 방송(증거/데모) - [MOD] 한글/색상 정책은 HUD에서 처리, 여기선 "텍스트"만
 		if (CurrentPhase == EMosesMatchPhase::Warmup)
 		{
-			GS->ServerStartAnnouncementText(FText::FromString(TEXT("Warmup 시작")), 3);
+			GS->ServerStartAnnouncementText(FText::FromString(TEXT("워밍업 시작")), 3);
 		}
 		else if (CurrentPhase == EMosesMatchPhase::Combat)
 		{
-			GS->ServerStartAnnouncementText(FText::FromString(TEXT("Combat 시작")), 3);
+			GS->ServerStartAnnouncementText(FText::FromString(TEXT("매치 시작")), 3);
 		}
 		else if (CurrentPhase == EMosesMatchPhase::Result)
 		{
@@ -609,10 +629,6 @@ void AMosesMatchGameMode::PollExperienceReady_AndStartWarmup()
 		return;
 	}
 
-	// ✅ 여기서 “Experience가 로드됐는지” 판단해야 하는데,
-	// 네 ExpMgr API 명이 프로젝트마다 다를 수 있으니, 가장 안전한 방식:
-	// - CurrentExperience가 null이 아니면 Ready로 간주
-	// (만약 네 컴포넌트에 다른 getter가 있으면 그걸로 바꿔도 됨)
 	const UMosesExperienceDefinition* CurrentExp = ExpMgr->GetCurrentExperienceOrNull();
 	if (!CurrentExp)
 	{
@@ -632,6 +648,5 @@ void AMosesMatchGameMode::PollExperienceReady_AndStartWarmup()
 		MOSES_TAG_COMBAT_SV,
 		*GetNameSafe(CurrentExp));
 
-	// 기존 너 로직 그대로 사용
 	StartMatchFlow_AfterExperienceReady();
 }

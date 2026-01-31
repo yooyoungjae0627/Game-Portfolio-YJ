@@ -6,11 +6,11 @@
 #include "PlayerCharacter.generated.h"
 
 class AController;
-class APickupBase;
 
 class UMosesHeroComponent;
 class UMosesCameraComponent;
 class UMosesCombatComponent;
+class UMosesInteractionComponent; // [MOD]
 
 class USkeletalMeshComponent;
 class UAnimMontage;
@@ -35,7 +35,10 @@ public:
 	void Input_SprintReleased();
 
 	void Input_JumpPressed();
+
+	// [MOD] Interact Press/Release (Hold-to-capture)
 	void Input_InteractPressed();
+	void Input_InteractReleased();
 
 	void Input_EquipSlot1();
 	void Input_EquipSlot2();
@@ -75,24 +78,8 @@ private:
 	// =========================================================================
 	// Sprint
 	// =========================================================================
-
-	/**
-	 * [MOD] Sprint 게이팅 규칙 (Tick 없이 입력 이벤트로만 처리)
-	 *
-	 * - Shift만 누르면 Sprint가 켜지면 안 된다.
-	 * - Shift + WASD(= Move 입력이 0이 아님)일 때만 Sprint ON.
-	 * - Shift가 눌려있어도 Move 입력이 0이면 Sprint OFF.
-	 *
-	 * 처리 타이밍
-	 * - Input_Move에서 매번 Move 입력을 캐시하고, 조건을 평가해 서버에 요청
-	 * - Input_SprintPressed/Released에서도 조건 평가(즉시 반영)
-	 */
 	void UpdateSprintRequest_Local(const TCHAR* FromTag);
-
-	/** 로컬 체감용: 속도만 즉시 반영 (서버 승인 전이라도 "느낌"은 좋아짐) */
 	void ApplySprintSpeed_LocalPredict(bool bNewSprinting);
-
-	/** 서버 승인/OnRep로 내려온 값 기준으로 최종 확정(SSOT) */
 	void ApplySprintSpeed_FromAuth(const TCHAR* From);
 
 	UFUNCTION(Server, Reliable)
@@ -101,21 +88,8 @@ private:
 	UFUNCTION()
 	void OnRep_IsSprinting();
 
-	/**
-	 * [MOD] Sprint 몽타주 코스메틱
-	 * - 서버 승인 후에만 Multicast로 재생/정지한다(모든 클라에서 동일 연출)
-	 */
 	UFUNCTION(NetMulticast, Unreliable)
 	void Multicast_PlaySprintMontage(bool bStart);
-
-private:
-	// =========================================================================
-	// Pickup
-	// =========================================================================
-	APickupBase* FindPickupTarget_Local() const;
-
-	UFUNCTION(Server, Reliable)
-	void Server_TryPickup(APickupBase* Target);
 
 private:
 	// =========================================================================
@@ -136,7 +110,10 @@ private:
 	// Montage cosmetics
 	// =========================================================================
 	void TryPlayMontage_Local(UAnimMontage* Montage, const TCHAR* DebugTag) const;
+
+	// [MOD] WeaponData 필드명 기준으로 SFX/VFX 재생
 	void PlayFireAV_Local(FGameplayTag WeaponId) const;
+
 	void ApplyDeadCosmetics_Local() const;
 
 private:
@@ -157,6 +134,10 @@ private:
 	UPROPERTY(VisibleAnywhere, Category = "Moses|Components")
 	TObjectPtr<UMosesCameraComponent> MosesCameraComponent = nullptr;
 
+	// [MOD] E Hold 라우팅 컴포넌트
+	UPROPERTY(VisibleAnywhere, Category = "Moses|Components")
+	TObjectPtr<UMosesInteractionComponent> InteractionComponent = nullptr;
+
 	UPROPERTY(VisibleAnywhere, Category = "Moses|Weapon")
 	TObjectPtr<USkeletalMeshComponent> WeaponMeshComp = nullptr;
 
@@ -167,12 +148,8 @@ private:
 	UPROPERTY(EditDefaultsOnly, Category = "Moses|Move")
 	float WalkSpeed = 600.0f;
 
-	/** [MOD] 요구사항: Sprint MaxSpeed = 800 */
 	UPROPERTY(EditDefaultsOnly, Category = "Moses|Move")
 	float SprintSpeed = 800.0f;
-
-	UPROPERTY(EditDefaultsOnly, Category = "Moses|Pickup")
-	float PickupTraceDistance = 500.0f;
 
 	UPROPERTY(EditDefaultsOnly, Category = "Moses|Weapon")
 	FName CharacterWeaponSocketName = TEXT("WeaponSocket");
@@ -190,7 +167,6 @@ private:
 	UPROPERTY(EditDefaultsOnly, Category = "Moses|Anim")
 	TObjectPtr<UAnimMontage> DeathMontage = nullptr;
 
-	/** [MOD] SprintStart 같은 짧은 몽타주 추천 */
 	UPROPERTY(EditDefaultsOnly, Category = "Moses|Anim")
 	TObjectPtr<UAnimMontage> SprintMontage = nullptr;
 
@@ -209,7 +185,7 @@ private:
 
 private:
 	// =========================================================================
-	// [MOD] Sprint 입력 캐시 (Tick 없이 게이팅)
+	// Sprint 입력 캐시 (Tick 없이 게이팅)
 	// =========================================================================
 	UPROPERTY(Transient)
 	bool bSprintKeyDownLocal = false;
