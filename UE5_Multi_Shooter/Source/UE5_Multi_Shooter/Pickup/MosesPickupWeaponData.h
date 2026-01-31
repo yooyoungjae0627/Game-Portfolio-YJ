@@ -28,7 +28,7 @@ public:
 
 	/** 월드에 표시할 정적 메시(선택) */
 	UPROPERTY(EditDefaultsOnly, Category = "Pickup|World")
-	TSoftObjectPtr<UStaticMesh> WorldMesh;
+	TSoftObjectPtr<USkeletalMesh> WorldMesh;
 
 	// -------------------------------------------------------------------------
 	// Prompt UI (World Widget)

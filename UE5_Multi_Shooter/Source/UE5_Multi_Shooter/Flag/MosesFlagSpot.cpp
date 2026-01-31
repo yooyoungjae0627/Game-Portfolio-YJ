@@ -20,7 +20,7 @@
 #include "UE5_Multi_Shooter/Combat/MosesCombatComponent.h"
 #include "UE5_Multi_Shooter/GameMode/GameState/MosesMatchGameState.h"
 
-#include "UE5_Multi_Shooter/UI/World/MosesPickupPromptWidget.h"
+#include "UE5_Multi_Shooter/UI/Match/MosesPickupPromptWidget.h"
 
 AMosesFlagSpot::AMosesFlagSpot()
 {

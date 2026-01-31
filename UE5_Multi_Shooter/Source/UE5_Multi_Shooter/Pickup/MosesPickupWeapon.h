@@ -1,10 +1,16 @@
 // ============================================================================
 // MosesPickupWeapon.h (FULL)  [MOD]
+// ----------------------------------------------------------------------------
 // - 월드에 배치되는 픽업 액터
-// - 로컬 하이라이트(CustomDepth)는 클라 코스메틱.
-// - 로컬 말풍선(WidgetComponent)도 클라 코스메틱. (서버 권위 아님)
+// - 로컬 하이라이트(CustomDepth) + 로컬 말풍선(WidgetComponent)은 클라 코스메틱.
 // - 서버 원자성: bConsumed로 "OK 1 / FAIL 1" 보장.
-// - 성공 시 PlayerState SSOT 갱신 -> GameState Announcement(RepNotify/Delegate) -> HUD 표시.
+// - 성공 시 PlayerState SSOT(슬롯 소유/ItemId) 갱신 + 중앙 Announcement 텍스트 반환.
+//
+// [MOD 핵심]
+// - Mesh: UStaticMeshComponent -> USkeletalMeshComponent
+// - PickupData.WorldMesh: StaticMesh -> SkeletalMesh
+// - [MOD] TraceTarget(Box): LineTrace(ECC_Visibility)로 선택 가능하도록 추가
+//   (Mesh는 NoCollision 유지 가능. Trace는 TraceTarget이 담당)
 // ============================================================================
 
 #pragma once
@@ -14,12 +20,12 @@
 #include "MosesPickupWeapon.generated.h"
 
 class USphereComponent;
-class UStaticMeshComponent;
+class USkeletalMeshComponent;
 class UWidgetComponent;
+class UBoxComponent;
 
 class UMosesPickupWeaponData;
 class UMosesPickupPromptWidget;
-
 class AMosesPlayerState;
 
 UCLASS()
@@ -30,14 +36,10 @@ class UE5_MULTI_SHOOTER_API AMosesPickupWeapon : public AActor
 public:
 	AMosesPickupWeapon();
 
-	/** 클라: 로컬 하이라이트 On/Off (Overlap 등에서 호출) */
+	// 클라: 로컬 하이라이트 On/Off (Overlap 등에서 호출)
 	void SetLocalHighlight(bool bEnable);
 
-	/**
-	 * 서버: 픽업 시도 (E)
-	 * @param RequesterPS    픽업을 요청한 PlayerState(SSOT)
-	 * @param OutAnnounceText 성공 시 중앙 Announcement에 표시할 텍스트
-	 */
+	// 서버: 픽업 시도 (E)
 	bool ServerTryPickup(AMosesPlayerState* RequesterPS, FText& OutAnnounceText);
 
 protected:
@@ -68,17 +70,24 @@ private:
 	// ---- Guards ----
 	bool CanPickup_Server(const AMosesPlayerState* RequesterPS) const;
 
+private:
 	// ---- Components ----
 	UPROPERTY(VisibleAnywhere)
 	TObjectPtr<USceneComponent> Root;
 
+	/** [MOD] 월드 표시용 스켈레탈 메시 */
 	UPROPERTY(VisibleAnywhere)
-	TObjectPtr<UStaticMeshComponent> Mesh;
+	TObjectPtr<USkeletalMeshComponent> Mesh;
 
+	/** 근접 감지(프롬프트/하이라이트 트리거) */
 	UPROPERTY(VisibleAnywhere)
 	TObjectPtr<USphereComponent> InteractSphere;
 
-	/** [MOD] 월드 말풍선 UI(WidgetComponent) */
+	/** [MOD] Trace 선택용 박스(Visibility Block) */
+	UPROPERTY(VisibleAnywhere)
+	TObjectPtr<UBoxComponent> TraceTarget;
+
+	/** 월드 말풍선 UI */
 	UPROPERTY(VisibleAnywhere)
 	TObjectPtr<UWidgetComponent> PromptWidgetComponent;
 
@@ -90,7 +99,7 @@ private:
 	UPROPERTY()
 	bool bConsumed = false;
 
-	/** [MOD] 말풍선 표시 중인 로컬 Pawn (로컬 UX 대상 추적) */
+	// ---- Local prompt owner ----
 	UPROPERTY(Transient)
 	TWeakObjectPtr<APawn> LocalPromptPawn;
 };

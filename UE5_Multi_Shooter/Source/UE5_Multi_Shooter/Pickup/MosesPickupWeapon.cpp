@@ -6,8 +6,9 @@
 #include "UE5_Multi_Shooter/Pickup/MosesPickupWeaponData.h"
 
 #include "Components/SphereComponent.h"
-#include "Components/StaticMeshComponent.h"
+#include "Components/SkeletalMeshComponent.h"
 #include "Components/WidgetComponent.h"
+#include "Components/BoxComponent.h"
 
 #include "Blueprint/UserWidget.h"
 #include "GameFramework/Pawn.h"
@@ -24,10 +25,14 @@ AMosesPickupWeapon::AMosesPickupWeapon()
 	Root = CreateDefaultSubobject<USceneComponent>(TEXT("Root"));
 	SetRootComponent(Root);
 
-	Mesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("Mesh"));
+	// ---------------------------------------------------------------------
+	// [MOD] Skeletal Mesh Component
+	// ---------------------------------------------------------------------
+	Mesh = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("Mesh"));
 	Mesh->SetupAttachment(Root);
 	Mesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	Mesh->SetRenderCustomDepth(false);
+	Mesh->bCastDynamicShadow = true;
 
 	InteractSphere = CreateDefaultSubobject<USphereComponent>(TEXT("InteractSphere"));
 	InteractSphere->SetupAttachment(Root);
@@ -37,7 +42,19 @@ AMosesPickupWeapon::AMosesPickupWeapon()
 	InteractSphere->SetGenerateOverlapEvents(true);
 
 	// ---------------------------------------------------------------------
-	// [MOD] Prompt Widget Component (World UI)
+	// [MOD] TraceTarget: LineTrace(ECC_Visibility)로 선택 가능하도록 별도 타겟 제공
+	// - Mesh가 NoCollision이어도, 인터렉션 트레이스는 이 박스를 맞춘다.
+	// ---------------------------------------------------------------------
+	TraceTarget = CreateDefaultSubobject<UBoxComponent>(TEXT("TraceTarget"));
+	TraceTarget->SetupAttachment(Root);
+	TraceTarget->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+	TraceTarget->SetCollisionResponseToAllChannels(ECR_Ignore);
+	TraceTarget->SetCollisionResponseToChannel(ECC_Visibility, ECR_Block);
+	TraceTarget->SetGenerateOverlapEvents(false);
+	TraceTarget->SetBoxExtent(FVector(60.f, 60.f, 80.f));
+
+	// ---------------------------------------------------------------------
+	// Prompt Widget Component (World UI)
 	// ---------------------------------------------------------------------
 	PromptWidgetComponent = CreateDefaultSubobject<UWidgetComponent>(TEXT("PromptWidget"));
 	PromptWidgetComponent->SetupAttachment(Root);
@@ -45,8 +62,12 @@ AMosesPickupWeapon::AMosesPickupWeapon()
 	// 기본 정책: 월드 UI, 액터가 근접 시 Visible로 켠다.
 	PromptWidgetComponent->SetWidgetSpace(EWidgetSpace::World);
 	PromptWidgetComponent->SetDrawAtDesiredSize(true);
+	PromptWidgetComponent->SetTwoSided(true);
 	PromptWidgetComponent->SetVisibility(false);
 	PromptWidgetComponent->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+
+	// 프롬프트 위치 기본값
+	PromptWidgetComponent->SetRelativeLocation(FVector(0.f, 0.f, 110.f));
 }
 
 void AMosesPickupWeapon::BeginPlay()
@@ -59,16 +80,20 @@ void AMosesPickupWeapon::BeginPlay()
 		InteractSphere->OnComponentEndOverlap.AddDynamic(this, &AMosesPickupWeapon::HandleSphereEndOverlap);
 	}
 
-	// [MOD] Prompt widget는 기본 Hidden
+	// Prompt widget는 기본 Hidden
 	SetPromptVisible_Local(false);
 
-	// 월드 메쉬 적용(선택)
+	// ---------------------------------------------------------------------
+	// [MOD] 월드 스켈레탈 메시 적용(선택)
+	// - SoftObjectPtr이므로 LoadSynchronous가 필요할 수 있다.
+	// - 여기서는 IsValid()가 true면 Get() 사용(이미 로드된 경우).
+	// ---------------------------------------------------------------------
 	if (PickupData && PickupData->WorldMesh.IsValid())
 	{
-		Mesh->SetStaticMesh(PickupData->WorldMesh.Get());
+		Mesh->SetSkeletalMesh(PickupData->WorldMesh.Get());
 	}
 
-	// [MOD] Prompt 텍스트는 위젯이 준비된 이후 갱신되도록 BeginPlay에서 한 번 시도
+	// Prompt 텍스트는 위젯이 준비된 이후 갱신되도록 BeginPlay에서 한 번 시도
 	ApplyPromptText_Local();
 }
 
@@ -115,7 +140,8 @@ bool AMosesPickupWeapon::ServerTryPickup(AMosesPlayerState* RequesterPS, FText& 
 	UMosesSlotOwnershipComponent* Slots = RequesterPS ? RequesterPS->FindComponentByClass<UMosesSlotOwnershipComponent>() : nullptr;
 	if (!Slots)
 	{
-		UE_LOG(LogMosesPickup, Error, TEXT("[PICKUP][SV] FAIL MissingSlots Actor=%s Player=%s"), *GetNameSafe(this), *GetNameSafe(RequesterPS));
+		UE_LOG(LogMosesPickup, Error, TEXT("[PICKUP][SV] FAIL MissingSlots Actor=%s Player=%s"),
+			*GetNameSafe(this), *GetNameSafe(RequesterPS));
 		return false;
 	}
 
@@ -127,9 +153,7 @@ bool AMosesPickupWeapon::ServerTryPickup(AMosesPlayerState* RequesterPS, FText& 
 	// 지급(SSOT) - 기존 로직 유지
 	Slots->ServerAcquireSlot(PickupData->SlotIndex, PickupData->ItemId);
 
-	// [MOD] 성공 Announcement 텍스트 구성
-	// - 데이터에 DisplayName이 있으면 그걸 사용
-	// - 없으면 ItemId 문자열 사용
+	// 성공 Announcement 텍스트 구성
 	const FText NameText = !PickupData->DisplayName.IsEmpty()
 		? PickupData->DisplayName
 		: FText::FromString(PickupData->ItemId.ToString());
@@ -159,9 +183,7 @@ void AMosesPickupWeapon::HandleSphereBeginOverlap(
 		return;
 	}
 
-	// ---------------------------------------------------------------------
 	// 로컬 UX: 로컬 Pawn만 하이라이트/프롬프트 표시
-	// ---------------------------------------------------------------------
 	if (Pawn->IsLocallyControlled())
 	{
 		LocalPromptPawn = Pawn;
@@ -221,7 +243,6 @@ void AMosesPickupWeapon::ApplyPromptText_Local()
 		return;
 	}
 
-	// 위젯 인스턴스가 생성되어 있다면 텍스트를 갱신한다.
 	UUserWidget* Widget = PromptWidgetComponent->GetUserWidgetObject();
 	UMosesPickupPromptWidget* Prompt = Cast<UMosesPickupPromptWidget>(Widget);
 	if (!Prompt)
