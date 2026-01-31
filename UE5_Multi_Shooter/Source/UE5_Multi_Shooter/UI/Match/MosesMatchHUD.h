@@ -1,10 +1,11 @@
 ﻿// ============================================================================
 // MosesMatchHUD.h (FULL)
-// - HUD는 표시만 담당 (Tick/Binding 금지)
-// - PlayerState(SSOT) + MatchGameState(복제) Delegate로만 갱신
-// - [MOD] 클라2에서 GameState 바인딩 타이밍 이슈 -> Timer 기반 재시도
-// - [MOD] PhaseText: Warmup="워밍업"(흰), Combat="매치"(빨강), Result="결과"(흰)
-// - [MOD] Phase rollback(Combat인데 Warmup 늦게 도착 등) 방지
+// - PhaseText: Warmup -> "워밍업"(흰색), Combat -> "매치"(빨강), Result -> "결과"(흰색)
+// - Tick/Binding 금지: Delegate 이벤트에서만 SetText/SetColor
+// - [FIX] Phase 전환 시 HUD가 제거/재생성되어 이벤트를 "놓치는" 케이스 대응
+//        -> BindRetry + GS Snapshot Apply 로 복구
+// - [FIX] 클라2에서 Warmup 카운트가 가끔 멈추는 케이스 대응
+//        -> GS delegate 바인딩이 늦게 되더라도 스냅샷 재적용 + 재바인딩
 // ============================================================================
 
 #pragma once
@@ -13,26 +14,18 @@
 #include "Blueprint/UserWidget.h"
 
 #include "UE5_Multi_Shooter/GameMode/GameState/MosesMatchPhase.h"
-#include "UE5_Multi_Shooter/GameMode/GameState/MosesMatchGameState.h" // FMosesAnnouncementState, EMosesMatchPhase
+#include "UE5_Multi_Shooter/GameMode/GameState/MosesMatchGameState.h"
 
 #include "MosesMatchHUD.generated.h"
 
 class UProgressBar;
 class UTextBlock;
-class UButton;
-
-class UMosesMatchAnnouncementWidget;
 
 class AMosesPlayerState;
 class AMosesMatchGameState;
 
-/**
- * Match HUD
- * - 서버 권위 구조에서 HUD는 "표시만" 담당한다.
- * - 상태 소스:
- *   - PlayerState(SSOT): HP/Shield/Score/Deaths/Ammo/Grenade
- *   - MatchGameState(복제): RemainingTime/Phase/Announcement
- */
+class UMosesMatchAnnouncementWidget;
+
 UCLASS(Abstract)
 class UE5_MULTI_SHOOTER_API UMosesMatchHUD : public UUserWidget
 {
@@ -47,17 +40,24 @@ protected:
 
 private:
 	// --------------------------------------------------------------------
-	// Bind (Tick 금지 → Timer 재시도)
+	// Bind / Retry
 	// --------------------------------------------------------------------
 	void BindToPlayerState();
 	void BindToGameState_Match();
-	void RefreshInitial();
 
-	// [MOD] Bind 재시도 (클라2 타이밍 이슈)
-	void ScheduleBindRetry();
+	// [FIX] 바인딩이 늦게 되는(SeamlessTravel/PIE 타이밍) 케이스를 위한 재시도
+	void StartBindRetry();
+	void StopBindRetry();
 	void TryBindRetry();
-	bool IsBoundToPlayerState() const;
-	bool IsBoundToMatchGameState() const;
+
+	bool IsPlayerStateBound() const;
+	bool IsMatchGameStateBound() const;
+
+	// [FIX] 현재 GS 스냅샷을 UI에 강제 적용 (이벤트 놓쳤을 때 복구용)
+	void ApplySnapshotFromMatchGameState();
+
+	/** 초기값 반영(틱/바인딩 금지). */
+	void RefreshInitial();
 
 	// --------------------------------------------------------------------
 	// PlayerState Delegate Handlers
@@ -77,17 +77,16 @@ private:
 	void HandleAnnouncementChanged(const FMosesAnnouncementState& State);
 
 	// --------------------------------------------------------------------
-	// Util
+	// Helpers
 	// --------------------------------------------------------------------
 	static FString ToMMSS(int32 TotalSeconds);
 
-	// [MOD] PhaseText 표시 정책 (한글)
 	static FText GetPhaseText_KR(EMosesMatchPhase Phase);
 
-	// [MOD] PhaseText 색상 정책
-	static FSlateColor GetPhaseColor(EMosesMatchPhase Phase);
+	// [FIX] HUD 표시용 마지막 Phase 캐시 (역행 이벤트 무시)
+	EMosesMatchPhase LastAppliedPhase = EMosesMatchPhase::WaitingForPlayers;
 
-	// [MOD] Phase rollback 방지용 우선순위
+	// [FIX] Phase 우선순위
 	static int32 GetPhasePriority(EMosesMatchPhase Phase);
 
 private:
@@ -142,14 +141,12 @@ private:
 	TWeakObjectPtr<AMosesPlayerState> CachedPlayerState;
 	TWeakObjectPtr<AMosesMatchGameState> CachedMatchGameState;
 
-	// [MOD] HUD 표시용 마지막 Phase 캐시 (역행 이벤트 무시)
-	EMosesMatchPhase LastAppliedPhase = EMosesMatchPhase::WaitingForPlayers;
-
-	// [MOD] Bind 재시도 타이머 (Tick 금지)
+private:
+	// =====================================================================
+	// [FIX] Bind Retry Timer
+	// =====================================================================
 	FTimerHandle BindRetryHandle;
-	int32 BindRetryCount = 0;
-
-	// [MOD] 재시도 정책
-	static constexpr int32 BindRetryMaxCount = 30;   // 30 * 0.2 = 약 6초
-	static constexpr float BindRetryInterval = 0.2f;
+	int32 BindRetryTryCount = 0;
+	int32 BindRetryMaxTry = 25;        // 필요하면 늘려도 됨
+	float BindRetryInterval = 0.20f;   // GF_UI Retry랑 동일한 리듬
 };
