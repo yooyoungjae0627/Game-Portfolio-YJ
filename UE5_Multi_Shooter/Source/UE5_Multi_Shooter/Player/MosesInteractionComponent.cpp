@@ -22,33 +22,88 @@ void UMosesInteractionComponent::BeginPlay()
 {
 	Super::BeginPlay();
 
-	// 로컬 플레이어만 대상 갱신
-	if (APawn* Pawn = GetOwningPawn())
-	{
-		if (Pawn->IsLocallyControlled())
-		{
-			if (UWorld* World = GetWorld())
-			{
-				World->GetTimerManager().SetTimer(
-					TimerHandle_UpdateTarget,
-					this,
-					&UMosesInteractionComponent::UpdateInteractTarget_Local,
-					UpdateInterval,
-					true);
-			}
-		}
-	}
+	// [MOD] Overlap 기반이므로 타이머/트레이스 없음.
+	// 로컬 타겟은 Pickup/Flag의 Overlap에서 Set/Clear 된다.
+	CachedTarget = FMosesInteractTarget();
 }
 
 void UMosesInteractionComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
-	if (UWorld* World = GetWorld())
-	{
-		World->GetTimerManager().ClearTimer(TimerHandle_UpdateTarget);
-	}
+	// [MOD] 타이머 없음. 정리만 수행.
+	CachedTarget = FMosesInteractTarget();
+	PressedTarget = nullptr;
+	bHoldingInteract = false;
 
 	Super::EndPlay(EndPlayReason);
 }
+
+// ============================================================================
+// [MOD] Target Set/Clear (Local only)
+// ============================================================================
+
+void UMosesInteractionComponent::SetCurrentInteractTarget_Local(AActor* NewTarget)
+{
+	APawn* Pawn = GetOwningPawn();
+	if (!Pawn || !Pawn->IsLocallyControlled())
+	{
+		return;
+	}
+
+	if (!IsValid(NewTarget))
+	{
+		return;
+	}
+
+	const EMosesInteractTargetType NewType = ResolveTargetType(NewTarget);
+	if (NewType == EMosesInteractTargetType::None)
+	{
+		return;
+	}
+
+	// 동일 타겟이면 스킵
+	if (CachedTarget.TargetActor.Get() == NewTarget && CachedTarget.Type == NewType)
+	{
+		return;
+	}
+
+	CachedTarget.Type = NewType;
+	CachedTarget.TargetActor = NewTarget;
+
+	UE_LOG(LogMosesCombat, Verbose, TEXT("[INTERACT][CL] Target SET Type=%d Target=%s Owner=%s"),
+		static_cast<int32>(CachedTarget.Type),
+		*GetNameSafe(CachedTarget.TargetActor.Get()),
+		*GetNameSafe(GetOwner()));
+}
+
+void UMosesInteractionComponent::ClearCurrentInteractTarget_Local(AActor* ExpectedTarget)
+{
+	APawn* Pawn = GetOwningPawn();
+	if (!Pawn || !Pawn->IsLocallyControlled())
+	{
+		return;
+	}
+
+	if (!ExpectedTarget)
+	{
+		return;
+	}
+
+	// 현재 타겟과 같을 때만 해제
+	if (CachedTarget.TargetActor.Get() != ExpectedTarget)
+	{
+		return;
+	}
+
+	UE_LOG(LogMosesCombat, Verbose, TEXT("[INTERACT][CL] Target CLEAR Target=%s Owner=%s"),
+		*GetNameSafe(ExpectedTarget),
+		*GetNameSafe(GetOwner()));
+
+	CachedTarget = FMosesInteractTarget();
+}
+
+// ============================================================================
+// Input Endpoints
+// ============================================================================
 
 void UMosesInteractionComponent::RequestInteractPressed()
 {
@@ -83,54 +138,9 @@ void UMosesInteractionComponent::RequestInteractReleased()
 	ServerInteractReleased(ReleaseTarget);
 }
 
-void UMosesInteractionComponent::UpdateInteractTarget_Local()
-{
-	CachedTarget = FindBestTarget_Local();
-}
-
-FMosesInteractTarget UMosesInteractionComponent::FindBestTarget_Local() const
-{
-	FMosesInteractTarget Out;
-
-	APlayerController* PC = GetOwningPC();
-	APawn* Pawn = GetOwningPawn();
-	if (!PC || !Pawn || !GetWorld())
-	{
-		return Out;
-	}
-
-	FVector ViewLoc;
-	FRotator ViewRot;
-	PC->GetPlayerViewPoint(ViewLoc, ViewRot);
-
-	const FVector Start = ViewLoc;
-	const FVector End = Start + (ViewRot.Vector() * TraceDistance);
-
-	FCollisionQueryParams Params(SCENE_QUERY_STAT(MosesInteractTrace), false);
-	Params.AddIgnoredActor(Pawn);
-
-	FHitResult Hit;
-	const bool bHit = GetWorld()->LineTraceSingleByChannel(Hit, Start, End, ECC_Visibility, Params);
-	if (!bHit || !Hit.GetActor())
-	{
-		return Out;
-	}
-
-	AActor* HitActor = Hit.GetActor();
-
-	if (HitActor->IsA<AMosesFlagSpot>())
-	{
-		Out.Type = EMosesInteractTargetType::FlagSpot;
-		Out.TargetActor = HitActor;
-	}
-	else if (HitActor->IsA<AMosesPickupWeapon>())
-	{
-		Out.Type = EMosesInteractTargetType::Pickup;
-		Out.TargetActor = HitActor;
-	}
-
-	return Out;
-}
+// ============================================================================
+// Server RPC
+// ============================================================================
 
 void UMosesInteractionComponent::ServerInteractPressed_Implementation(AActor* TargetActor)
 {
@@ -141,6 +151,10 @@ void UMosesInteractionComponent::ServerInteractReleased_Implementation(AActor* T
 {
 	HandleInteractReleased_Server(TargetActor);
 }
+
+// ============================================================================
+// Server Handlers
+// ============================================================================
 
 void UMosesInteractionComponent::HandleInteractPressed_Server(AActor* TargetActor)
 {
@@ -169,8 +183,10 @@ void UMosesInteractionComponent::HandleInteractPressed_Server(AActor* TargetActo
 	if (AMosesFlagSpot* Flag = Cast<AMosesFlagSpot>(TargetActor))
 	{
 		const bool bOK = Flag->ServerTryStartCapture(PS);
+
 		UE_LOG(LogMosesFlag, Log, TEXT("[FLAG][SV] CaptureStartReq Player=%s Spot=%s OK=%d"),
 			*GetNameSafe(PS), *GetNameSafe(Flag), bOK ? 1 : 0);
+
 		return;
 	}
 
@@ -179,10 +195,13 @@ void UMosesInteractionComponent::HandleInteractPressed_Server(AActor* TargetActo
 	// ---------------------------------------------------------------------
 	if (AMosesPickupWeapon* Pickup = Cast<AMosesPickupWeapon>(TargetActor))
 	{
+		const APawn* Pawn = GetOwningPawn();
+		const float Dist = Pawn ? FVector::Distance(Pawn->GetActorLocation(), Pickup->GetActorLocation()) : -1.0f;
+
 		UE_LOG(LogMosesPickup, Log, TEXT("[PICKUP][SV] Try Player=%s Target=%s Dist=%.1f"),
 			*GetNameSafe(PS),
 			*GetNameSafe(Pickup),
-			FVector::Distance(GetOwningPawn()->GetActorLocation(), Pickup->GetActorLocation()));
+			Dist);
 
 		FText AnnounceText;
 		const bool bOK = Pickup->ServerTryPickup(PS, AnnounceText);
@@ -190,13 +209,12 @@ void UMosesInteractionComponent::HandleInteractPressed_Server(AActor* TargetActo
 		UE_LOG(LogMosesPickup, Log, TEXT("[PICKUP][SV] Result Player=%s Actor=%s OK=%d"),
 			*GetNameSafe(PS), *GetNameSafe(Pickup), bOK ? 1 : 0);
 
-		// [MOD] 성공 시 중앙 Announcement (RepNotify -> Delegate -> HUD)
+		// 성공 시 중앙 Announcement (RepNotify -> Delegate -> HUD)
 		if (bOK)
 		{
 			AMosesMatchGameState* GS = GetMatchGameState();
 			if (GS)
 			{
-				// 4초 표시는 오늘 기획 기본값
 				GS->ServerStartAnnouncementText(AnnounceText, 4);
 
 				UE_LOG(LogMosesPhase, Warning, TEXT("[ANN][SV] Set Text=\"%s\" Dur=4"),
@@ -231,10 +249,15 @@ void UMosesInteractionComponent::HandleInteractReleased_Server(AActor* TargetAct
 	if (AMosesFlagSpot* Flag = Cast<AMosesFlagSpot>(TargetActor))
 	{
 		Flag->ServerCancelCapture(PS, EMosesCaptureCancelReason::Released);
+
 		UE_LOG(LogMosesFlag, Log, TEXT("[FLAG][SV] CaptureCancel(Released) Player=%s Spot=%s"),
 			*GetNameSafe(PS), *GetNameSafe(Flag));
 	}
 }
+
+// ============================================================================
+// Guards / Helpers
+// ============================================================================
 
 bool UMosesInteractionComponent::IsWithinUseDistance_Server(const AActor* TargetActor) const
 {
@@ -269,4 +292,24 @@ AMosesMatchGameState* UMosesInteractionComponent::GetMatchGameState() const
 {
 	UWorld* World = GetWorld();
 	return World ? World->GetGameState<AMosesMatchGameState>() : nullptr;
+}
+
+EMosesInteractTargetType UMosesInteractionComponent::ResolveTargetType(AActor* TargetActor)
+{
+	if (!TargetActor)
+	{
+		return EMosesInteractTargetType::None;
+	}
+
+	if (TargetActor->IsA<AMosesFlagSpot>())
+	{
+		return EMosesInteractTargetType::FlagSpot;
+	}
+
+	if (TargetActor->IsA<AMosesPickupWeapon>())
+	{
+		return EMosesInteractTargetType::Pickup;
+	}
+
+	return EMosesInteractTargetType::None;
 }

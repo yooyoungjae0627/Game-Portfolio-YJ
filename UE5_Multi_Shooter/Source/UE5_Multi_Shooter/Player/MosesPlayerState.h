@@ -1,4 +1,19 @@
-﻿#pragma once
+﻿// ============================================================================
+// MosesPlayerState.h (FULL)  [MOD]
+// ----------------------------------------------------------------------------
+// SSOT = PlayerState
+//
+// [MOD]
+// - 픽업 지급 실패 원인: ServerTryPickup에서 UMosesSlotOwnershipComponent를 찾지 못함.
+// - 해결: PlayerState(SSOT)에서 SlotOwnershipComponent를 C++로 "무조건" 생성/보장.
+// - 픽업은 RequesterPS->GetSlotOwnershipComponent()로 접근하면 FAIL MissingSlots가 사라진다.
+//
+// 규칙
+// - Tick/Binding 금지
+// - HUD는 Delegate 브릿지로만 갱신
+// ============================================================================
+
+#pragma once
 
 #include "CoreMinimal.h"
 #include "AbilitySystemInterface.h"
@@ -12,6 +27,9 @@ class UMosesAttributeSet;
 class UMosesCombatComponent;
 class UMosesPawnData;
 class UMosesLobbyLocalPlayerSubsystem;
+
+// [MOD] 픽업/슬롯 SSOT
+class UMosesSlotOwnershipComponent;
 
 // -------------------------
 // Lobby delegates (existing)
@@ -84,6 +102,9 @@ public:
 
 	UMosesCombatComponent* GetCombatComponent() const { return CombatComponent; }
 	const UMosesAttributeSet* GetMosesAttributeSet() const { return AttributeSet; }
+
+	// [MOD] 픽업 지급에 필요한 슬롯 소유 컴포넌트 (C++에서 무조건 생성/보장)
+	UMosesSlotOwnershipComponent* GetSlotOwnershipComponent() const { return SlotOwnershipComponent; }
 
 	// ----------------------------
 	// Lobby delegates (existing)
@@ -229,6 +250,10 @@ private:
 
 	UPROPERTY()
 	TObjectPtr<UMosesAttributeSet> AttributeSet = nullptr;
+
+	// [MOD] 픽업 지급을 위한 슬롯 소유 컴포넌트(SSOT)
+	UPROPERTY(VisibleAnywhere, Category = "Moses|Pickup")
+	TObjectPtr<UMosesSlotOwnershipComponent> SlotOwnershipComponent = nullptr;
 
 private:
 	// ----------------------------

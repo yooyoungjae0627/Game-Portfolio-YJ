@@ -7,10 +7,11 @@
 // - 성공 시 PlayerState SSOT(슬롯 소유/ItemId) 갱신 + 중앙 Announcement 텍스트 반환.
 //
 // [MOD 핵심]
-// - Mesh: UStaticMeshComponent -> USkeletalMeshComponent
-// - PickupData.WorldMesh: StaticMesh -> SkeletalMesh
-// - [MOD] TraceTarget(Box): LineTrace(ECC_Visibility)로 선택 가능하도록 추가
-//   (Mesh는 NoCollision 유지 가능. Trace는 TraceTarget이 담당)
+// - [MOD] Overlap 기반 타겟 시스템:
+//   * 로컬 Pawn이 InteractSphere에 들어오면, Pawn의 UMosesInteractionComponent에
+//     SetCurrentInteractTarget_Local(this)를 호출한다.
+//   * 나가면 ClearCurrentInteractTarget_Local(this).
+// - (라인트레이스/TraceTarget 의존 제거 가능)
 // ============================================================================
 
 #pragma once
@@ -22,11 +23,11 @@
 class USphereComponent;
 class USkeletalMeshComponent;
 class UWidgetComponent;
-class UBoxComponent;
 
 class UMosesPickupWeaponData;
 class UMosesPickupPromptWidget;
 class AMosesPlayerState;
+class UMosesInteractionComponent;
 
 UCLASS()
 class UE5_MULTI_SHOOTER_API AMosesPickupWeapon : public AActor
@@ -46,7 +47,7 @@ protected:
 	virtual void BeginPlay() override;
 
 private:
-	// ---- Overlap for local highlight + prompt ----
+	// ---- Overlap for local highlight + prompt + [MOD] target set/clear ----
 	UFUNCTION()
 	void HandleSphereBeginOverlap(
 		UPrimitiveComponent* OverlappedComp,
@@ -70,24 +71,20 @@ private:
 	// ---- Guards ----
 	bool CanPickup_Server(const AMosesPlayerState* RequesterPS) const;
 
+	// [MOD] interaction component resolve
+	UMosesInteractionComponent* GetInteractionComponentFromPawn(APawn* Pawn) const;
+
 private:
 	// ---- Components ----
 	UPROPERTY(VisibleAnywhere)
 	TObjectPtr<USceneComponent> Root;
 
-	/** [MOD] 월드 표시용 스켈레탈 메시 */
 	UPROPERTY(VisibleAnywhere)
 	TObjectPtr<USkeletalMeshComponent> Mesh;
 
-	/** 근접 감지(프롬프트/하이라이트 트리거) */
 	UPROPERTY(VisibleAnywhere)
 	TObjectPtr<USphereComponent> InteractSphere;
 
-	/** [MOD] Trace 선택용 박스(Visibility Block) */
-	UPROPERTY(VisibleAnywhere)
-	TObjectPtr<UBoxComponent> TraceTarget;
-
-	/** 월드 말풍선 UI */
 	UPROPERTY(VisibleAnywhere)
 	TObjectPtr<UWidgetComponent> PromptWidgetComponent;
 

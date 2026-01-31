@@ -9,7 +9,7 @@
 #include "UE5_Multi_Shooter/System/MosesAuthorityGuards.h"
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
 
-#include "UE5_Multi_Shooter/Player/MosesInteractionComponent.h" // [MOD]
+#include "UE5_Multi_Shooter/Player/MosesInteractionComponent.h" 
 
 #include "UE5_Multi_Shooter/Camera/MosesCameraComponent.h"
 

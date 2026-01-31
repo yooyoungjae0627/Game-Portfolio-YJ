@@ -1,4 +1,11 @@
-﻿#include "UE5_Multi_Shooter/Player/MosesPlayerState.h"
+﻿// ============================================================================
+// MosesPlayerState.cpp (FULL)  [MOD]
+// ----------------------------------------------------------------------------
+// [MOD]
+// - SlotOwnershipComponent를 C++에서 생성하여 픽업 지급(MissingSlots)을 제거한다.
+// ============================================================================
+
+#include "UE5_Multi_Shooter/Player/MosesPlayerState.h"
 
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
 #include "UE5_Multi_Shooter/Combat/MosesCombatComponent.h"
@@ -9,9 +16,13 @@
 #include "UE5_Multi_Shooter/GAS/Components/MosesAbilitySystemComponent.h"
 #include "UE5_Multi_Shooter/GAS/AttributeSet/MosesAttributeSet.h"
 
+// [MOD] SlotOwnershipComponent include
+#include "UE5_Multi_Shooter/Player/MosesSlotOwnershipComponent.h"
+
 #include "Net/UnrealNetwork.h"
 #include "GameFramework/PlayerController.h"
 #include "Engine/LocalPlayer.h"
+#include "GameplayTagContainer.h"
 
 AMosesPlayerState::AMosesPlayerState(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
@@ -26,28 +37,24 @@ AMosesPlayerState::AMosesPlayerState(const FObjectInitializer& ObjectInitializer
 	AttributeSet = CreateDefaultSubobject<UMosesAttributeSet>(TEXT("MosesAttributeSet"));
 
 	CombatComponent = CreateDefaultSubobject<UMosesCombatComponent>(TEXT("MosesCombatComponent"));
+
+	// ---------------------------------------------------------------------
+	// [MOD] 픽업 지급(무기 슬롯/아이템Id)을 위한 SSOT 컴포넌트 보장
+	// ---------------------------------------------------------------------
+	SlotOwnershipComponent = CreateDefaultSubobject<UMosesSlotOwnershipComponent>(TEXT("MosesSlotOwnershipComponent"));
+
+	UE_LOG(LogMosesPlayer, Warning, TEXT("[PS][CTOR] SSOT Components Created Combat=%s Slots=%s"),
+		*GetNameSafe(CombatComponent),
+		*GetNameSafe(SlotOwnershipComponent));
 }
 
 void AMosesPlayerState::PostInitializeComponents()
 {
 	Super::PostInitializeComponents();
 
-	// [MOD] Combat 초기값은 서버에서만 확정(중복 호출 안전)
-	//if (HasAuthority() && CombatComponent)
-	//{
-	//	UE_LOG(LogMosesCombat, Warning, TEXT("%s PS PostInit -> EnsureCombatInit PS=%s"),
-	//		MOSES_TAG_COMBAT_SV, *GetNameSafe(this));
-
-	//	CombatComponent->Server_EnsureInitialized_Day2();
-	//}
-
-	//BindCombatDelegatesOnce();
-
 	if (HasAuthority() && CombatComponent)
 	{
 		// [TMP] 임시 기본 무기 1회 세팅 (Slot1만이라도 유효하게 만들어 Fire 루트 오픈)
-		// - GameplayTag 이름은 프로젝트에 존재하는 태그로 정확히 맞춰야 한다.
-		// - 예: "Weapon.Rifle.A"
 		const FGameplayTag TmpSlot1 = FGameplayTag::RequestGameplayTag(FName(TEXT("Weapon.Rifle.A")));
 		const FGameplayTag TmpSlot2; // None
 		const FGameplayTag TmpSlot3; // None
@@ -388,7 +395,6 @@ void AMosesPlayerState::BroadcastSelectedCharacterChanged(const TCHAR* Reason)
 
 void AMosesPlayerState::NotifyLobbyPlayerStateChanged_Local(const TCHAR* Reason) const
 {
-	// PlayerState의 Owner는 보통 PlayerController가 맞지만, 안전하게 검사한다.
 	APlayerController* PC = Cast<APlayerController>(GetOwner());
 	if (!PC || !PC->IsLocalController())
 	{
@@ -423,16 +429,13 @@ void AMosesPlayerState::BindCombatDelegatesOnce()
 
 	bCombatDelegatesBound = true;
 
-	//CombatComponent->OnCombatDataChangedNative.AddUObject(this, &ThisClass::HandleCombatDataChanged_Native);
-	//CombatComponent->OnCombatDataChangedBP.AddDynamic(this, &ThisClass::HandleCombatDataChanged_BP);
-
 	UE_LOG(LogMosesCombat, Warning, TEXT("%s Bound Combat delegates PS=%s CC=%s"),
 		MOSES_TAG_COMBAT_CL, *GetNameSafe(this), *GetNameSafe(CombatComponent));
 }
 
 void AMosesPlayerState::HandleCombatDataChanged_BP(const FString& Reason)
 {
-	// BP로 처리할 게 있으면 여기서 확장 가능 (현재는 Native 경유로 HUD 브릿지 처리)
+	// BP 확장 지점
 }
 
 void AMosesPlayerState::HandleCombatDataChanged_Native(const TCHAR* Reason)
@@ -440,7 +443,6 @@ void AMosesPlayerState::HandleCombatDataChanged_Native(const TCHAR* Reason)
 	UE_LOG(LogMosesCombat, Verbose, TEXT("%s CombatDataChanged Reason=%s PS=%s"),
 		MOSES_TAG_COMBAT_CL, Reason ? Reason : TEXT("None"), *GetNameSafe(this));
 
-	// Combat 변경 -> HUD 브릿지
 	BroadcastAmmoAndGrenade();
 }
 
@@ -451,30 +453,7 @@ void AMosesPlayerState::BroadcastAmmoAndGrenade()
 		return;
 	}
 
-	//const TArray<FAmmoState>& AmmoStates = CombatComponent->GetAmmoStates();
-	//if (AmmoStates.Num() <= 0)
-	//{
-	//	return;
-	//}
-
-	//// [정책] 현재 무기 개념이 없으므로 Rifle(0) 기준으로 표시 (Day2 완료 후 확장)
-	//{
-	//	const FAmmoState& Rifle = AmmoStates[0];
-	//	OnAmmoChanged.Broadcast(Rifle.MagAmmo, Rifle.ReserveAmmo);
-
-	//	UE_LOG(LogMosesCombat, Verbose, TEXT("%s AmmoChanged Rifle %d/%d"),
-	//		MOSES_TAG_HUD_CL, Rifle.MagAmmo, Rifle.ReserveAmmo);
-	//}
-
-	//// Grenade는 enum 3번, ReserveAmmo를 보유 개수로 사용 중인 정책 유지
-	//if (AmmoStates.Num() > 3)
-	//{
-	//	const FAmmoState& Grenade = AmmoStates[3];
-	//	OnGrenadeChanged.Broadcast(Grenade.ReserveAmmo);
-
-	//	UE_LOG(LogMosesCombat, Verbose, TEXT("%s GrenadeChanged Count=%d"),
-	//		MOSES_TAG_HUD_CL, Grenade.ReserveAmmo);
-	//}
+	// TODO: 4슬롯/무기별 탄약 분리는 이후 단계에서 확장
 }
 
 void AMosesPlayerState::BroadcastScore()

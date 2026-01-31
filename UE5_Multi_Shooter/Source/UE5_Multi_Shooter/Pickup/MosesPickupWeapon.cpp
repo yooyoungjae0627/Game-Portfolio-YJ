@@ -8,7 +8,6 @@
 #include "Components/SphereComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Components/WidgetComponent.h"
-#include "Components/BoxComponent.h"
 
 #include "Blueprint/UserWidget.h"
 #include "GameFramework/Pawn.h"
@@ -16,6 +15,7 @@
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
 #include "UE5_Multi_Shooter/Player/MosesSlotOwnershipComponent.h"
 #include "UE5_Multi_Shooter/Player/MosesPlayerState.h"
+#include "UE5_Multi_Shooter/Player/MosesInteractionComponent.h"
 #include "UE5_Multi_Shooter/UI/Match/MosesPickupPromptWidget.h"
 
 AMosesPickupWeapon::AMosesPickupWeapon()
@@ -25,9 +25,6 @@ AMosesPickupWeapon::AMosesPickupWeapon()
 	Root = CreateDefaultSubobject<USceneComponent>(TEXT("Root"));
 	SetRootComponent(Root);
 
-	// ---------------------------------------------------------------------
-	// [MOD] Skeletal Mesh Component
-	// ---------------------------------------------------------------------
 	Mesh = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("Mesh"));
 	Mesh->SetupAttachment(Root);
 	Mesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
@@ -41,32 +38,14 @@ AMosesPickupWeapon::AMosesPickupWeapon()
 	InteractSphere->SetCollisionResponseToChannel(ECC_Pawn, ECR_Overlap);
 	InteractSphere->SetGenerateOverlapEvents(true);
 
-	// ---------------------------------------------------------------------
-	// [MOD] TraceTarget: LineTrace(ECC_Visibility)로 선택 가능하도록 별도 타겟 제공
-	// - Mesh가 NoCollision이어도, 인터렉션 트레이스는 이 박스를 맞춘다.
-	// ---------------------------------------------------------------------
-	TraceTarget = CreateDefaultSubobject<UBoxComponent>(TEXT("TraceTarget"));
-	TraceTarget->SetupAttachment(Root);
-	TraceTarget->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
-	TraceTarget->SetCollisionResponseToAllChannels(ECR_Ignore);
-	TraceTarget->SetCollisionResponseToChannel(ECC_Visibility, ECR_Block);
-	TraceTarget->SetGenerateOverlapEvents(false);
-	TraceTarget->SetBoxExtent(FVector(60.f, 60.f, 80.f));
-
-	// ---------------------------------------------------------------------
-	// Prompt Widget Component (World UI)
-	// ---------------------------------------------------------------------
+	// Prompt Widget (World UI)
 	PromptWidgetComponent = CreateDefaultSubobject<UWidgetComponent>(TEXT("PromptWidget"));
 	PromptWidgetComponent->SetupAttachment(Root);
-
-	// 기본 정책: 월드 UI, 액터가 근접 시 Visible로 켠다.
 	PromptWidgetComponent->SetWidgetSpace(EWidgetSpace::World);
 	PromptWidgetComponent->SetDrawAtDesiredSize(true);
 	PromptWidgetComponent->SetTwoSided(true);
 	PromptWidgetComponent->SetVisibility(false);
 	PromptWidgetComponent->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-
-	// 프롬프트 위치 기본값
 	PromptWidgetComponent->SetRelativeLocation(FVector(0.f, 0.f, 110.f));
 }
 
@@ -83,23 +62,17 @@ void AMosesPickupWeapon::BeginPlay()
 	// Prompt widget는 기본 Hidden
 	SetPromptVisible_Local(false);
 
-	// ---------------------------------------------------------------------
-	// [MOD] 월드 스켈레탈 메시 적용(선택)
-	// - SoftObjectPtr이므로 LoadSynchronous가 필요할 수 있다.
-	// - 여기서는 IsValid()가 true면 Get() 사용(이미 로드된 경우).
-	// ---------------------------------------------------------------------
+	// 월드 스켈레탈 메시 적용(선택)
 	if (PickupData && PickupData->WorldMesh.IsValid())
 	{
 		Mesh->SetSkeletalMesh(PickupData->WorldMesh.Get());
 	}
 
-	// Prompt 텍스트는 위젯이 준비된 이후 갱신되도록 BeginPlay에서 한 번 시도
 	ApplyPromptText_Local();
 }
 
 void AMosesPickupWeapon::SetLocalHighlight(bool bEnable)
 {
-	// 로컬 코스메틱: CustomDepth 토글
 	if (Mesh)
 	{
 		Mesh->SetRenderCustomDepth(bEnable);
@@ -115,7 +88,6 @@ bool AMosesPickupWeapon::ServerTryPickup(AMosesPlayerState* RequesterPS, FText& 
 		return false;
 	}
 
-	// Guard (기본)
 	if (!CanPickup_Server(RequesterPS))
 	{
 		UE_LOG(LogMosesPickup, Warning, TEXT("[PICKUP][SV] FAIL Guard Actor=%s Player=%s"),
@@ -123,21 +95,19 @@ bool AMosesPickupWeapon::ServerTryPickup(AMosesPlayerState* RequesterPS, FText& 
 		return false;
 	}
 
-	// 원자성: 이미 소비됨
 	if (bConsumed)
 	{
 		UE_LOG(LogMosesPickup, Warning, TEXT("[PICKUP][SV] FAIL AlreadyConsumed Actor=%s"), *GetNameSafe(this));
 		return false;
 	}
 
-	// 필수 데이터/컴포넌트 검증을 먼저 한다. (실패 시 bConsumed를 켜면 안 된다)
 	if (!PickupData)
 	{
 		UE_LOG(LogMosesPickup, Error, TEXT("[PICKUP][SV] FAIL NoPickupData Actor=%s"), *GetNameSafe(this));
 		return false;
 	}
 
-	UMosesSlotOwnershipComponent* Slots = RequesterPS ? RequesterPS->FindComponentByClass<UMosesSlotOwnershipComponent>() : nullptr;
+	UMosesSlotOwnershipComponent* Slots = RequesterPS ? RequesterPS->GetSlotOwnershipComponent() : nullptr; // [MOD]
 	if (!Slots)
 	{
 		UE_LOG(LogMosesPickup, Error, TEXT("[PICKUP][SV] FAIL MissingSlots Actor=%s Player=%s"),
@@ -145,27 +115,21 @@ bool AMosesPickupWeapon::ServerTryPickup(AMosesPlayerState* RequesterPS, FText& 
 		return false;
 	}
 
-	// ---------------------------------------------------------------------
-	// Atomic consume point
-	// ---------------------------------------------------------------------
+	// Atomic consume
 	bConsumed = true;
 
-	// 지급(SSOT) - 기존 로직 유지
 	Slots->ServerAcquireSlot(PickupData->SlotIndex, PickupData->ItemId);
 
-	// 성공 Announcement 텍스트 구성
 	const FText NameText = !PickupData->DisplayName.IsEmpty()
 		? PickupData->DisplayName
 		: FText::FromString(PickupData->ItemId.ToString());
 
-	OutAnnounceText = FText::Format(
-		FText::FromString(TEXT("{0} 획득")),
-		NameText);
+	OutAnnounceText = FText::Format(FText::FromString(TEXT("{0} 획득")), NameText);
 
 	UE_LOG(LogMosesPickup, Log, TEXT("[PICKUP][SV] OK Player=%s Slot=%d Item=%s"),
 		*GetNameSafe(RequesterPS), PickupData->SlotIndex, *PickupData->ItemId.ToString());
 
-	Destroy(); // 서버 Destroy -> 클라에도 제거
+	Destroy();
 	return true;
 }
 
@@ -183,17 +147,22 @@ void AMosesPickupWeapon::HandleSphereBeginOverlap(
 		return;
 	}
 
-	// 로컬 UX: 로컬 Pawn만 하이라이트/프롬프트 표시
+	// 로컬 UX + [MOD] 타겟 세팅은 로컬 Pawn만
 	if (Pawn->IsLocallyControlled())
 	{
 		LocalPromptPawn = Pawn;
 
 		SetLocalHighlight(true);
-
 		ApplyPromptText_Local();
 		SetPromptVisible_Local(true);
 
-		UE_LOG(LogMosesPickup, Verbose, TEXT("[PICKUP][CL] Prompt Show Actor=%s Pawn=%s"),
+		// [MOD] Overlap 기반 타겟 등록
+		if (UMosesInteractionComponent* IC = GetInteractionComponentFromPawn(Pawn))
+		{
+			IC->SetCurrentInteractTarget_Local(this);
+		}
+
+		UE_LOG(LogMosesPickup, Verbose, TEXT("[PICKUP][CL] Prompt+Target Show Actor=%s Pawn=%s"),
 			*GetNameSafe(this), *GetNameSafe(Pawn));
 	}
 }
@@ -212,7 +181,6 @@ void AMosesPickupWeapon::HandleSphereEndOverlap(
 
 	if (Pawn->IsLocallyControlled())
 	{
-		// 현재 프롬프트 대상이면 숨김
 		if (LocalPromptPawn.Get() == Pawn)
 		{
 			LocalPromptPawn = nullptr;
@@ -221,14 +189,19 @@ void AMosesPickupWeapon::HandleSphereEndOverlap(
 		SetLocalHighlight(false);
 		SetPromptVisible_Local(false);
 
-		UE_LOG(LogMosesPickup, Verbose, TEXT("[PICKUP][CL] Prompt Hide Actor=%s Pawn=%s"),
+		// [MOD] Overlap 기반 타겟 해제
+		if (UMosesInteractionComponent* IC = GetInteractionComponentFromPawn(Pawn))
+		{
+			IC->ClearCurrentInteractTarget_Local(this);
+		}
+
+		UE_LOG(LogMosesPickup, Verbose, TEXT("[PICKUP][CL] Prompt+Target Hide Actor=%s Pawn=%s"),
 			*GetNameSafe(this), *GetNameSafe(Pawn));
 	}
 }
 
 void AMosesPickupWeapon::SetPromptVisible_Local(bool bVisible)
 {
-	// Prompt는 클라 코스메틱이다. (서버 권위 아님)
 	if (PromptWidgetComponent)
 	{
 		PromptWidgetComponent->SetVisibility(bVisible);
@@ -237,7 +210,6 @@ void AMosesPickupWeapon::SetPromptVisible_Local(bool bVisible)
 
 void AMosesPickupWeapon::ApplyPromptText_Local()
 {
-	// Prompt는 클라 코스메틱이지만, 서버에서도 BeginPlay가 도니 안전하게 체크한다.
 	if (!PromptWidgetComponent || !PickupData)
 	{
 		return;
@@ -247,7 +219,6 @@ void AMosesPickupWeapon::ApplyPromptText_Local()
 	UMosesPickupPromptWidget* Prompt = Cast<UMosesPickupPromptWidget>(Widget);
 	if (!Prompt)
 	{
-		// BP가 UMosesPickupPromptWidget를 Parent로 쓰지 않으면 캐스팅 실패할 수 있다.
 		return;
 	}
 
@@ -268,7 +239,10 @@ bool AMosesPickupWeapon::CanPickup_Server(const AMosesPlayerState* RequesterPS) 
 	{
 		return false;
 	}
-
-	// TODO: PhaseReject / DeadReject 등을 여기에 추가 가능
 	return true;
+}
+
+UMosesInteractionComponent* AMosesPickupWeapon::GetInteractionComponentFromPawn(APawn* Pawn) const
+{
+	return Pawn ? Pawn->FindComponentByClass<UMosesInteractionComponent>() : nullptr;
 }
