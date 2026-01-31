@@ -1,8 +1,14 @@
 // ============================================================================
-// MosesCaptureComponent.h (FULL)
-// - PlayerState(SSOT) 소유 컴포넌트
+// MosesCaptureComponent.h (FULL)  [MOD]
+// ----------------------------------------------------------------------------
+// Owner: PlayerState(SSOT)
 // - 캡처 진행도/상태를 RepNotify로 복제하고 Native Delegate로 HUD를 갱신한다.
 // - FlagSpot 서버가 이 컴포넌트의 값을 "서버에서만" 변경한다.
+//
+// 주의(중요)
+// - FlagSpot은 레벨 액터(비복제)로 운용할 수 있다.
+// - 따라서 CaptureState.Spot은 클라에서 null일 수 있으며,
+//   HUD는 Spot 포인터가 없어도 진행바 표시가 가능해야 한다.
 // ============================================================================
 
 #pragma once
@@ -43,11 +49,12 @@ struct FMosesCaptureState
 	UPROPERTY()
 	float HoldSeconds = 3.0f;
 
+	// [MOD] Spot은 클라에서 null일 수 있다(FlagSpot 비복제일 수 있음).
 	UPROPERTY()
 	TWeakObjectPtr<AMosesFlagSpot> Spot;
 };
 
-UCLASS(ClassGroup=(Moses), meta=(BlueprintSpawnableComponent))
+UCLASS(ClassGroup = (Moses), meta = (BlueprintSpawnableComponent))
 class UE5_MULTI_SHOOTER_API UMosesCaptureComponent : public UActorComponent
 {
 	GENERATED_BODY()
@@ -80,13 +87,16 @@ private:
 	void BroadcastCaptureState();
 	void BroadcastCaptures();
 
+private:
 	// ---- SSOT replicated state ----
-	UPROPERTY(ReplicatedUsing=OnRep_CaptureState)
+	UPROPERTY(ReplicatedUsing = OnRep_CaptureState)
 	FMosesCaptureState CaptureState;
 
-	UPROPERTY(ReplicatedUsing=OnRep_Captures)
+	UPROPERTY(ReplicatedUsing = OnRep_Captures)
 	int32 Captures = 0;
 
+	// [MOD] BestCaptureTimeSeconds는 Captures와 함께 HUD에 표시되는 값이므로
+	//       클라도 값 변경을 관찰할 수 있게 Replicated 유지.
 	UPROPERTY(Replicated)
 	float BestCaptureTimeSeconds = 0.0f; // 낮을수록 좋음
 };

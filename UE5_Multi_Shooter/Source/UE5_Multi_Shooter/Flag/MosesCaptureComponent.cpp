@@ -1,5 +1,5 @@
 ﻿// ============================================================================
-// MosesCaptureComponent.cpp (FULL)
+// MosesCaptureComponent.cpp (FULL)  [MOD]
 // ============================================================================
 
 #include "UE5_Multi_Shooter/Flag/MosesCaptureComponent.h"
@@ -31,13 +31,18 @@ void UMosesCaptureComponent::ServerSetCapturing(AMosesFlagSpot* Spot, bool bNewC
 	CaptureState.HoldSeconds = HoldSeconds;
 	CaptureState.Spot = Spot;
 
-	UE_LOG(LogMosesFlag, VeryVerbose, TEXT("[FLAG][SV] CaptureState PS=%s Capturing=%d Alpha=%.2f"),
-		*GetNameSafe(GetOwner()), CaptureState.bCapturing ? 1 : 0, CaptureState.ProgressAlpha);
+	UE_LOG(LogMosesFlag, VeryVerbose, TEXT("[CAPTURE][SV] State PS=%s Capturing=%d Alpha=%.2f Hold=%.2f Spot=%s"),
+		*GetNameSafe(GetOwner()),
+		CaptureState.bCapturing ? 1 : 0,
+		CaptureState.ProgressAlpha,
+		CaptureState.HoldSeconds,
+		*GetNameSafe(Spot));
 
-	BroadcastCaptureState(); // 서버도 즉시 HUD가 필요할 수 있어 브로드캐스트
+	// 서버도 즉시 HUD(로컬 디버그 등)가 필요할 수 있어 브로드캐스트
+	BroadcastCaptureState();
 }
 
-void UMosesCaptureComponent::ServerOnCaptureSucceeded(AMosesFlagSpot* /*Spot*/, float CaptureTimeSeconds)
+void UMosesCaptureComponent::ServerOnCaptureSucceeded(AMosesFlagSpot* Spot, float CaptureTimeSeconds)
 {
 	if (!GetOwner() || !GetOwner()->HasAuthority())
 	{
@@ -55,9 +60,14 @@ void UMosesCaptureComponent::ServerOnCaptureSucceeded(AMosesFlagSpot* /*Spot*/, 
 	// 캡처 상태 종료
 	CaptureState.bCapturing = false;
 	CaptureState.ProgressAlpha = 0.0f;
+	CaptureState.Spot = Spot;
 
-	UE_LOG(LogMosesFlag, Log, TEXT("[FLAG][SV] Captures++ PS=%s Captures=%d Best=%.2f"),
-		*GetNameSafe(GetOwner()), Captures, BestCaptureTimeSeconds);
+	UE_LOG(LogMosesFlag, Log, TEXT("[CAPTURE][SV] Success PS=%s Captures=%d Best=%.2f Time=%.2f Spot=%s"),
+		*GetNameSafe(GetOwner()),
+		Captures,
+		BestCaptureTimeSeconds,
+		CaptureTimeSeconds,
+		*GetNameSafe(Spot));
 
 	BroadcastCaptures();
 	BroadcastCaptureState();
@@ -65,16 +75,22 @@ void UMosesCaptureComponent::ServerOnCaptureSucceeded(AMosesFlagSpot* /*Spot*/, 
 
 void UMosesCaptureComponent::OnRep_CaptureState()
 {
-	UE_LOG(LogMosesFlag, Verbose, TEXT("[FLAG][CL] OnRep_CaptureState PS=%s Capturing=%d Alpha=%.2f"),
-		*GetNameSafe(GetOwner()), CaptureState.bCapturing ? 1 : 0, CaptureState.ProgressAlpha);
+	UE_LOG(LogMosesFlag, Verbose, TEXT("[CAPTURE][CL] OnRep_State PS=%s Capturing=%d Alpha=%.2f Hold=%.2f Spot=%s"),
+		*GetNameSafe(GetOwner()),
+		CaptureState.bCapturing ? 1 : 0,
+		CaptureState.ProgressAlpha,
+		CaptureState.HoldSeconds,
+		*GetNameSafe(CaptureState.Spot.Get()));
 
 	BroadcastCaptureState();
 }
 
 void UMosesCaptureComponent::OnRep_Captures()
 {
-	UE_LOG(LogMosesFlag, Verbose, TEXT("[FLAG][CL] OnRep_Captures PS=%s Captures=%d Best=%.2f"),
-		*GetNameSafe(GetOwner()), Captures, BestCaptureTimeSeconds);
+	UE_LOG(LogMosesFlag, Verbose, TEXT("[CAPTURE][CL] OnRep_Captures PS=%s Captures=%d Best=%.2f"),
+		*GetNameSafe(GetOwner()),
+		Captures,
+		BestCaptureTimeSeconds);
 
 	BroadcastCaptures();
 }
