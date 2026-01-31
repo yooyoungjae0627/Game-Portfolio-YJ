@@ -1,5 +1,5 @@
 ﻿// ============================================================================
-// MosesInteractionComponent.cpp (FULL)
+// MosesInteractionComponent.cpp (FULL)  [MOD]
 // ============================================================================
 
 #include "UE5_Multi_Shooter/Player/MosesInteractionComponent.h"
@@ -11,6 +11,7 @@
 #include "UE5_Multi_Shooter/Flag/MosesFlagSpot.h"
 #include "UE5_Multi_Shooter/Pickup/MosesPickupWeapon.h"
 #include "UE5_Multi_Shooter/Player/MosesPlayerState.h"
+#include "UE5_Multi_Shooter/GameMode/GameState/MosesMatchGameState.h"
 
 UMosesInteractionComponent::UMosesInteractionComponent()
 {
@@ -162,6 +163,9 @@ void UMosesInteractionComponent::HandleInteractPressed_Server(AActor* TargetActo
 		return;
 	}
 
+	// ---------------------------------------------------------------------
+	// FlagSpot
+	// ---------------------------------------------------------------------
 	if (AMosesFlagSpot* Flag = Cast<AMosesFlagSpot>(TargetActor))
 	{
 		const bool bOK = Flag->ServerTryStartCapture(PS);
@@ -170,11 +174,40 @@ void UMosesInteractionComponent::HandleInteractPressed_Server(AActor* TargetActo
 		return;
 	}
 
+	// ---------------------------------------------------------------------
+	// PickupWeapon
+	// ---------------------------------------------------------------------
 	if (AMosesPickupWeapon* Pickup = Cast<AMosesPickupWeapon>(TargetActor))
 	{
-		const bool bOK = Pickup->ServerTryPickup(PS);
-		UE_LOG(LogMosesPickup, Log, TEXT("[PICKUP][SV] PickupReq Player=%s Actor=%s OK=%d"),
+		UE_LOG(LogMosesPickup, Log, TEXT("[PICKUP][SV] Try Player=%s Target=%s Dist=%.1f"),
+			*GetNameSafe(PS),
+			*GetNameSafe(Pickup),
+			FVector::Distance(GetOwningPawn()->GetActorLocation(), Pickup->GetActorLocation()));
+
+		FText AnnounceText;
+		const bool bOK = Pickup->ServerTryPickup(PS, AnnounceText);
+
+		UE_LOG(LogMosesPickup, Log, TEXT("[PICKUP][SV] Result Player=%s Actor=%s OK=%d"),
 			*GetNameSafe(PS), *GetNameSafe(Pickup), bOK ? 1 : 0);
+
+		// [MOD] 성공 시 중앙 Announcement (RepNotify -> Delegate -> HUD)
+		if (bOK)
+		{
+			AMosesMatchGameState* GS = GetMatchGameState();
+			if (GS)
+			{
+				// 4초 표시는 오늘 기획 기본값
+				GS->ServerStartAnnouncementText(AnnounceText, 4);
+
+				UE_LOG(LogMosesPhase, Warning, TEXT("[ANN][SV] Set Text=\"%s\" Dur=4"),
+					*AnnounceText.ToString());
+			}
+			else
+			{
+				UE_LOG(LogMosesPhase, Warning, TEXT("[ANN][SV] FAIL NoMatchGameState (cannot broadcast)"));
+			}
+		}
+
 		return;
 	}
 
@@ -230,4 +263,10 @@ AMosesPlayerState* UMosesInteractionComponent::GetMosesPlayerState() const
 {
 	APawn* Pawn = GetOwningPawn();
 	return Pawn ? Pawn->GetPlayerState<AMosesPlayerState>() : nullptr;
+}
+
+AMosesMatchGameState* UMosesInteractionComponent::GetMatchGameState() const
+{
+	UWorld* World = GetWorld();
+	return World ? World->GetGameState<AMosesMatchGameState>() : nullptr;
 }

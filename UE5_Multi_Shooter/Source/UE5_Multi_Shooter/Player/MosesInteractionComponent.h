@@ -1,5 +1,5 @@
 // ============================================================================
-// MosesInteractionComponent.h (FULL)
+// MosesInteractionComponent.h (FULL)  [MOD]
 // ----------------------------------------------------------------------------
 // 역할
 // - 로컬(클라)에서 카메라 기반으로 "현재 상호작용 대상"을 선택한다.
@@ -24,6 +24,7 @@
 class AMosesFlagSpot;
 class AMosesPickupWeapon;
 class AMosesPlayerState;
+class AMosesMatchGameState;
 
 UENUM()
 enum class EMosesInteractTargetType : uint8
@@ -45,7 +46,7 @@ struct FMosesInteractTarget
 	TWeakObjectPtr<AActor> TargetActor;
 };
 
-UCLASS(ClassGroup=(Moses), meta=(BlueprintSpawnableComponent))
+UCLASS(ClassGroup = (Moses), meta = (BlueprintSpawnableComponent))
 class UE5_MULTI_SHOOTER_API UMosesInteractionComponent : public UActorComponent
 {
 	GENERATED_BODY()
@@ -84,17 +85,18 @@ private:
 	APawn* GetOwningPawn() const;
 	APlayerController* GetOwningPC() const;
 	AMosesPlayerState* GetMosesPlayerState() const;
+	AMosesMatchGameState* GetMatchGameState() const;
 
 private:
 	// Trace config (Local)
-	UPROPERTY(EditDefaultsOnly, Category="Interaction")
+	UPROPERTY(EditDefaultsOnly, Category = "Interaction")
 	float TraceDistance = 450.0f;
 
-	UPROPERTY(EditDefaultsOnly, Category="Interaction")
+	UPROPERTY(EditDefaultsOnly, Category = "Interaction")
 	float UpdateInterval = 0.05f;
 
 	// Server guard
-	UPROPERTY(EditDefaultsOnly, Category="Interaction")
+	UPROPERTY(EditDefaultsOnly, Category = "Interaction")
 	float MaxUseDistance = 250.0f;
 
 	FTimerHandle TimerHandle_UpdateTarget;
