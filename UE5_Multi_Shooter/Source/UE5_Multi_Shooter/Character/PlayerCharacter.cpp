@@ -1,7 +1,6 @@
 ﻿#include "UE5_Multi_Shooter/Character/PlayerCharacter.h"
 
 #include "UE5_Multi_Shooter/Character/Components/MosesHeroComponent.h"
-
 #include "UE5_Multi_Shooter/Combat/MosesCombatComponent.h"
 #include "UE5_Multi_Shooter/Weapon/MosesWeaponRegistrySubsystem.h"
 #include "UE5_Multi_Shooter/Weapon/MosesWeaponData.h"
@@ -9,8 +8,7 @@
 #include "UE5_Multi_Shooter/System/MosesAuthorityGuards.h"
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
 
-#include "UE5_Multi_Shooter/Player/MosesInteractionComponent.h" 
-
+#include "UE5_Multi_Shooter/Player/MosesInteractionComponent.h"
 #include "UE5_Multi_Shooter/Camera/MosesCameraComponent.h"
 
 #include "GameFramework/CharacterMovementComponent.h"
@@ -75,7 +73,6 @@ APlayerCharacter::APlayerCharacter()
 	MosesCameraComponent = CreateDefaultSubobject<UMosesCameraComponent>(TEXT("MosesCameraComponent"));
 	MosesCameraComponent->SetupAttachment(GetRootComponent());
 
-	// [MOD] InteractionComponent 생성 (E Hold 라우팅)
 	InteractionComponent = CreateDefaultSubobject<UMosesInteractionComponent>(TEXT("InteractionComponent"));
 
 	WeaponMeshComp = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("WeaponMeshComp"));
@@ -145,10 +142,6 @@ void APlayerCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCom
 
 	HeroComponent->SetupInputBindings(PlayerInputComponent);
 	HeroComponent->TryBindCameraModeDelegate_LocalOnly();
-
-	// 개발자 주석:
-	// - Interact Press/Release 바인딩은 HeroComponent 내부(EnhancedInput)에서
-	//   APlayerCharacter::Input_InteractPressed/Released를 호출하는 형태를 권장한다.
 }
 
 void APlayerCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
@@ -272,7 +265,6 @@ void APlayerCharacter::Input_JumpPressed()
 	Jump();
 }
 
-// [MOD] Interact Press/Release -> InteractionComponent 라우팅
 void APlayerCharacter::Input_InteractPressed()
 {
 	if (CachedCombatComponent && CachedCombatComponent->IsDead())
@@ -335,6 +327,32 @@ void APlayerCharacter::Input_EquipSlot3()
 	if (UMosesCombatComponent* CombatComp = GetCombatComponent_Checked())
 	{
 		CombatComp->RequestEquipSlot(3);
+	}
+}
+
+void APlayerCharacter::Input_EquipSlot4()
+{
+	if (CachedCombatComponent && CachedCombatComponent->IsDead())
+	{
+		return;
+	}
+
+	if (UMosesCombatComponent* CombatComp = GetCombatComponent_Checked())
+	{
+		CombatComp->RequestEquipSlot(4);
+	}
+}
+
+void APlayerCharacter::Input_Reload()
+{
+	if (CachedCombatComponent && CachedCombatComponent->IsDead())
+	{
+		return;
+	}
+
+	if (UMosesCombatComponent* CombatComp = GetCombatComponent_Checked())
+	{
+		CombatComp->RequestReload();
 	}
 }
 
@@ -712,7 +730,7 @@ void APlayerCharacter::TryPlayMontage_Local(UAnimMontage* Montage, const TCHAR* 
 }
 
 // ============================================================================
-// Fire AV - WeaponData 기반 (Field name unified)
+// Fire AV - WeaponData 기반
 // ============================================================================
 
 void APlayerCharacter::PlayFireAV_Local(FGameplayTag WeaponId) const
@@ -757,7 +775,6 @@ void APlayerCharacter::PlayFireAV_Local(FGameplayTag WeaponId) const
 		return;
 	}
 
-	// 1) Muzzle VFX (Cascade)
 	UParticleSystem* MuzzleFX = nullptr;
 	if (!Data->MuzzleVFX.IsNull())
 	{
@@ -780,7 +797,6 @@ void APlayerCharacter::PlayFireAV_Local(FGameplayTag WeaponId) const
 			true);
 	}
 
-	// 2) Fire SFX
 	USoundBase* FireSnd = nullptr;
 	if (!Data->FireSFX.IsNull())
 	{
@@ -793,10 +809,7 @@ void APlayerCharacter::PlayFireAV_Local(FGameplayTag WeaponId) const
 
 	if (FireSnd)
 	{
-		UGameplayStatics::SpawnSoundAttached(
-			FireSnd,
-			WeaponMeshComp,
-			MuzzleSocket);
+		UGameplayStatics::SpawnSoundAttached(FireSnd, WeaponMeshComp, MuzzleSocket);
 	}
 }
 

@@ -30,8 +30,46 @@ enum class EMosesWeaponType : uint8
 UENUM(BlueprintType)
 enum class EMosesFireMode : uint8
 {
-	Click,
-	Auto
+	Click	UMETA(DisplayName = "Click"),
+	Auto	UMETA(DisplayName = "Auto"),
+};
+
+/**
+ * EMosesWeaponSlot
+ *
+ * [중요]
+ * - UHT 경고 방지: 반드시 0 엔트리(None)를 둔다.
+ */
+UENUM(BlueprintType)
+enum class EMosesWeaponSlot : uint8
+{
+	None = 0 UMETA(DisplayName = "None"),
+
+	Slot1 = 1 UMETA(DisplayName = "Slot1"),
+	Slot2 = 2 UMETA(DisplayName = "Slot2"),
+	Slot3 = 3 UMETA(DisplayName = "Slot3"),
+	Slot4 = 4 UMETA(DisplayName = "Slot4"),
+};
+
+/**
+ * EMosesAmmoType  ✅ [NEW]
+ *
+ * [역할]
+ * - 무기별 탄약을 분리하기 위한 타입.
+ * - RifleAmmo != ShotgunAmmo != SniperAmmo != GrenadeAmmo
+ *
+ * [주의]
+ * - UENUM 기본값(0) 안전을 위해 None을 둔다.
+ */
+UENUM(BlueprintType)
+enum class EMosesAmmoType : uint8
+{
+	None = 0 UMETA(DisplayName = "None"),
+
+	Rifle = 1 UMETA(DisplayName = "Rifle"),
+	Shotgun = 2 UMETA(DisplayName = "Shotgun"),
+	Sniper = 3 UMETA(DisplayName = "Sniper"),
+	Grenade = 4 UMETA(DisplayName = "Grenade"),
 };
 
 /**
@@ -39,11 +77,6 @@ enum class EMosesFireMode : uint8
  *
  * [역할]
  * - 탄약 상태를 묶은 데이터 구조체.
- *
- * [주의]
- * - 현재 CombatComponent(SSOT)는 RepNotify/Delegate를 위해
- *   슬롯별 Mag/Reserve를 개별 int32로 복제한다.
- * - 이 구조체는 향후 GAS/데이터 통합 시 사용 가능성을 위해 유지한다.
  */
 USTRUCT(BlueprintType)
 struct FAmmoState
@@ -80,10 +113,6 @@ public:
  *
  * [역할]
  * - 슬롯 단위 무기 상태를 묶은 데이터 구조체.
- *
- * [주의]
- * - 현재 SSOT(CombatComponent)는 GameplayTag 기반 WeaponId를 사용한다.
- * - 본 구조체의 WeaponId(int32)는 예전/타 시스템 호환용으로 남겨둘 수 있다.
  */
 USTRUCT(BlueprintType)
 struct FWeaponSlotState

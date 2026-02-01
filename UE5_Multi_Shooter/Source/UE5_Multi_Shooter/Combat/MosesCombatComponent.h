@@ -1,20 +1,14 @@
 ﻿// ============================================================================
-// MosesCombatComponent.h (FULL)
+// MosesCombatComponent.h (FULL)  [MOD]
 // ----------------------------------------------------------------------------
 // Owner = PlayerState (SSOT)
 // ----------------------------------------------------------------------------
-// [역할]
-// - 서버 권위 전투 SSOT 컴포넌트
-// - 장착/발사/탄약/사망 상태를 "PlayerState 소유"로 유지한다.
-// - 모든 HUD 갱신은 RepNotify -> Native Delegate 기반 (Tick/Binding 금지)
-//
-// [발사 정책]
-// - [FIX] 발사 쿨다운은 "몽타주 길이"가 아니라 DefaultFireIntervalSec(=발사속도) 기반.
-//   => 몽타주가 끝나지 않아도 서버 쿨다운만 통과하면 계속 발사 승인 가능.
-//
-// [코스메틱 정책]
-// - 서버 승인된 WeaponId를 Multicast 파라미터로 전파하여
-//   무기별 SFX/VFX를 클라에서 재생한다. (Dedicated Server는 코스메틱 재생 금지)
+// [MOD]
+// - 슬롯 1~4 고정 확장
+// - Reload 서버 권위 + 서버 타이머
+// - 기본 지급: Slot1 Rifle.A + 30/90
+// - Damage: GAS(SetByCaller Data.Damage) 우선 적용 + ASC 없으면 ApplyDamage fallback
+// - HUD 갱신: RepNotify -> Native Delegate (Tick/Binding 금지)
 // ============================================================================
 
 #pragma once
@@ -27,11 +21,11 @@
 #include "MosesCombatComponent.generated.h"
 
 class UMosesWeaponData;
-class AMosesPlayerState;
 
 DECLARE_MULTICAST_DELEGATE_TwoParams(FMosesOnEquippedChanged, int32 /*SlotIndex*/, FGameplayTag /*WeaponId*/);
 DECLARE_MULTICAST_DELEGATE_TwoParams(FMosesOnAmmoChangedNative, int32 /*Mag*/, int32 /*Reserve*/);
 DECLARE_MULTICAST_DELEGATE_OneParam(FMosesOnDeadChangedNative, bool /*bNewDead*/);
+DECLARE_MULTICAST_DELEGATE_OneParam(FMosesOnReloadingChangedNative, bool /*bReloading*/);
 
 UENUM(BlueprintType)
 enum class EMosesFireGuardFailReason : uint8
@@ -71,6 +65,7 @@ public:
 	int32 GetCurrentReserveAmmo() const;
 
 	bool IsDead() const { return bIsDead; }
+	bool IsReloading() const { return bIsReloading; }
 
 	// =========================================================================
 	// Equip API (Client -> Server)
@@ -79,12 +74,6 @@ public:
 
 	UFUNCTION(Server, Reliable)
 	void ServerEquipSlot(int32 SlotIndex);
-
-	// 서버: 기본 슬롯 초기화(Day2 초기화용)
-	void ServerInitDefaultSlots(const FGameplayTag& InSlot1, const FGameplayTag& InSlot2, const FGameplayTag& InSlot3);
-
-	// 서버: 안전장치(슬롯/탄 초기화가 누락된 상황을 보정)
-	void Server_EnsureInitialized_Day2();
 
 	// =========================================================================
 	// Fire API (Client -> Server)
@@ -95,11 +84,28 @@ public:
 	void ServerFire();
 
 	// =========================================================================
+	// Reload API (Client -> Server)  [MOD]
+	// =========================================================================
+	void RequestReload();
+
+	UFUNCTION(Server, Reliable)
+	void ServerReload();
+
+	// =========================================================================
+	// Default Init / Loadout (Server only)  [MOD]
+	// =========================================================================
+	void ServerInitDefaultSlots_4(const FGameplayTag& InSlot1, const FGameplayTag& InSlot2, const FGameplayTag& InSlot3, const FGameplayTag& InSlot4);
+	void ServerGrantDefaultRifleAmmo_30_90();
+
+	// =========================================================================
 	// Delegates (RepNotify -> Delegate)
 	// =========================================================================
 	FMosesOnEquippedChanged OnEquippedChanged;
 	FMosesOnAmmoChangedNative OnAmmoChanged;
 	FMosesOnDeadChangedNative OnDeadChanged;
+
+	// [MOD] Reloading delegate (HUD/입력 게이팅에 사용 가능)
+	FMosesOnReloadingChangedNative OnReloadingChanged;
 
 	// =========================================================================
 	// Dead Hook (서버에서만 확정)
@@ -107,6 +113,7 @@ public:
 	void ServerMarkDead();
 
 protected:
+	virtual void BeginPlay() override;
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 
 private:
@@ -114,15 +121,19 @@ private:
 	// RepNotifies
 	// =========================================================================
 	UFUNCTION() void OnRep_CurrentSlot();
+
 	UFUNCTION() void OnRep_Slot1WeaponId();
 	UFUNCTION() void OnRep_Slot2WeaponId();
 	UFUNCTION() void OnRep_Slot3WeaponId();
+	UFUNCTION() void OnRep_Slot4WeaponId();
 
 	UFUNCTION() void OnRep_Slot1Ammo();
 	UFUNCTION() void OnRep_Slot2Ammo();
 	UFUNCTION() void OnRep_Slot3Ammo();
+	UFUNCTION() void OnRep_Slot4Ammo();
 
 	UFUNCTION() void OnRep_IsDead();
+	UFUNCTION() void OnRep_IsReloading();
 
 private:
 	// =========================================================================
@@ -131,6 +142,7 @@ private:
 	void BroadcastEquippedChanged(const TCHAR* ContextTag);
 	void BroadcastAmmoChanged(const TCHAR* ContextTag);
 	void BroadcastDeadChanged(const TCHAR* ContextTag);
+	void BroadcastReloadingChanged(const TCHAR* ContextTag);
 
 private:
 	// =========================================================================
@@ -152,14 +164,23 @@ private:
 
 	void Server_ConsumeAmmo_OnApprovedFire(const UMosesWeaponData* WeaponData);
 
-	// [FIX] 몽타주 길이 기반 쿨다운 제거 -> DefaultFireIntervalSec 기반
+	// [FIX] 쿨다운은 DefaultFireIntervalSec 기반
 	float Server_GetFireIntervalSec_FromWeaponData(const UMosesWeaponData* WeaponData) const;
 
 	bool Server_IsFireCooldownReady(const UMosesWeaponData* WeaponData) const;
 	void Server_UpdateFireCooldownStamp();
 
 	void Server_PerformHitscanAndApplyDamage(const UMosesWeaponData* WeaponData);
+	bool Server_ApplyDamageToTarget_GAS(AActor* TargetActor, float Damage, AController* InstigatorController, AActor* DamageCauser, const UMosesWeaponData* WeaponData) const;
+
 	void Server_PropagateFireCosmetics(FGameplayTag ApprovedWeaponId);
+
+private:
+	// =========================================================================
+	// Reload helpers (Server only)  [MOD]
+	// =========================================================================
+	void Server_StartReload(const UMosesWeaponData* WeaponData);
+	void Server_FinishReload();
 
 private:
 	// =========================================================================
@@ -176,6 +197,10 @@ private:
 
 	UPROPERTY(ReplicatedUsing = OnRep_Slot3WeaponId)
 	FGameplayTag Slot3WeaponId;
+
+	// [MOD] Slot4 추가
+	UPROPERTY(ReplicatedUsing = OnRep_Slot4WeaponId)
+	FGameplayTag Slot4WeaponId;
 
 	UPROPERTY(ReplicatedUsing = OnRep_Slot1Ammo)
 	int32 Slot1MagAmmo = 0;
@@ -195,25 +220,33 @@ private:
 	UPROPERTY(ReplicatedUsing = OnRep_Slot3Ammo)
 	int32 Slot3ReserveAmmo = 0;
 
+	// [MOD] Slot4 Ammo 추가
+	UPROPERTY(ReplicatedUsing = OnRep_Slot4Ammo)
+	int32 Slot4MagAmmo = 0;
+
+	UPROPERTY(ReplicatedUsing = OnRep_Slot4Ammo)
+	int32 Slot4ReserveAmmo = 0;
+
 	UPROPERTY(ReplicatedUsing = OnRep_IsDead)
 	bool bIsDead = false;
+
+	// [MOD] Reload 상태
+	UPROPERTY(ReplicatedUsing = OnRep_IsReloading)
+	bool bIsReloading = false;
 
 private:
 	// =========================================================================
 	// Runtime guards / stamps
 	// =========================================================================
 	UPROPERTY(Transient)
-	bool bInitialized_Day2 = false;
+	bool bInitialized_DefaultSlots = false;
 
 	// 슬롯별 발사 쿨다운 타임스탬프(서버 시간)
 	UPROPERTY(Transient)
-	double Slot1LastFireTimeSec = -9999.0;
+	double SlotLastFireTimeSec[4] = { -9999.0, -9999.0, -9999.0, -9999.0 };
 
-	UPROPERTY(Transient)
-	double Slot2LastFireTimeSec = -9999.0;
-
-	UPROPERTY(Transient)
-	double Slot3LastFireTimeSec = -9999.0;
+	// [MOD] Reload 타이머
+	FTimerHandle ReloadTimerHandle;
 
 private:
 	// =========================================================================
@@ -231,10 +264,15 @@ private:
 	UPROPERTY(EditDefaultsOnly, Category = "Moses|Fire")
 	float HeadshotDamageMultiplier = 2.0f;
 
-	// [FIX] 서버 쿨다운은 이제 이 값이 기준(=연사 속도)
+	// 서버 쿨다운 기준(=연사 속도)
 	UPROPERTY(EditDefaultsOnly, Category = "Moses|Fire")
 	float DefaultFireIntervalSec = 0.12f;
 
+	// 기본 ApplyDamage fallback 데미지(가능하면 사용하지 않음)
 	UPROPERTY(EditDefaultsOnly, Category = "Moses|Fire")
 	float DefaultDamage = 25.0f;
+
+	// [MOD] GAS Damage GE(SetByCaller Data.Damage)
+	UPROPERTY(EditDefaultsOnly, Category = "Moses|GAS")
+	TSoftClassPtr<class UGameplayEffect> DamageGE_SetByCaller;
 };

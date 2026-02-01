@@ -10,7 +10,7 @@ class AController;
 class UMosesHeroComponent;
 class UMosesCameraComponent;
 class UMosesCombatComponent;
-class UMosesInteractionComponent; // [MOD]
+class UMosesInteractionComponent;
 
 class USkeletalMeshComponent;
 class UAnimMontage;
@@ -36,13 +36,18 @@ public:
 
 	void Input_JumpPressed();
 
-	// [MOD] Interact Press/Release (Hold-to-capture)
 	void Input_InteractPressed();
 	void Input_InteractReleased();
 
 	void Input_EquipSlot1();
 	void Input_EquipSlot2();
 	void Input_EquipSlot3();
+
+	// [MOD] Slot4
+	void Input_EquipSlot4();
+
+	// [MOD] Reload
+	void Input_Reload();
 
 	// =========================================================================
 	// Hold-to-fire
@@ -111,7 +116,6 @@ private:
 	// =========================================================================
 	void TryPlayMontage_Local(UAnimMontage* Montage, const TCHAR* DebugTag) const;
 
-	// [MOD] WeaponData 필드명 기준으로 SFX/VFX 재생
 	void PlayFireAV_Local(FGameplayTag WeaponId) const;
 
 	void ApplyDeadCosmetics_Local() const;
@@ -134,7 +138,6 @@ private:
 	UPROPERTY(VisibleAnywhere, Category = "Moses|Components")
 	TObjectPtr<UMosesCameraComponent> MosesCameraComponent = nullptr;
 
-	// [MOD] E Hold 라우팅 컴포넌트
 	UPROPERTY(VisibleAnywhere, Category = "Moses|Components")
 	TObjectPtr<UMosesInteractionComponent> InteractionComponent = nullptr;
 

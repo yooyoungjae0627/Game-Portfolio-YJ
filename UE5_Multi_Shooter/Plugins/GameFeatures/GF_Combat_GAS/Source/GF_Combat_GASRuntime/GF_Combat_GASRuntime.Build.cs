@@ -6,28 +6,30 @@ public class GF_Combat_GASRuntime : ModuleRules
     {
         PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
 
-        PublicDependencyModuleNames.AddRange(
-            new string[]
-            {
-                "Core",
-                "CoreUObject",
-                "Engine",
+        PublicDependencyModuleNames.AddRange(new string[]
+        {
+            "Core",
+            "CoreUObject",
+            "Engine",
 
-				// GameFeature 런타임 훅
-				"GameFeatures",
+			// GameFeatureAction / ActivatingContext
+			"GameFeatures",
 
-				// GAS 핵심 3종 모듈 (GameplayAbilities 플러그인이 제공)
-				"GameplayAbilities",
-                "GameplayTags",
-                "GameplayTasks"
-            }
-        );
+			// GAS
+			"GameplayAbilities",
+            "GameplayTags",
+            "GameplayTasks",
 
-        PrivateDependencyModuleNames.AddRange(
-            new string[]
-            {
-				// 필요 시 추가
-			}
-        );
+			// =================================================================
+			// ✅ [MOD] Dependency mode (실무형)
+			// - GF가 프로젝트 타입/로그/AbilitySet을 직접 참조한다.
+			// - AMosesPlayerState / UMosesAbilitySet / MosesLogChannels 사용 가능
+			// =================================================================
+			"UE5_Multi_Shooter",
+        });
+
+        PrivateDependencyModuleNames.AddRange(new string[]
+        {
+        });
     }
 }

@@ -1,28 +1,27 @@
 ﻿// ============================================================================
-// MosesPlayerState.cpp (FULL)  [MOD]
+// MosesPlayerState.cpp (FULL)
 // ----------------------------------------------------------------------------
-// [MOD]
+//
 // - SlotOwnershipComponent를 C++에서 생성하여 픽업 지급(MissingSlots)을 제거한다.
+// - 4슬롯 초기화(ServerInitDefaultSlots_4) + 기본 지급(30/90) 적용
+// - GF_Combat_GAS에서 AbilitySet을 서버에서 "실제 부여"할 수 있도록 API 추가
 // ============================================================================
 
 #include "UE5_Multi_Shooter/Player/MosesPlayerState.h"
-
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
 #include "UE5_Multi_Shooter/Combat/MosesCombatComponent.h"
 #include "UE5_Multi_Shooter/System/MosesLobbyLocalPlayerSubsystem.h"
-
 #include "UE5_Multi_Shooter/System/MosesAuthorityGuards.h"
-
 #include "UE5_Multi_Shooter/GAS/Components/MosesAbilitySystemComponent.h"
 #include "UE5_Multi_Shooter/GAS/AttributeSet/MosesAttributeSet.h"
-
-// [MOD] SlotOwnershipComponent include
 #include "UE5_Multi_Shooter/Player/MosesSlotOwnershipComponent.h"
+#include "UE5_Multi_Shooter/GAS/MosesAbilitySet.h"
 
 #include "Net/UnrealNetwork.h"
 #include "GameFramework/PlayerController.h"
 #include "Engine/LocalPlayer.h"
 #include "GameplayTagContainer.h"
+
 
 AMosesPlayerState::AMosesPlayerState(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
@@ -54,12 +53,20 @@ void AMosesPlayerState::PostInitializeComponents()
 
 	if (HasAuthority() && CombatComponent)
 	{
-		// [TMP] 임시 기본 무기 1회 세팅 (Slot1만이라도 유효하게 만들어 Fire 루트 오픈)
+		// -----------------------------------------------------------------
+		// [MOD] DAY6 기본 슬롯 4개 초기화(기획: 나머지는 파밍이면 None 유지)
+		// -----------------------------------------------------------------
 		const FGameplayTag TmpSlot1 = FGameplayTag::RequestGameplayTag(FName(TEXT("Weapon.Rifle.A")));
-		const FGameplayTag TmpSlot2; // None
-		const FGameplayTag TmpSlot3; // None
+		const FGameplayTag TmpSlot2; // None (파밍으로 획득)
+		const FGameplayTag TmpSlot3; // None (파밍으로 획득)
+		const FGameplayTag TmpSlot4; // None (파밍으로 획득)
 
-		CombatComponent->ServerInitDefaultSlots(TmpSlot1, TmpSlot2, TmpSlot3);
+		CombatComponent->ServerInitDefaultSlots_4(TmpSlot1, TmpSlot2, TmpSlot3, TmpSlot4);
+
+		// -----------------------------------------------------------------
+		// [MOD] DAY6 기본 지급: 라이플 탄약 30/90
+		// -----------------------------------------------------------------
+		ServerGrantDefaultMatchLoadoutIfNeeded();
 	}
 
 	BindCombatDelegatesOnce();
@@ -177,6 +184,61 @@ void AMosesPlayerState::TryInitASC(AActor* InAvatarActor)
 	BroadcastDeaths();
 	BroadcastAmmoAndGrenade();
 }
+
+// ============================================================================
+// [MOD] GF_Combat_GAS: AbilitySet apply (Server only)
+// ============================================================================
+
+void AMosesPlayerState::ServerApplyCombatAbilitySetOnce(UMosesAbilitySet* InAbilitySet)
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	if (bCombatAbilitySetApplied)
+	{
+		return;
+	}
+
+	if (!InAbilitySet || !MosesAbilitySystemComponent)
+	{
+		UE_LOG(LogMosesGAS, Warning, TEXT("[GAS][SV][PS] ApplyAbilitySet FAIL PS=%s"), *GetNameSafe(this));
+		return;
+	}
+
+	// ✅ [MOD] 전역 static 대신, PlayerState 멤버 핸들을 사용
+	InAbilitySet->GiveToAbilitySystem(*MosesAbilitySystemComponent, CombatAbilitySetHandles);
+	bCombatAbilitySetApplied = true;
+
+	UE_LOG(LogMosesGAS, Warning, TEXT("[GAS][SV][PS] AbilitySet Applied PS=%s Set=%s"),
+		*GetNameSafe(this), *GetNameSafe(InAbilitySet));
+}
+
+// ============================================================================
+// [MOD] Match default loadout (Server only)
+// ============================================================================
+
+void AMosesPlayerState::ServerGrantDefaultMatchLoadoutIfNeeded()
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	if (!CombatComponent)
+	{
+		return;
+	}
+
+	CombatComponent->ServerGrantDefaultRifleAmmo_30_90(); // 네가 구현한 기본 지급 함수에 맞춰 호출
+
+	UE_LOG(LogMosesWeapon, Warning, TEXT("[WEAPON][SV][PS] DefaultMatchLoadout Granted PS=%s"), *GetNameSafe(this));
+}
+
+// ============================================================================
+// 이하 기존 코드(로비/복제/델리게이트 브릿지/HP 등) 원문 유지
+// ============================================================================
 
 void AMosesPlayerState::EnsurePersistentId_Server()
 {

@@ -14,7 +14,7 @@ AMosesWeaponActor::AMosesWeaponActor()
 	WeaponMesh->bCastDynamicShadow = true;
 	WeaponMesh->CastShadow = true;
 
-	bReplicates = false; // [중요] 코스메틱은 OnRep로 각 클라에서 로컬 스폰
+	bReplicates = false; // 코스메틱은 OnRep로 각 클라에서 로컬 스폰
 }
 
 void AMosesWeaponActor::BeginPlay()

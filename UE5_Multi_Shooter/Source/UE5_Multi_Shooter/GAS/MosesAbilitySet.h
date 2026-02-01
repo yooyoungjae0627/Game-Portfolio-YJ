@@ -17,10 +17,9 @@ class UAbilitySystemComponent;
  * - AbilitySet이 ASC에 부여한 “핸들들”을 추적해 나중에 제거할 수 있게 한다.
  *
  * [주의]
- * -“부여”만으로 충분하지만,
+ * - “부여”만으로 충분하지만,
  *   확장(Experience 교체/모드 전환 등)에서는 제거가 필요할 수 있다.
  */
-
 USTRUCT(BlueprintType)
 struct FMosesAbilitySet_GrantedHandles
 {
@@ -44,7 +43,6 @@ public:
  * [역할]
  * - 부여할 GameplayAbility의 정보(레벨/입력ID 포함).
  */
-
 USTRUCT(BlueprintType)
 struct FMosesAbilitySet_AbilityEntry
 {
@@ -91,7 +89,6 @@ public:
  * - 데이터만 보관한다.
  * - 실제 적용은 서버에서만 수행한다.
  */
-
 UCLASS(BlueprintType)
 class UE5_MULTI_SHOOTER_API UMosesAbilitySet : public UDataAsset
 {

@@ -1,10 +1,13 @@
 ﻿// ============================================================================
-// MosesCombatComponent.cpp (FULL)
+// MosesCombatComponent.cpp (FULL)  [MOD]
 // ----------------------------------------------------------------------------
 // Owner = PlayerState (SSOT)
 // ----------------------------------------------------------------------------
-// [FIX] 발사 쿨다운을 "몽타주 길이"에서 DefaultFireIntervalSec 기반으로 변경
-//       => 몽타주가 안 끝나도 입력이 계속 오면 서버 쿨다운만 통과하면 발사 승인.
+// [MOD]
+// - 슬롯 1~4 확장
+// - Reload 서버 권위 + 서버 타이머
+// - 기본 지급: Slot1 Rifle.A + 30/90
+// - Damage: GAS(SetByCaller Data.Damage) 우선 + ASC 없으면 ApplyDamage fallback
 // ============================================================================
 
 #include "UE5_Multi_Shooter/Combat/MosesCombatComponent.h"
@@ -20,6 +23,14 @@
 #include "GameFramework/Pawn.h"
 #include "GameFramework/Controller.h"
 #include "Kismet/GameplayStatics.h"
+#include "TimerManager.h"
+
+// GAS
+#include "AbilitySystemInterface.h"
+#include "AbilitySystemComponent.h"
+#include "GameplayEffect.h"
+#include "GameplayEffectTypes.h"
+#include "GameplayTagContainer.h"
 
 namespace MosesCombat_Private
 {
@@ -44,15 +55,31 @@ namespace MosesCombat_Private
 	{
 		return Cast<APlayerCharacter>(GetOwnerPawn(Comp));
 	}
+
+	static int32 ClampSlotIndex(int32 SlotIndex)
+	{
+		return FMath::Clamp(SlotIndex, 1, 4);
+	}
 }
 
 // ============================================================================
-// Ctor / Replication
+// Ctor / BeginPlay / Replication
 // ============================================================================
 
 UMosesCombatComponent::UMosesCombatComponent()
 {
+	PrimaryComponentTick.bCanEverTick = false;
 	SetIsReplicatedByDefault(true);
+}
+
+void UMosesCombatComponent::BeginPlay()
+{
+	Super::BeginPlay();
+
+	if (GetOwner() && GetOwner()->HasAuthority())
+	{
+		UE_LOG(LogMosesCombat, Warning, TEXT("[WEAPON][SV] CombatComponent BeginPlay PS=%s"), *GetNameSafe(GetOwner()));
+	}
 }
 
 void UMosesCombatComponent::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
@@ -64,6 +91,7 @@ void UMosesCombatComponent::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>
 	DOREPLIFETIME(UMosesCombatComponent, Slot1WeaponId);
 	DOREPLIFETIME(UMosesCombatComponent, Slot2WeaponId);
 	DOREPLIFETIME(UMosesCombatComponent, Slot3WeaponId);
+	DOREPLIFETIME(UMosesCombatComponent, Slot4WeaponId);
 
 	DOREPLIFETIME(UMosesCombatComponent, Slot1MagAmmo);
 	DOREPLIFETIME(UMosesCombatComponent, Slot1ReserveAmmo);
@@ -74,7 +102,11 @@ void UMosesCombatComponent::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>
 	DOREPLIFETIME(UMosesCombatComponent, Slot3MagAmmo);
 	DOREPLIFETIME(UMosesCombatComponent, Slot3ReserveAmmo);
 
+	DOREPLIFETIME(UMosesCombatComponent, Slot4MagAmmo);
+	DOREPLIFETIME(UMosesCombatComponent, Slot4ReserveAmmo);
+
 	DOREPLIFETIME(UMosesCombatComponent, bIsDead);
+	DOREPLIFETIME(UMosesCombatComponent, bIsReloading);
 }
 
 // ============================================================================
@@ -108,6 +140,61 @@ int32 UMosesCombatComponent::GetCurrentReserveAmmo() const
 }
 
 // ============================================================================
+// Default init / loadout (Server)  [MOD]
+// ============================================================================
+
+void UMosesCombatComponent::ServerInitDefaultSlots_4(const FGameplayTag& InSlot1, const FGameplayTag& InSlot2, const FGameplayTag& InSlot3, const FGameplayTag& InSlot4)
+{
+	if (!GetOwner() || !GetOwner()->HasAuthority())
+	{
+		return;
+	}
+
+	Slot1WeaponId = InSlot1;
+	Slot2WeaponId = InSlot2;
+	Slot3WeaponId = InSlot3;
+	Slot4WeaponId = InSlot4;
+
+	CurrentSlot = 1;
+
+	Server_EnsureAmmoInitializedForSlot(1, Slot1WeaponId);
+	Server_EnsureAmmoInitializedForSlot(2, Slot2WeaponId);
+	Server_EnsureAmmoInitializedForSlot(3, Slot3WeaponId);
+	Server_EnsureAmmoInitializedForSlot(4, Slot4WeaponId);
+
+	bInitialized_DefaultSlots = true;
+
+	UE_LOG(LogMosesWeapon, Warning, TEXT("[WEAPON][SV] InitDefaultSlots_4 S1=%s S2=%s S3=%s S4=%s"),
+		*Slot1WeaponId.ToString(), *Slot2WeaponId.ToString(), *Slot3WeaponId.ToString(), *Slot4WeaponId.ToString());
+
+	BroadcastEquippedChanged(TEXT("ServerInitDefaultSlots_4"));
+	BroadcastAmmoChanged(TEXT("ServerInitDefaultSlots_4"));
+}
+
+void UMosesCombatComponent::ServerGrantDefaultRifleAmmo_30_90()
+{
+	if (!GetOwner() || !GetOwner()->HasAuthority())
+	{
+		return;
+	}
+
+	if (!Slot1WeaponId.IsValid())
+	{
+		UE_LOG(LogMosesWeapon, Warning, TEXT("[AMMO][SV] DefaultRifleAmmo FAIL (Slot1WeaponId invalid)"));
+		return;
+	}
+
+	// 기획: Rifle 기본 지급 = 30/90
+	SetSlotAmmo_Internal(1, 30, 90);
+
+	CurrentSlot = 1;
+	OnRep_CurrentSlot();
+
+	UE_LOG(LogMosesWeapon, Warning, TEXT("[AMMO][SV] DefaultRifleAmmo Granted Slot=1 Mag=30 Reserve=90 Weapon=%s"),
+		*Slot1WeaponId.ToString());
+}
+
+// ============================================================================
 // Equip API
 // ============================================================================
 
@@ -134,90 +221,39 @@ void UMosesCombatComponent::ServerEquipSlot_Implementation(int32 SlotIndex)
 		return;
 	}
 
+	if (bIsReloading)
+	{
+		UE_LOG(LogMosesWeapon, Warning, TEXT("[WEAPON][SV] Equip Reject Reloading Slot=%d"), SlotIndex);
+		return;
+	}
+
 	if (!IsValidSlotIndex(SlotIndex))
 	{
 		UE_LOG(LogMosesWeapon, Warning, TEXT("[WEAPON][SV] Equip Reject InvalidSlot=%d"), SlotIndex);
 		return;
 	}
 
-	const FGameplayTag NewWeaponId = GetSlotWeaponIdInternal(SlotIndex);
+	const int32 NewSlot = MosesCombat_Private::ClampSlotIndex(SlotIndex);
+
+	const FGameplayTag NewWeaponId = GetSlotWeaponIdInternal(NewSlot);
 	if (!NewWeaponId.IsValid())
 	{
-		UE_LOG(LogMosesWeapon, Warning, TEXT("[WEAPON][SV] Equip Reject NoWeaponId Slot=%d"), SlotIndex);
+		UE_LOG(LogMosesWeapon, Warning, TEXT("[WEAPON][SV] Equip Reject NoWeaponId Slot=%d"), NewSlot);
 		return;
 	}
 
-	CurrentSlot = SlotIndex;
+	const int32 OldSlot = CurrentSlot;
+	const FGameplayTag OldWeaponId = GetEquippedWeaponId();
+
+	CurrentSlot = NewSlot;
 
 	Server_EnsureAmmoInitializedForSlot(CurrentSlot, NewWeaponId);
 
-	UE_LOG(LogMosesWeapon, Log, TEXT("[WEAPON][SV] Equip OK Slot=%d Weapon=%s"),
-		CurrentSlot, *NewWeaponId.ToString());
+	UE_LOG(LogMosesWeapon, Warning, TEXT("[WEAPON][SV] Swap Slot %d -> %d Weapon %s -> %s"),
+		OldSlot, CurrentSlot, *OldWeaponId.ToString(), *NewWeaponId.ToString());
 
 	BroadcastEquippedChanged(TEXT("ServerEquipSlot"));
 	BroadcastAmmoChanged(TEXT("ServerEquipSlot"));
-}
-
-void UMosesCombatComponent::ServerInitDefaultSlots(const FGameplayTag& InSlot1, const FGameplayTag& InSlot2, const FGameplayTag& InSlot3)
-{
-	if (!GetOwner() || !GetOwner()->HasAuthority())
-	{
-		return;
-	}
-
-	Slot1WeaponId = InSlot1;
-	Slot2WeaponId = InSlot2;
-	Slot3WeaponId = InSlot3;
-
-	CurrentSlot = 1;
-
-	Server_EnsureAmmoInitializedForSlot(1, Slot1WeaponId);
-	Server_EnsureAmmoInitializedForSlot(2, Slot2WeaponId);
-	Server_EnsureAmmoInitializedForSlot(3, Slot3WeaponId);
-
-	bInitialized_Day2 = true;
-
-	UE_LOG(LogMosesWeapon, Log, TEXT("[WEAPON][SV] InitDefaultSlots S1=%s S2=%s S3=%s"),
-		*Slot1WeaponId.ToString(), *Slot2WeaponId.ToString(), *Slot3WeaponId.ToString());
-
-	BroadcastEquippedChanged(TEXT("ServerInitDefaultSlots"));
-	BroadcastAmmoChanged(TEXT("ServerInitDefaultSlots"));
-}
-
-void UMosesCombatComponent::Server_EnsureInitialized_Day2()
-{
-	if (!GetOwner() || !GetOwner()->HasAuthority())
-	{
-		return;
-	}
-
-	if (bInitialized_Day2)
-	{
-		return;
-	}
-
-	const bool bHasAnyWeapon = Slot1WeaponId.IsValid() || Slot2WeaponId.IsValid() || Slot3WeaponId.IsValid();
-	if (!bHasAnyWeapon)
-	{
-		UE_LOG(LogMosesWeapon, Warning, TEXT("[WEAPON][SV] EnsureInit: No default weapon ids set yet (skip)"));
-		return;
-	}
-
-	if (!IsValidSlotIndex(CurrentSlot))
-	{
-		CurrentSlot = 1;
-	}
-
-	Server_EnsureAmmoInitializedForSlot(1, Slot1WeaponId);
-	Server_EnsureAmmoInitializedForSlot(2, Slot2WeaponId);
-	Server_EnsureAmmoInitializedForSlot(3, Slot3WeaponId);
-
-	bInitialized_Day2 = true;
-
-	UE_LOG(LogMosesWeapon, Log, TEXT("[WEAPON][SV] EnsureInit OK Slot=%d"), CurrentSlot);
-
-	BroadcastEquippedChanged(TEXT("Server_EnsureInitialized"));
-	BroadcastAmmoChanged(TEXT("Server_EnsureInitialized"));
 }
 
 // ============================================================================
@@ -231,7 +267,6 @@ void UMosesCombatComponent::RequestFire()
 		return;
 	}
 
-	// Owner=PlayerState 이므로 HasAuthority는 PS 기준으로 판단
 	if (GetOwner()->HasAuthority())
 	{
 		ServerFire_Implementation();
@@ -253,7 +288,7 @@ void UMosesCombatComponent::ServerFire_Implementation()
 
 	if (!Server_CanFire(Reason, Debug))
 	{
-		UE_LOG(LogMosesCombat, VeryVerbose, TEXT("[FIRE][SV] Reject(BasicGuard) Reason=%d Debug=%s Slot=%d Owner=%s"),
+		UE_LOG(LogMosesCombat, VeryVerbose, TEXT("[FIRE][SV] Reject Guard Reason=%d Debug=%s Slot=%d PS=%s"),
 			(int32)Reason, *Debug, CurrentSlot, *GetNameSafe(GetOwner()));
 		return;
 	}
@@ -266,7 +301,6 @@ void UMosesCombatComponent::ServerFire_Implementation()
 		return;
 	}
 
-	// [FIX] 쿨다운은 DefaultFireIntervalSec 기반
 	if (!Server_IsFireCooldownReady(WeaponData))
 	{
 		UE_LOG(LogMosesCombat, VeryVerbose, TEXT("[FIRE][SV] Reject(Cooldown) Slot=%d Weapon=%s"),
@@ -277,16 +311,119 @@ void UMosesCombatComponent::ServerFire_Implementation()
 	Server_UpdateFireCooldownStamp();
 	Server_ConsumeAmmo_OnApprovedFire(WeaponData);
 
-	UE_LOG(LogMosesCombat, Log, TEXT("[FIRE][SV] OK Slot=%d Weapon=%s Mag=%d Reserve=%d"),
-		CurrentSlot,
-		*ApprovedWeaponId.ToString(),
-		GetCurrentMagAmmo(),
-		GetCurrentReserveAmmo());
+	UE_LOG(LogMosesWeapon, Warning, TEXT("[WEAPON][SV] Fire Weapon=%s Slot=%d Mag=%d Reserve=%d"),
+		*ApprovedWeaponId.ToString(), CurrentSlot, GetCurrentMagAmmo(), GetCurrentReserveAmmo());
 
 	Server_PerformHitscanAndApplyDamage(WeaponData);
 	Server_PropagateFireCosmetics(ApprovedWeaponId);
 }
 
+// ============================================================================
+// Reload API 
+// ============================================================================
+
+void UMosesCombatComponent::RequestReload()
+{
+	if (!GetOwner())
+	{
+		return;
+	}
+
+	if (GetOwner()->HasAuthority())
+	{
+		ServerReload_Implementation();
+		return;
+	}
+
+	ServerReload();
+}
+
+void UMosesCombatComponent::ServerReload_Implementation()
+{
+	if (!GetOwner() || !GetOwner()->HasAuthority())
+	{
+		return;
+	}
+
+	if (bIsDead || bIsReloading)
+	{
+		return;
+	}
+
+	FGameplayTag WeaponId;
+	const UMosesWeaponData* WeaponData = Server_ResolveEquippedWeaponData(WeaponId);
+	if (!WeaponData)
+	{
+		return;
+	}
+
+	int32 Mag = 0;
+	int32 Reserve = 0;
+	GetSlotAmmo_Internal(CurrentSlot, Mag, Reserve);
+
+	if (Reserve <= 0 || Mag >= WeaponData->MagSize)
+	{
+		return;
+	}
+
+	Server_StartReload(WeaponData);
+}
+
+void UMosesCombatComponent::Server_StartReload(const UMosesWeaponData* WeaponData)
+{
+	if (!WeaponData)
+	{
+		return;
+	}
+
+	bIsReloading = true;
+	OnRep_IsReloading();
+
+	UE_LOG(LogMosesWeapon, Warning, TEXT("[WEAPON][SV] ReloadStart Slot=%d Weapon=%s Sec=%.2f"),
+		CurrentSlot, *GetEquippedWeaponId().ToString(), WeaponData->ReloadSeconds);
+
+	GetWorld()->GetTimerManager().SetTimer(
+		ReloadTimerHandle,
+		this,
+		&UMosesCombatComponent::Server_FinishReload,
+		WeaponData->ReloadSeconds,
+		false);
+}
+
+void UMosesCombatComponent::Server_FinishReload()
+{
+	if (!GetOwner() || !GetOwner()->HasAuthority())
+	{
+		return;
+	}
+
+	FGameplayTag WeaponId;
+	const UMosesWeaponData* WeaponData = Server_ResolveEquippedWeaponData(WeaponId);
+	if (!WeaponData)
+	{
+		bIsReloading = false;
+		OnRep_IsReloading();
+		return;
+	}
+
+	int32 Mag = 0;
+	int32 Reserve = 0;
+	GetSlotAmmo_Internal(CurrentSlot, Mag, Reserve);
+
+	const int32 Need = FMath::Max(WeaponData->MagSize - Mag, 0);
+	const int32 Give = FMath::Min(Need, Reserve);
+
+	Mag += Give;
+	Reserve -= Give;
+
+	SetSlotAmmo_Internal(CurrentSlot, Mag, Reserve);
+
+	bIsReloading = false;
+	OnRep_IsReloading();
+
+	UE_LOG(LogMosesWeapon, Warning, TEXT("[WEAPON][SV] ReloadFinish Slot=%d Weapon=%s Mag=%d Reserve=%d"),
+		CurrentSlot, *WeaponId.ToString(), Mag, Reserve);
+}
 // ============================================================================
 // Guard (basic)
 // ============================================================================
@@ -297,6 +434,13 @@ bool UMosesCombatComponent::Server_CanFire(EMosesFireGuardFailReason& OutReason,
 	{
 		OutReason = EMosesFireGuardFailReason::IsDead;
 		OutDebug = TEXT("Dead");
+		return false;
+	}
+
+	if (bIsReloading)
+	{
+		OutReason = EMosesFireGuardFailReason::InvalidPhase;
+		OutDebug = TEXT("Reloading");
 		return false;
 	}
 
@@ -386,12 +530,11 @@ void UMosesCombatComponent::Server_ConsumeAmmo_OnApprovedFire(const UMosesWeapon
 }
 
 // ============================================================================
-// Cooldown (FIXED: DefaultFireIntervalSec based)
+// Cooldown (DefaultFireIntervalSec based)
 // ============================================================================
 
 float UMosesCombatComponent::Server_GetFireIntervalSec_FromWeaponData(const UMosesWeaponData* /*WeaponData*/) const
 {
-	// [FIX] 몽타주 길이는 절대 사용하지 않는다.
 	return DefaultFireIntervalSec;
 }
 
@@ -399,10 +542,8 @@ bool UMosesCombatComponent::Server_IsFireCooldownReady(const UMosesWeaponData* W
 {
 	const double Now = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0;
 
-	const double Last =
-		(CurrentSlot == 1) ? Slot1LastFireTimeSec :
-		(CurrentSlot == 2) ? Slot2LastFireTimeSec :
-		(CurrentSlot == 3) ? Slot3LastFireTimeSec : -9999.0;
+	const int32 Index = MosesCombat_Private::ClampSlotIndex(CurrentSlot) - 1;
+	const double Last = SlotLastFireTimeSec[Index];
 
 	const float IntervalSec = Server_GetFireIntervalSec_FromWeaponData(WeaponData);
 	return (Now - Last) >= (double)IntervalSec;
@@ -412,25 +553,15 @@ void UMosesCombatComponent::Server_UpdateFireCooldownStamp()
 {
 	const double Now = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0;
 
-	if (CurrentSlot == 1)
-	{
-		Slot1LastFireTimeSec = Now;
-	}
-	else if (CurrentSlot == 2)
-	{
-		Slot2LastFireTimeSec = Now;
-	}
-	else if (CurrentSlot == 3)
-	{
-		Slot3LastFireTimeSec = Now;
-	}
+	const int32 Index = MosesCombat_Private::ClampSlotIndex(CurrentSlot) - 1;
+	SlotLastFireTimeSec[Index] = Now;
 }
 
 // ============================================================================
-// Hitscan + Damage
+// Hitscan + GAS Damage
 // ============================================================================
 
-void UMosesCombatComponent::Server_PerformHitscanAndApplyDamage(const UMosesWeaponData* /*WeaponData*/)
+void UMosesCombatComponent::Server_PerformHitscanAndApplyDamage(const UMosesWeaponData* WeaponData)
 {
 	APawn* OwnerPawn = MosesCombat_Private::GetOwnerPawn(this);
 	if (!OwnerPawn)
@@ -463,18 +594,89 @@ void UMosesCombatComponent::Server_PerformHitscanAndApplyDamage(const UMosesWeap
 	}
 
 	const bool bHeadshot = (Hit.BoneName == HeadshotBoneName);
-	const float AppliedDamage = DefaultDamage * (bHeadshot ? HeadshotDamageMultiplier : 1.0f);
+	const float BaseDamage = WeaponData ? WeaponData->Damage : DefaultDamage;
+	const float AppliedDamage = BaseDamage * (bHeadshot ? HeadshotDamageMultiplier : 1.0f);
 
-	UE_LOG(LogMosesCombat, Log, TEXT("[HIT][SV] Victim=%s Bone=%s Headshot=%d Damage=%.1f"),
+	UE_LOG(LogMosesCombat, Warning, TEXT("[HIT][SV] Victim=%s Bone=%s Headshot=%d Damage=%.1f"),
 		*GetNameSafe(Hit.GetActor()), *Hit.BoneName.ToString(), bHeadshot ? 1 : 0, AppliedDamage);
 
-	UGameplayStatics::ApplyDamage(
-		Hit.GetActor(),
-		AppliedDamage,
-		Controller,
-		OwnerPawn,
-		nullptr
-	);
+	// GAS 우선
+	const bool bAppliedByGAS = Server_ApplyDamageToTarget_GAS(Hit.GetActor(), AppliedDamage, Controller, OwnerPawn, WeaponData);
+	if (!bAppliedByGAS)
+	{
+		UGameplayStatics::ApplyDamage(Hit.GetActor(), AppliedDamage, Controller, OwnerPawn, nullptr);
+
+		UE_LOG(LogMosesCombat, Warning, TEXT("[HIT][SV] Fallback ApplyDamage Victim=%s Damage=%.1f"),
+			*GetNameSafe(Hit.GetActor()), AppliedDamage);
+	}
+}
+
+bool UMosesCombatComponent::Server_ApplyDamageToTarget_GAS(AActor* TargetActor, float Damage, AController* InstigatorController, AActor* DamageCauser, const UMosesWeaponData* WeaponData) const
+{
+	if (!GetOwner() || !GetOwner()->HasAuthority())
+	{
+		return false;
+	}
+
+	if (!TargetActor)
+	{
+		return false;
+	}
+
+	AMosesPlayerState* PS = MosesCombat_Private::GetOwnerPS(this);
+	if (!PS)
+	{
+		return false;
+	}
+
+	UAbilitySystemComponent* SourceASC = PS->GetAbilitySystemComponent();
+	if (!SourceASC)
+	{
+		return false;
+	}
+
+	IAbilitySystemInterface* TargetASI = Cast<IAbilitySystemInterface>(TargetActor);
+	if (!TargetASI)
+	{
+		return false;
+	}
+
+	UAbilitySystemComponent* TargetASC = TargetASI->GetAbilitySystemComponent();
+	if (!TargetASC)
+	{
+		return false;
+	}
+
+	TSubclassOf<UGameplayEffect> GEClass = DamageGE_SetByCaller.LoadSynchronous();
+	if (!GEClass)
+	{
+		UE_LOG(LogMosesGAS, Warning, TEXT("[GAS][SV] DamageGE_SetByCaller is null (load failed)"));
+		return false;
+	}
+
+	FGameplayEffectContextHandle Ctx = SourceASC->MakeEffectContext();
+	Ctx.AddInstigator(DamageCauser, InstigatorController);
+	Ctx.AddSourceObject(this);
+	Ctx.AddSourceObject(WeaponData); // 디버그/리플레이 확장 여지
+
+	const FGameplayEffectSpecHandle SpecHandle = SourceASC->MakeOutgoingSpec(GEClass, 1.f, Ctx);
+	if (!SpecHandle.IsValid())
+	{
+		return false;
+	}
+
+	// SetByCaller: Data.Damage
+	static const FGameplayTag DamageTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Data.Damage")));
+	SpecHandle.Data->SetSetByCallerMagnitude(DamageTag, Damage);
+
+	SourceASC->ApplyGameplayEffectSpecToTarget(*SpecHandle.Data.Get(), TargetASC);
+
+	UE_LOG(LogMosesGAS, Warning, TEXT("[GAS][SV] DamageApplied Target=%s Damage=%.1f Weapon=%s"),
+		*GetNameSafe(TargetActor),
+		Damage,
+		WeaponData ? *WeaponData->WeaponId.ToString() : TEXT("None"));
+
+	return true;
 }
 
 // ============================================================================
@@ -486,10 +688,7 @@ void UMosesCombatComponent::Server_PropagateFireCosmetics(FGameplayTag ApprovedW
 	APlayerCharacter* PlayerChar = MosesCombat_Private::GetOwnerPlayerCharacter(this);
 	if (!PlayerChar)
 	{
-		UE_LOG(LogMosesCombat, Warning,
-			TEXT("[FIRE][SV] PropagateCosmetic FAIL (No Pawn/PlayerChar) Owner=%s Pawn=%s"),
-			*GetNameSafe(GetOwner()),
-			*GetNameSafe(MosesCombat_Private::GetOwnerPawn(this)));
+		UE_LOG(LogMosesCombat, Warning, TEXT("[FIRE][SV] PropagateCosmetic FAIL (No Pawn) PS=%s"), *GetNameSafe(GetOwner()));
 		return;
 	}
 
@@ -526,39 +725,21 @@ void UMosesCombatComponent::OnRep_CurrentSlot()
 	BroadcastAmmoChanged(TEXT("OnRep_CurrentSlot"));
 }
 
-void UMosesCombatComponent::OnRep_Slot1WeaponId()
-{
-	BroadcastEquippedChanged(TEXT("OnRep_Slot1WeaponId"));
-}
+void UMosesCombatComponent::OnRep_Slot1WeaponId() { BroadcastEquippedChanged(TEXT("OnRep_Slot1WeaponId")); }
+void UMosesCombatComponent::OnRep_Slot2WeaponId() { BroadcastEquippedChanged(TEXT("OnRep_Slot2WeaponId")); }
+void UMosesCombatComponent::OnRep_Slot3WeaponId() { BroadcastEquippedChanged(TEXT("OnRep_Slot3WeaponId")); }
+void UMosesCombatComponent::OnRep_Slot4WeaponId() { BroadcastEquippedChanged(TEXT("OnRep_Slot4WeaponId")); }
 
-void UMosesCombatComponent::OnRep_Slot2WeaponId()
-{
-	BroadcastEquippedChanged(TEXT("OnRep_Slot2WeaponId"));
-}
+void UMosesCombatComponent::OnRep_Slot1Ammo() { BroadcastAmmoChanged(TEXT("OnRep_Slot1Ammo")); }
+void UMosesCombatComponent::OnRep_Slot2Ammo() { BroadcastAmmoChanged(TEXT("OnRep_Slot2Ammo")); }
+void UMosesCombatComponent::OnRep_Slot3Ammo() { BroadcastAmmoChanged(TEXT("OnRep_Slot3Ammo")); }
+void UMosesCombatComponent::OnRep_Slot4Ammo() { BroadcastAmmoChanged(TEXT("OnRep_Slot4Ammo")); }
 
-void UMosesCombatComponent::OnRep_Slot3WeaponId()
-{
-	BroadcastEquippedChanged(TEXT("OnRep_Slot3WeaponId"));
-}
+void UMosesCombatComponent::OnRep_IsDead() { BroadcastDeadChanged(TEXT("OnRep_IsDead")); }
 
-void UMosesCombatComponent::OnRep_Slot1Ammo()
+void UMosesCombatComponent::OnRep_IsReloading()
 {
-	BroadcastAmmoChanged(TEXT("OnRep_Slot1Ammo"));
-}
-
-void UMosesCombatComponent::OnRep_Slot2Ammo()
-{
-	BroadcastAmmoChanged(TEXT("OnRep_Slot2Ammo"));
-}
-
-void UMosesCombatComponent::OnRep_Slot3Ammo()
-{
-	BroadcastAmmoChanged(TEXT("OnRep_Slot3Ammo"));
-}
-
-void UMosesCombatComponent::OnRep_IsDead()
-{
-	BroadcastDeadChanged(TEXT("OnRep_IsDead"));
+	BroadcastReloadingChanged(TEXT("OnRep_IsReloading"));
 }
 
 // ============================================================================
@@ -570,8 +751,8 @@ void UMosesCombatComponent::BroadcastEquippedChanged(const TCHAR* ContextTag)
 	const FGameplayTag WeaponId = GetEquippedWeaponId();
 	OnEquippedChanged.Broadcast(CurrentSlot, WeaponId);
 
-	UE_LOG(LogMosesWeapon, Log, TEXT("[WEAPON][REP] %s Slot=%d Weapon=%s"),
-		ContextTag, CurrentSlot, *WeaponId.ToString());
+	UE_LOG(LogMosesWeapon, Warning, TEXT("[WEAPON][REP] %s Slot=%d Weapon=%s"),
+		ContextTag ? ContextTag : TEXT("None"), CurrentSlot, *WeaponId.ToString());
 }
 
 void UMosesCombatComponent::BroadcastAmmoChanged(const TCHAR* ContextTag)
@@ -582,16 +763,24 @@ void UMosesCombatComponent::BroadcastAmmoChanged(const TCHAR* ContextTag)
 
 	OnAmmoChanged.Broadcast(Mag, Reserve);
 
-	UE_LOG(LogMosesCombat, Log, TEXT("[AMMO][REP] %s Slot=%d Mag=%d Reserve=%d"),
-		ContextTag, CurrentSlot, Mag, Reserve);
+	UE_LOG(LogMosesCombat, Warning, TEXT("[AMMO][REP] %s Slot=%d Mag=%d Reserve=%d"),
+		ContextTag ? ContextTag : TEXT("None"), CurrentSlot, Mag, Reserve);
 }
 
 void UMosesCombatComponent::BroadcastDeadChanged(const TCHAR* ContextTag)
 {
 	OnDeadChanged.Broadcast(bIsDead);
 
-	UE_LOG(LogMosesCombat, Log, TEXT("[DEAD][REP] %s bIsDead=%d"),
-		ContextTag, bIsDead ? 1 : 0);
+	UE_LOG(LogMosesCombat, Warning, TEXT("[DEAD][REP] %s bIsDead=%d"),
+		ContextTag ? ContextTag : TEXT("None"), bIsDead ? 1 : 0);
+}
+
+void UMosesCombatComponent::BroadcastReloadingChanged(const TCHAR* ContextTag)
+{
+	OnReloadingChanged.Broadcast(bIsReloading);
+
+	UE_LOG(LogMosesWeapon, Verbose, TEXT("[RELOAD][REP] %s Reloading=%d Slot=%d"),
+		ContextTag ? ContextTag : TEXT("None"), bIsReloading ? 1 : 0, CurrentSlot);
 }
 
 // ============================================================================
@@ -600,14 +789,19 @@ void UMosesCombatComponent::BroadcastDeadChanged(const TCHAR* ContextTag)
 
 bool UMosesCombatComponent::IsValidSlotIndex(int32 SlotIndex) const
 {
-	return SlotIndex >= 1 && SlotIndex <= 3;
+	return SlotIndex >= 1 && SlotIndex <= 4;
 }
 
 FGameplayTag UMosesCombatComponent::GetSlotWeaponIdInternal(int32 SlotIndex) const
 {
-	if (SlotIndex == 1) return Slot1WeaponId;
-	if (SlotIndex == 2) return Slot2WeaponId;
-	if (SlotIndex == 3) return Slot3WeaponId;
+	switch (SlotIndex)
+	{
+	case 1: return Slot1WeaponId;
+	case 2: return Slot2WeaponId;
+	case 3: return Slot3WeaponId;
+	case 4: return Slot4WeaponId;
+	default: break;
+	}
 	return FGameplayTag();
 }
 
@@ -631,15 +825,11 @@ void UMosesCombatComponent::Server_EnsureAmmoInitializedForSlot(int32 SlotIndex,
 	int32 Reserve = 0;
 	GetSlotAmmo_Internal(SlotIndex, Mag, Reserve);
 
+	// 기본은 0/0 유지. (기본 지급은 Slot1만 별도)
 	if (Mag == 0 && Reserve == 0)
 	{
-		Mag = 30;
-		Reserve = 90;
-
-		SetSlotAmmo_Internal(SlotIndex, Mag, Reserve);
-
-		UE_LOG(LogMosesCombat, Log, TEXT("[AMMO][SV] Init Slot=%d Mag=%d Reserve=%d Weapon=%s"),
-			SlotIndex, Mag, Reserve, *WeaponId.ToString());
+		UE_LOG(LogMosesCombat, Verbose, TEXT("[AMMO][SV] EnsureAmmo Slot=%d Weapon=%s (keep 0/0)"),
+			SlotIndex, *WeaponId.ToString());
 	}
 }
 
@@ -648,23 +838,13 @@ void UMosesCombatComponent::GetSlotAmmo_Internal(int32 SlotIndex, int32& OutMag,
 	OutMag = 0;
 	OutReserve = 0;
 
-	if (SlotIndex == 1)
+	switch (SlotIndex)
 	{
-		OutMag = Slot1MagAmmo;
-		OutReserve = Slot1ReserveAmmo;
-		return;
-	}
-	if (SlotIndex == 2)
-	{
-		OutMag = Slot2MagAmmo;
-		OutReserve = Slot2ReserveAmmo;
-		return;
-	}
-	if (SlotIndex == 3)
-	{
-		OutMag = Slot3MagAmmo;
-		OutReserve = Slot3ReserveAmmo;
-		return;
+	case 1: OutMag = Slot1MagAmmo; OutReserve = Slot1ReserveAmmo; return;
+	case 2: OutMag = Slot2MagAmmo; OutReserve = Slot2ReserveAmmo; return;
+	case 3: OutMag = Slot3MagAmmo; OutReserve = Slot3ReserveAmmo; return;
+	case 4: OutMag = Slot4MagAmmo; OutReserve = Slot4ReserveAmmo; return;
+	default: break;
 	}
 }
 
@@ -678,25 +858,33 @@ void UMosesCombatComponent::SetSlotAmmo_Internal(int32 SlotIndex, int32 NewMag, 
 	NewMag = FMath::Max(NewMag, 0);
 	NewReserve = FMath::Max(NewReserve, 0);
 
-	if (SlotIndex == 1)
+	switch (SlotIndex)
 	{
+	case 1:
 		Slot1MagAmmo = NewMag;
 		Slot1ReserveAmmo = NewReserve;
 		OnRep_Slot1Ammo();
 		return;
-	}
-	if (SlotIndex == 2)
-	{
+
+	case 2:
 		Slot2MagAmmo = NewMag;
 		Slot2ReserveAmmo = NewReserve;
 		OnRep_Slot2Ammo();
 		return;
-	}
-	if (SlotIndex == 3)
-	{
+
+	case 3:
 		Slot3MagAmmo = NewMag;
 		Slot3ReserveAmmo = NewReserve;
 		OnRep_Slot3Ammo();
 		return;
+
+	case 4:
+		Slot4MagAmmo = NewMag;
+		Slot4ReserveAmmo = NewReserve;
+		OnRep_Slot4Ammo();
+		return;
+
+	default:
+		break;
 	}
 }
