@@ -1,29 +1,35 @@
 ﻿#pragma once
 
 #include "CoreMinimal.h"
-#include "AbilitySystemInterface.h"
 #include "GameFramework/PlayerState.h"
-#include "GameplayEffectTypes.h"
+#include "AbilitySystemInterface.h"
+#include "GameplayEffectTypes.h" // FOnAttributeChangeData
 
-#include "UE5_Multi_Shooter/GAS/MosesAbilitySet.h" // ✅ [MOD] Handles 멤버를 위해 포함
+// ✅ [FIX] 전역 타입 FMosesAbilitySet_GrantedHandles 정의가 여기 있음
+#include "UE5_Multi_Shooter/GAS/MosesAbilitySet.h"
 
 #include "MosesPlayerState.generated.h"
 
-class UAbilitySystemComponent;
 class UMosesAbilitySystemComponent;
 class UMosesAttributeSet;
 class UMosesCombatComponent;
-class UMosesPawnData;
-class UMosesLobbyLocalPlayerSubsystem;
-
 class UMosesSlotOwnershipComponent;
+class UMosesAbilitySet;
+class UMosesPawnData;
 
-DECLARE_MULTICAST_DELEGATE_OneParam(FOnMosesSelectedCharacterChangedNative, int32 /*NewId*/);
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnMosesSelectedCharacterChangedBP, int32, NewId);
-
-DECLARE_MULTICAST_DELEGATE_TwoParams(FOnMosesVitalChangedNative, float /*Current*/, float /*Max*/);
+// -----------------------------------------------------------------------------
+// Native delegates (HUD = RepNotify -> Delegate only)
+// -----------------------------------------------------------------------------
+DECLARE_MULTICAST_DELEGATE_TwoParams(FOnMosesHealthChangedNative, float /*Cur*/, float /*Max*/);
+DECLARE_MULTICAST_DELEGATE_TwoParams(FOnMosesShieldChangedNative, float /*Cur*/, float /*Max*/);
+DECLARE_MULTICAST_DELEGATE_OneParam(FOnMosesScoreChangedNative, int32 /*Score*/);
+DECLARE_MULTICAST_DELEGATE_OneParam(FOnMosesDeathsChangedNative, int32 /*Deaths*/);
 DECLARE_MULTICAST_DELEGATE_TwoParams(FOnMosesAmmoChangedNative, int32 /*Mag*/, int32 /*Reserve*/);
-DECLARE_MULTICAST_DELEGATE_OneParam(FOnMosesIntChangedNative, int32 /*Value*/);
+DECLARE_MULTICAST_DELEGATE_OneParam(FOnMosesGrenadeChangedNative, int32 /*Count*/);
+DECLARE_MULTICAST_DELEGATE_OneParam(FOnMosesSelectedCharacterChangedNative, int32 /*SelectedId*/);
+
+// BP delegate
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnMosesSelectedCharacterChangedBP, int32, SelectedId);
 
 UCLASS()
 class UE5_MULTI_SHOOTER_API AMosesPlayerState : public APlayerState, public IAbilitySystemInterface
@@ -31,60 +37,62 @@ class UE5_MULTI_SHOOTER_API AMosesPlayerState : public APlayerState, public IAbi
 	GENERATED_BODY()
 
 public:
-	AMosesPlayerState(const FObjectInitializer& ObjectInitializer = FObjectInitializer::Get());
+	AMosesPlayerState(const FObjectInitializer& ObjectInitializer);
 
+	//~AActor interface
 	virtual void PostInitializeComponents() override;
+
+	//~APlayerState interface
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 	virtual void CopyProperties(APlayerState* NewPlayerState) override;
 	virtual void OverrideWith(APlayerState* OldPlayerState) override;
 	virtual void OnRep_Score() override;
 
+	//~IAbilitySystemInterface interface
 	virtual UAbilitySystemComponent* GetAbilitySystemComponent() const override;
 
-	void TryInitASC(AActor* InAvatarActor);
+public:
+	// ---------------------------------------------------------------------
+	// Getters (프로젝트 전역 호환)
+	// ---------------------------------------------------------------------
+	const FGuid& GetPersistentId() const { return PersistentId; }
+	const FString& GetPlayerNickName() const { return PlayerNickName; }
 
 	bool IsLoggedIn() const { return bLoggedIn; }
 	bool IsReady() const { return bReady; }
-
-	const FGuid& GetPersistentId() const { return PersistentId; }
-	const FGuid& GetRoomId() const { return RoomId; }
 	bool IsRoomHost() const { return bIsRoomHost; }
+	const FGuid& GetRoomId() const { return RoomId; }
 
 	int32 GetSelectedCharacterId() const { return SelectedCharacterId; }
-	const FString& GetPlayerNickName() const { return PlayerNickName; }
 
-	UMosesCombatComponent* GetCombatComponent() const { return CombatComponent; }
-	const UMosesAttributeSet* GetMosesAttributeSet() const { return AttributeSet; }
+	template<typename TPawnData>
+	const TPawnData* GetPawnData() const { return Cast<TPawnData>(PawnData); }
 
 	UMosesSlotOwnershipComponent* GetSlotOwnershipComponent() const { return SlotOwnershipComponent; }
+	UMosesCombatComponent* GetCombatComponent() const { return CombatComponent; }
+
+public:
+	// ---------------------------------------------------------------------
+	// GAS Init
+	// ---------------------------------------------------------------------
+	void TryInitASC(AActor* InAvatarActor);
+
+public:
+	// ---------------------------------------------------------------------
+	// [MOD] Match default loadout (Server only)
+	// - MatchLevel 진입 시 기본 Rifle + 30/90 보장
+	// ---------------------------------------------------------------------
+	void ServerEnsureMatchDefaultLoadout();
 
 	// ---------------------------------------------------------------------
-	// ✅ [MOD] GF_Combat_GAS: AbilitySet apply (Server only)
+	// [MOD] GF_Combat_GAS: AbilitySet apply (Server only)
 	// ---------------------------------------------------------------------
 	void ServerApplyCombatAbilitySetOnce(UMosesAbilitySet* InAbilitySet);
 
+public:
 	// ---------------------------------------------------------------------
-	// ✅ [MOD] Match default loadout (Server only)
+	// Lobby / Player info (Server authority)
 	// ---------------------------------------------------------------------
-	void ServerGrantDefaultMatchLoadoutIfNeeded();
-
-	// Lobby delegates
-	FOnMosesSelectedCharacterChangedNative OnSelectedCharacterChangedNative;
-
-	UPROPERTY(BlueprintAssignable, Category = "Moses|Lobby")
-	FOnMosesSelectedCharacterChangedBP OnSelectedCharacterChangedBP;
-
-	// HUD delegates
-	FOnMosesVitalChangedNative OnHealthChanged;
-	FOnMosesVitalChangedNative OnShieldChanged;
-
-	FOnMosesIntChangedNative OnScoreChanged;
-	FOnMosesIntChangedNative OnDeathsChanged;
-
-	FOnMosesAmmoChangedNative OnAmmoChanged;
-	FOnMosesIntChangedNative OnGrenadeChanged;
-
-	// Server setters (existing)
 	void EnsurePersistentId_Server();
 	void ServerSetLoggedIn(bool bInLoggedIn);
 	void ServerSetReady(bool bInReady);
@@ -94,46 +102,117 @@ public:
 
 	void ServerSetRoom(const FGuid& InRoomId, bool bInIsHost);
 	void ServerSetPlayerNickName(const FString& InNickName);
-
-	template <typename TPawnData>
-	const TPawnData* GetPawnData() const { return Cast<TPawnData>(PawnData); }
-	void SetPawnData(const UMosesPawnData* InPawnData) { PawnData = InPawnData; }
-
 	void ServerAddDeath();
+
+public:
+	// ---------------------------------------------------------------------
+	// RepNotifies
+	// ---------------------------------------------------------------------
+	UFUNCTION()
+	void OnRep_PersistentId();
+
+	UFUNCTION()
+	void OnRep_LoggedIn();
+
+	UFUNCTION()
+	void OnRep_Ready();
+
+	UFUNCTION()
+	void OnRep_SelectedCharacterId();
+
+	UFUNCTION()
+	void OnRep_Room();
+
+	UFUNCTION()
+	void OnRep_PlayerNickName();
+
+	UFUNCTION()
+	void OnRep_Deaths();
+
+public:
+	// ---------------------------------------------------------------------
+	// Native Delegates (HUD Update)
+	// ---------------------------------------------------------------------
+	FOnMosesHealthChangedNative OnHealthChanged;
+	FOnMosesShieldChangedNative OnShieldChanged;
+	FOnMosesScoreChangedNative OnScoreChanged;
+	FOnMosesDeathsChangedNative OnDeathsChanged;
+	FOnMosesAmmoChangedNative OnAmmoChanged;
+	FOnMosesGrenadeChangedNative OnGrenadeChanged;
+
+	FOnMosesSelectedCharacterChangedNative OnSelectedCharacterChangedNative;
+
+	UPROPERTY(BlueprintAssignable)
+	FOnMosesSelectedCharacterChangedBP OnSelectedCharacterChangedBP;
+
+public:
+	// ---------------------------------------------------------------------
+	// DoD log (외부에서 호출됨 → public)
+	// ---------------------------------------------------------------------
 	void DOD_PS_Log(const UObject* Caller, const TCHAR* Phase) const;
 
 private:
-	UFUNCTION() void OnRep_PersistentId();
-	UFUNCTION() void OnRep_LoggedIn();
-	UFUNCTION() void OnRep_Ready();
-	UFUNCTION() void OnRep_SelectedCharacterId();
-	UFUNCTION() void OnRep_Room();
-	UFUNCTION() void OnRep_PlayerNickName();
-	UFUNCTION() void OnRep_Deaths();
-
-	void BroadcastSelectedCharacterChanged(const TCHAR* Reason);
+	// ---------------------------------------------------------------------
+	// Internals
+	// ---------------------------------------------------------------------
 	void NotifyLobbyPlayerStateChanged_Local(const TCHAR* Reason) const;
-
-	void BindCombatDelegatesOnce();
-
-	UFUNCTION()
-	void HandleCombatDataChanged_BP(const FString& Reason);
-
-	void HandleCombatDataChanged_Native(const TCHAR* Reason);
-
-	void BroadcastAmmoAndGrenade();
-	void BroadcastScore();
-	void BroadcastDeaths();
 
 	void BindASCAttributeDelegates();
 	void BroadcastVitals_Initial();
+	void BroadcastScore();
+	void BroadcastDeaths();
+	void BroadcastAmmoAndGrenade();
+	void BroadcastSelectedCharacterChanged(const TCHAR* Reason);
 
+	// GAS Attribute callbacks
 	void HandleHealthChanged_Internal(const FOnAttributeChangeData& Data);
 	void HandleMaxHealthChanged_Internal(const FOnAttributeChangeData& Data);
 	void HandleShieldChanged_Internal(const FOnAttributeChangeData& Data);
 	void HandleMaxShieldChanged_Internal(const FOnAttributeChangeData& Data);
 
 private:
+	// ---------------------------------------------------------------------
+	// Components (SSOT)
+	// ---------------------------------------------------------------------
+	UPROPERTY(VisibleAnywhere)
+	TObjectPtr<UMosesAbilitySystemComponent> MosesAbilitySystemComponent = nullptr;
+
+	UPROPERTY(VisibleAnywhere)
+	TObjectPtr<UMosesAttributeSet> AttributeSet = nullptr;
+
+	UPROPERTY(VisibleAnywhere)
+	TObjectPtr<UMosesCombatComponent> CombatComponent = nullptr;
+
+	UPROPERTY(VisibleAnywhere)
+	TObjectPtr<UMosesSlotOwnershipComponent> SlotOwnershipComponent = nullptr;
+
+private:
+	// ---------------------------------------------------------------------
+	// GAS runtime state
+	// ---------------------------------------------------------------------
+	UPROPERTY()
+	TWeakObjectPtr<AActor> CachedAvatar;
+
+	bool bASCInitialized = false;
+	bool bASCDelegatesBound = false;
+
+	// [MOD] AbilitySet apply once
+	bool bCombatAbilitySetApplied = false;
+
+	// [MOD] Match default loadout once (중복 호출 안전)
+	UPROPERTY()
+	bool bMatchDefaultLoadoutGranted = false;
+
+	// ✅ [FIX] 전역 타입 그대로 (nested/forward 금지)
+	FMosesAbilitySet_GrantedHandles CombatAbilitySetHandles;
+
+private:
+	// ---------------------------------------------------------------------
+	// Replicated data (Lobby + Match 공용)
+	// ---------------------------------------------------------------------
+	UPROPERTY(ReplicatedUsing = OnRep_PlayerNickName)
+	FString PlayerNickName;
+
 	UPROPERTY(ReplicatedUsing = OnRep_PersistentId)
 	FGuid PersistentId;
 
@@ -149,53 +228,13 @@ private:
 	UPROPERTY(ReplicatedUsing = OnRep_Room)
 	FGuid RoomId;
 
-	UPROPERTY(ReplicatedUsing = OnRep_Room)
+	UPROPERTY(Replicated)
 	bool bIsRoomHost = false;
-
-	UPROPERTY(ReplicatedUsing = OnRep_PlayerNickName)
-	FString PlayerNickName;
 
 	UPROPERTY(ReplicatedUsing = OnRep_Deaths)
 	int32 Deaths = 0;
 
-private:
-	UPROPERTY(Transient)
-	TObjectPtr<const UMosesPawnData> PawnData = nullptr;
-
-private:
-	UPROPERTY(VisibleAnywhere, Category = "Moses|Combat")
-	TObjectPtr<UMosesCombatComponent> CombatComponent = nullptr;
-
-	UPROPERTY(VisibleAnywhere, Category = "Moses|GAS")
-	TObjectPtr<UMosesAbilitySystemComponent> MosesAbilitySystemComponent = nullptr;
-
+	// PawnData는 외부가 GetPawnData<T>()로 조회
 	UPROPERTY()
-	TObjectPtr<UMosesAttributeSet> AttributeSet = nullptr;
-
-	UPROPERTY(VisibleAnywhere, Category = "Moses|Pickup")
-	TObjectPtr<UMosesSlotOwnershipComponent> SlotOwnershipComponent = nullptr;
-
-private:
-	// ---------------------------------------------------------------------
-	// ✅ [MOD] AbilitySet apply guards (per-player)
-	// ---------------------------------------------------------------------
-	UPROPERTY(Transient)
-	bool bCombatAbilitySetApplied = false;
-
-	/** ✅ [MOD] 전역 static 제거: PlayerState 인스턴스에 핸들을 보관 */
-	UPROPERTY(Transient)
-	FMosesAbilitySet_GrantedHandles CombatAbilitySetHandles;
-
-private:
-	UPROPERTY(Transient)
-	bool bASCInitialized = false;
-
-	UPROPERTY(Transient)
-	TWeakObjectPtr<AActor> CachedAvatar;
-
-	UPROPERTY(Transient)
-	bool bCombatDelegatesBound = false;
-
-	UPROPERTY(Transient)
-	bool bASCDelegatesBound = false;
+	TObjectPtr<UObject> PawnData = nullptr;
 };

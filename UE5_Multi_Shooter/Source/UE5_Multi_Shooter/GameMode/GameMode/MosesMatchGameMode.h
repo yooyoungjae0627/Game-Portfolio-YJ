@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "UE5_Multi_Shooter/GameMode/GameMode/MosesGameModeBase.h"
 #include "UE5_Multi_Shooter/GameMode/GameState/MosesMatchPhase.h" // [MOD] enum 분리(순환 방지)
+
 #include "MosesMatchGameMode.generated.h"
 
 class APlayerStart;
@@ -90,6 +91,14 @@ private:
 	// MatchGameState access
 	// -------------------------------------------------------------------------
 	AMosesMatchGameState* GetMatchGameState() const;
+
+private:
+	// -------------------------------------------------------------------------
+	// [MOD] Match default loadout (Server only)
+	// - MatchLevel 진입 시 "기본 Rifle + 30/90"를 SSOT(PlayerState)에서 보장한다.
+	// - PostLogin / SeamlessTravel / READY(Restart) 경로 모두 커버한다.
+	// -------------------------------------------------------------------------
+	void Server_EnsureDefaultMatchLoadout(APlayerController* PC, const TCHAR* FromWhere); // ✅ [MOD]
 
 private:
 	// -------------------------------------------------------------------------

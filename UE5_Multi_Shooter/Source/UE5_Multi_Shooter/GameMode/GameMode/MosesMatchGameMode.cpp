@@ -109,6 +109,14 @@ void AMosesMatchGameMode::PostLogin(APlayerController* NewPlayer)
 		*GetNameSafe(PS),
 		PS ? PS->GetPlayerId() : -1,
 		PS ? *PS->GetPlayerName() : TEXT("None"));
+
+	// ---------------------------------------------------------------------
+	// [MOD] MatchLevel 진입 기본 로드아웃 보장: Rifle + 30/90
+	// - PostLogin에서 한 번 보장
+	// - 실제 Spawn/Restart 경로에서도 다시 보장하지만,
+	//   SSOT에서 idempotent 이므로 중복 호출은 안전하다.
+	// ---------------------------------------------------------------------
+	Server_EnsureDefaultMatchLoadout(NewPlayer, TEXT("PostLogin"));
 }
 
 void AMosesMatchGameMode::Logout(AController* Exiting)
@@ -142,11 +150,18 @@ void AMosesMatchGameMode::StartMatchFlow_AfterExperienceReady()
 			continue;
 		}
 
+		// [MOD] MatchLevel 기본 로드아웃은 "Pawn 유무와 무관"하게 SSOT에 먼저 보장해도 된다.
+		// (Pawn은 코스메틱이며, PS/CombatComponent가 단일 진실)
+		Server_EnsureDefaultMatchLoadout(PC, TEXT("READY:BeforeRestart"));
+
 		if (!IsValid(PC->GetPawn()))
 		{
 			UE_LOG(LogMosesSpawn, Warning, TEXT("%s [MatchGM][READY] RestartPlayer (NoPawn) PC=%s"),
 				MOSES_TAG_RESPAWN_SV, *GetNameSafe(PC));
 			RestartPlayer(PC);
+
+			// [MOD] Restart 이후에도 한 번 더 보장(Spawn 이후 OnRep 순서/타이밍 이슈 차단)
+			Server_EnsureDefaultMatchLoadout(PC, TEXT("READY:AfterRestart"));
 		}
 	}
 
@@ -416,9 +431,16 @@ void AMosesMatchGameMode::HandleSeamlessTravelPlayer(AController*& C)
 		return;
 	}
 
+	// ---------------------------------------------------------------------
+	// [MOD] SeamlessTravel로 넘어온 플레이어도 기본 로드아웃 보장
+	// ---------------------------------------------------------------------
+	Server_EnsureDefaultMatchLoadout(PC, TEXT("HandleSeamlessTravelPlayer"));
+
 	if (!IsValid(PC->GetPawn()))
 	{
 		RestartPlayer(PC);
+		// Restart 이후에도 보장
+		Server_EnsureDefaultMatchLoadout(PC, TEXT("HandleSeamlessTravelPlayer:AfterRestart"));
 	}
 
 	if (AMosesPlayerState* PS = PC->GetPlayerState<AMosesPlayerState>())
@@ -649,4 +671,35 @@ void AMosesMatchGameMode::PollExperienceReady_AndStartWarmup()
 		*GetNameSafe(CurrentExp));
 
 	StartMatchFlow_AfterExperienceReady();
+}
+
+// ============================================================================
+// [MOD] Match default loadout (Server only)
+// - MatchLevel 진입 시점(여러 경로)에서 "Rifle + 30/90" 보장
+// - 실제 지급은 SSOT(PlayerState)로 위임
+// ============================================================================
+
+void AMosesMatchGameMode::Server_EnsureDefaultMatchLoadout(APlayerController* PC, const TCHAR* FromWhere)
+{
+	if (!HasAuthority() || !PC)
+	{
+		return;
+	}
+
+	AMosesPlayerState* PS = PC->GetPlayerState<AMosesPlayerState>();
+	if (!PS)
+	{
+		UE_LOG(LogMosesWeapon, Warning, TEXT("[WEAPON][SV][MatchGM] EnsureDefaultLoadout FAIL (NoPS) From=%s PC=%s"),
+			FromWhere ? FromWhere : TEXT("None"),
+			*GetNameSafe(PC));
+		return;
+	}
+
+	// ✅ 핵심: PS(SSOT)에서 “한 번만” 보장 (중복 호출 안전)
+	PS->ServerEnsureMatchDefaultLoadout();
+
+	UE_LOG(LogMosesWeapon, Warning, TEXT("[WEAPON][SV][MatchGM] EnsureDefaultLoadout OK From=%s PC=%s PS=%s"),
+		FromWhere ? FromWhere : TEXT("None"),
+		*GetNameSafe(PC),
+		*GetNameSafe(PS));
 }

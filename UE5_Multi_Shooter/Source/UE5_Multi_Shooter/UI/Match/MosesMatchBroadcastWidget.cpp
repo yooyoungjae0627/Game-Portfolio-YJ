@@ -1,11 +1,14 @@
 ﻿// ============================================================================
-// MosesMatchBroadcastWidget.cpp (FULL)
+// MosesMatchBroadcastWidget.cpp (FULL)  [MOD]
 // ============================================================================
 
 #include "UE5_Multi_Shooter/UI/Match/MosesMatchBroadcastWidget.h"
 
 #include "Components/TextBlock.h"
 #include "GameFramework/GameStateBase.h"
+
+#include "Engine/World.h"
+#include "TimerManager.h"
 
 #include "UE5_Multi_Shooter/Match/MosesBroadcastComponent.h"
 
@@ -24,9 +27,17 @@ void UMosesMatchBroadcastWidget::NativeConstruct()
 
 void UMosesMatchBroadcastWidget::NativeDestruct()
 {
+	// [MOD] 타이머 정리
 	if (UWorld* World = GetWorld())
 	{
 		World->GetTimerManager().ClearTimer(TimerHandle_AutoHide);
+	}
+
+	// [MOD] Delegate 해제(중요)
+	if (CachedBroadcast)
+	{
+		CachedBroadcast->OnBroadcastChanged.RemoveAll(this);
+		CachedBroadcast = nullptr;
 	}
 
 	Super::NativeDestruct();

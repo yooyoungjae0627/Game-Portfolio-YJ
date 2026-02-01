@@ -1,27 +1,21 @@
-﻿// ============================================================================
-// MosesPlayerState.cpp (FULL)
-// ----------------------------------------------------------------------------
-//
-// - SlotOwnershipComponent를 C++에서 생성하여 픽업 지급(MissingSlots)을 제거한다.
-// - 4슬롯 초기화(ServerInitDefaultSlots_4) + 기본 지급(30/90) 적용
-// - GF_Combat_GAS에서 AbilitySet을 서버에서 "실제 부여"할 수 있도록 API 추가
-// ============================================================================
+﻿#include "UE5_Multi_Shooter/Player/MosesPlayerState.h"
 
-#include "UE5_Multi_Shooter/Player/MosesPlayerState.h"
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
-#include "UE5_Multi_Shooter/Combat/MosesCombatComponent.h"
-#include "UE5_Multi_Shooter/System/MosesLobbyLocalPlayerSubsystem.h"
 #include "UE5_Multi_Shooter/System/MosesAuthorityGuards.h"
+#include "UE5_Multi_Shooter/System/MosesLobbyLocalPlayerSubsystem.h"
+
+#include "UE5_Multi_Shooter/Combat/MosesCombatComponent.h"
+#include "UE5_Multi_Shooter/Player/MosesSlotOwnershipComponent.h"
+
 #include "UE5_Multi_Shooter/GAS/Components/MosesAbilitySystemComponent.h"
 #include "UE5_Multi_Shooter/GAS/AttributeSet/MosesAttributeSet.h"
-#include "UE5_Multi_Shooter/Player/MosesSlotOwnershipComponent.h"
+
 #include "UE5_Multi_Shooter/GAS/MosesAbilitySet.h"
 
 #include "Net/UnrealNetwork.h"
 #include "GameFramework/PlayerController.h"
 #include "Engine/LocalPlayer.h"
 #include "GameplayTagContainer.h"
-
 
 AMosesPlayerState::AMosesPlayerState(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
@@ -36,40 +30,18 @@ AMosesPlayerState::AMosesPlayerState(const FObjectInitializer& ObjectInitializer
 	AttributeSet = CreateDefaultSubobject<UMosesAttributeSet>(TEXT("MosesAttributeSet"));
 
 	CombatComponent = CreateDefaultSubobject<UMosesCombatComponent>(TEXT("MosesCombatComponent"));
-
-	// ---------------------------------------------------------------------
-	// [MOD] 픽업 지급(무기 슬롯/아이템Id)을 위한 SSOT 컴포넌트 보장
-	// ---------------------------------------------------------------------
 	SlotOwnershipComponent = CreateDefaultSubobject<UMosesSlotOwnershipComponent>(TEXT("MosesSlotOwnershipComponent"));
 
-	UE_LOG(LogMosesPlayer, Warning, TEXT("[PS][CTOR] SSOT Components Created Combat=%s Slots=%s"),
+	UE_LOG(LogMosesPlayer, Warning, TEXT("[PS][CTOR] SSOT Components Created Combat=%s Slots=%s ASC=%s"),
 		*GetNameSafe(CombatComponent),
-		*GetNameSafe(SlotOwnershipComponent));
+		*GetNameSafe(SlotOwnershipComponent),
+		*GetNameSafe(MosesAbilitySystemComponent));
 }
 
 void AMosesPlayerState::PostInitializeComponents()
 {
 	Super::PostInitializeComponents();
-
-	if (HasAuthority() && CombatComponent)
-	{
-		// -----------------------------------------------------------------
-		// [MOD] DAY6 기본 슬롯 4개 초기화(기획: 나머지는 파밍이면 None 유지)
-		// -----------------------------------------------------------------
-		const FGameplayTag TmpSlot1 = FGameplayTag::RequestGameplayTag(FName(TEXT("Weapon.Rifle.A")));
-		const FGameplayTag TmpSlot2; // None (파밍으로 획득)
-		const FGameplayTag TmpSlot3; // None (파밍으로 획득)
-		const FGameplayTag TmpSlot4; // None (파밍으로 획득)
-
-		CombatComponent->ServerInitDefaultSlots_4(TmpSlot1, TmpSlot2, TmpSlot3, TmpSlot4);
-
-		// -----------------------------------------------------------------
-		// [MOD] DAY6 기본 지급: 라이플 탄약 30/90
-		// -----------------------------------------------------------------
-		ServerGrantDefaultMatchLoadoutIfNeeded();
-	}
-
-	BindCombatDelegatesOnce();
+	// 여기서는 Match 지급을 하지 않는다. (MatchGameMode에서 호출)
 }
 
 void AMosesPlayerState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
@@ -131,10 +103,6 @@ void AMosesPlayerState::OverrideWith(APlayerState* OldPlayerState)
 void AMosesPlayerState::OnRep_Score()
 {
 	Super::OnRep_Score();
-
-	UE_LOG(LogMosesPlayer, Verbose, TEXT("%s OnRep_Score PS=%s Score=%.0f"),
-		MOSES_TAG_SCORE_CL, *GetNameSafe(this), GetScore());
-
 	BroadcastScore();
 }
 
@@ -142,6 +110,10 @@ UAbilitySystemComponent* AMosesPlayerState::GetAbilitySystemComponent() const
 {
 	return MosesAbilitySystemComponent;
 }
+
+// ============================================================================
+// GAS Init
+// ============================================================================
 
 void AMosesPlayerState::TryInitASC(AActor* InAvatarActor)
 {
@@ -165,7 +137,7 @@ void AMosesPlayerState::TryInitASC(AActor* InAvatarActor)
 	UE_LOG(LogMosesGAS, Warning, TEXT("[GAS][PS] InitAbilityActorInfo Owner=%s Avatar=%s"),
 		*GetNameSafe(this), *GetNameSafe(InAvatarActor));
 
-	// 서버에서 초기 Attribute 확정(속성은 GAS)
+	// 서버에서 초기 Attribute 확정
 	if (HasAuthority())
 	{
 		MosesAbilitySystemComponent->SetNumericAttributeBase(UMosesAttributeSet::GetMaxHealthAttribute(), 100.f);
@@ -183,356 +155,6 @@ void AMosesPlayerState::TryInitASC(AActor* InAvatarActor)
 	BroadcastScore();
 	BroadcastDeaths();
 	BroadcastAmmoAndGrenade();
-}
-
-// ============================================================================
-// [MOD] GF_Combat_GAS: AbilitySet apply (Server only)
-// ============================================================================
-
-void AMosesPlayerState::ServerApplyCombatAbilitySetOnce(UMosesAbilitySet* InAbilitySet)
-{
-	if (!HasAuthority())
-	{
-		return;
-	}
-
-	if (bCombatAbilitySetApplied)
-	{
-		return;
-	}
-
-	if (!InAbilitySet || !MosesAbilitySystemComponent)
-	{
-		UE_LOG(LogMosesGAS, Warning, TEXT("[GAS][SV][PS] ApplyAbilitySet FAIL PS=%s"), *GetNameSafe(this));
-		return;
-	}
-
-	// ✅ [MOD] 전역 static 대신, PlayerState 멤버 핸들을 사용
-	InAbilitySet->GiveToAbilitySystem(*MosesAbilitySystemComponent, CombatAbilitySetHandles);
-	bCombatAbilitySetApplied = true;
-
-	UE_LOG(LogMosesGAS, Warning, TEXT("[GAS][SV][PS] AbilitySet Applied PS=%s Set=%s"),
-		*GetNameSafe(this), *GetNameSafe(InAbilitySet));
-}
-
-// ============================================================================
-// [MOD] Match default loadout (Server only)
-// ============================================================================
-
-void AMosesPlayerState::ServerGrantDefaultMatchLoadoutIfNeeded()
-{
-	if (!HasAuthority())
-	{
-		return;
-	}
-
-	if (!CombatComponent)
-	{
-		return;
-	}
-
-	CombatComponent->ServerGrantDefaultRifleAmmo_30_90(); // 네가 구현한 기본 지급 함수에 맞춰 호출
-
-	UE_LOG(LogMosesWeapon, Warning, TEXT("[WEAPON][SV][PS] DefaultMatchLoadout Granted PS=%s"), *GetNameSafe(this));
-}
-
-// ============================================================================
-// 이하 기존 코드(로비/복제/델리게이트 브릿지/HP 등) 원문 유지
-// ============================================================================
-
-void AMosesPlayerState::EnsurePersistentId_Server()
-{
-	MOSES_GUARD_AUTHORITY_VOID(this, "PS", TEXT("Client attempted EnsurePersistentId_Server"));
-	check(HasAuthority());
-
-	if (PersistentId.IsValid())
-	{
-		return;
-	}
-
-	PersistentId = FGuid::NewGuid();
-	ForceNetUpdate();
-
-	UE_LOG(LogMosesPlayer, Warning, TEXT("%s PersistentId Generated %s PS=%s"),
-		MOSES_TAG_PS_SV, *PersistentId.ToString(EGuidFormats::DigitsWithHyphens), *GetNameSafe(this));
-}
-
-void AMosesPlayerState::ServerSetLoggedIn(bool bInLoggedIn)
-{
-	MOSES_GUARD_AUTHORITY_VOID(this, "PS", TEXT("Client attempted ServerSetLoggedIn"));
-	check(HasAuthority());
-
-	if (bLoggedIn == bInLoggedIn)
-	{
-		return;
-	}
-
-	bLoggedIn = bInLoggedIn;
-	ForceNetUpdate();
-
-	UE_LOG(LogMosesPlayer, Verbose, TEXT("%s ServerSetLoggedIn=%d PS=%s"),
-		MOSES_TAG_PS_SV, bLoggedIn ? 1 : 0, *GetNameSafe(this));
-
-	NotifyLobbyPlayerStateChanged_Local(TEXT("ServerSetLoggedIn"));
-}
-
-void AMosesPlayerState::ServerSetReady(bool bInReady)
-{
-	MOSES_GUARD_AUTHORITY_VOID(this, "PS", TEXT("Client attempted ServerSetReady"));
-	check(HasAuthority());
-
-	if (bReady == bInReady)
-	{
-		return;
-	}
-
-	bReady = bInReady;
-	ForceNetUpdate();
-
-	UE_LOG(LogMosesPlayer, Verbose, TEXT("%s ServerSetReady=%d PS=%s"),
-		MOSES_TAG_PS_SV, bReady ? 1 : 0, *GetNameSafe(this));
-
-	NotifyLobbyPlayerStateChanged_Local(TEXT("ServerSetReady"));
-}
-
-void AMosesPlayerState::ServerSetSelectedCharacterId_Implementation(int32 InId)
-{
-	MOSES_GUARD_AUTHORITY_VOID(this, "PS", TEXT("Client attempted ServerSetSelectedCharacterId"));
-	check(HasAuthority());
-
-	SelectedCharacterId = FMath::Max(1, InId);
-	ForceNetUpdate();
-
-	UE_LOG(LogMosesPlayer, Verbose, TEXT("%s ServerSetSelectedCharacterId=%d PS=%s"),
-		MOSES_TAG_PS_SV, SelectedCharacterId, *GetNameSafe(this));
-
-	BroadcastSelectedCharacterChanged(TEXT("ServerSetSelectedCharacterId"));
-	NotifyLobbyPlayerStateChanged_Local(TEXT("ServerSetSelectedCharacterId"));
-}
-
-void AMosesPlayerState::ServerSetRoom(const FGuid& InRoomId, bool bInIsHost)
-{
-	MOSES_GUARD_AUTHORITY_VOID(this, "PS", TEXT("Client attempted ServerSetRoom"));
-	check(HasAuthority());
-
-	if (RoomId == InRoomId && bIsRoomHost == bInIsHost)
-	{
-		return;
-	}
-
-	RoomId = InRoomId;
-	bIsRoomHost = bInIsHost;
-
-	ForceNetUpdate();
-
-	UE_LOG(LogMosesPlayer, Verbose, TEXT("%s ServerSetRoom RoomId=%s Host=%d PS=%s"),
-		MOSES_TAG_PS_SV,
-		*RoomId.ToString(EGuidFormats::DigitsWithHyphens),
-		bIsRoomHost ? 1 : 0,
-		*GetNameSafe(this));
-
-	NotifyLobbyPlayerStateChanged_Local(TEXT("ServerSetRoom"));
-}
-
-void AMosesPlayerState::ServerSetPlayerNickName(const FString& InNickName)
-{
-	MOSES_GUARD_AUTHORITY_VOID(this, "PS", TEXT("Client attempted ServerSetPlayerNickName"));
-	check(HasAuthority());
-
-	const FString Clean = InNickName.TrimStartAndEnd().Left(16);
-	if (Clean.IsEmpty())
-	{
-		return;
-	}
-
-	if (PlayerNickName == Clean)
-	{
-		return;
-	}
-
-	PlayerNickName = Clean;
-	ForceNetUpdate();
-
-	UE_LOG(LogMosesPlayer, Warning, TEXT("%s ServerSetNickName=%s PS=%s"),
-		MOSES_TAG_PS_SV, *PlayerNickName, *GetNameSafe(this));
-
-	NotifyLobbyPlayerStateChanged_Local(TEXT("ServerSetPlayerNickName"));
-}
-
-void AMosesPlayerState::ServerAddDeath()
-{
-	MOSES_GUARD_AUTHORITY_VOID(this, "PS", TEXT("Client attempted ServerAddDeath"));
-	check(HasAuthority());
-
-	const int32 OldDeaths = Deaths;
-	Deaths++;
-	ForceNetUpdate();
-
-	UE_LOG(LogMosesPlayer, Warning, TEXT("%s Deaths %d -> %d PS=%s"),
-		MOSES_TAG_SCORE_SV, OldDeaths, Deaths, *GetNameSafe(this));
-
-	OnRep_Deaths(); // 리슨서버 즉시 반영
-}
-
-void AMosesPlayerState::OnRep_PersistentId()
-{
-	UE_LOG(LogMosesPlayer, Verbose, TEXT("%s OnRep_PersistentId -> %s PS=%s"),
-		MOSES_TAG_PS_CL,
-		*PersistentId.ToString(EGuidFormats::DigitsWithHyphens),
-		*GetNameSafe(this));
-
-	NotifyLobbyPlayerStateChanged_Local(TEXT("OnRep_PersistentId"));
-}
-
-void AMosesPlayerState::OnRep_LoggedIn()
-{
-	UE_LOG(LogMosesPlayer, Verbose, TEXT("%s OnRep_LoggedIn -> %d PS=%s"),
-		MOSES_TAG_PS_CL,
-		bLoggedIn ? 1 : 0,
-		*GetNameSafe(this));
-
-	NotifyLobbyPlayerStateChanged_Local(TEXT("OnRep_LoggedIn"));
-}
-
-void AMosesPlayerState::OnRep_Ready()
-{
-	UE_LOG(LogMosesPlayer, Verbose, TEXT("%s OnRep_Ready -> %d PS=%s"),
-		MOSES_TAG_PS_CL,
-		bReady ? 1 : 0,
-		*GetNameSafe(this));
-
-	NotifyLobbyPlayerStateChanged_Local(TEXT("OnRep_Ready"));
-}
-
-void AMosesPlayerState::OnRep_SelectedCharacterId()
-{
-	UE_LOG(LogMosesPlayer, Verbose, TEXT("%s OnRep_SelectedCharacterId=%d PS=%s"),
-		MOSES_TAG_PS_CL,
-		SelectedCharacterId,
-		*GetNameSafe(this));
-
-	BroadcastSelectedCharacterChanged(TEXT("OnRep_SelectedCharacterId"));
-	NotifyLobbyPlayerStateChanged_Local(TEXT("OnRep_SelectedCharacterId"));
-}
-
-void AMosesPlayerState::OnRep_Room()
-{
-	UE_LOG(LogMosesPlayer, Warning, TEXT("%s OnRep_Room RoomId=%s Host=%d PS=%s"),
-		MOSES_TAG_PS_CL,
-		*RoomId.ToString(EGuidFormats::DigitsWithHyphens),
-		bIsRoomHost ? 1 : 0,
-		*GetNameSafe(this));
-
-	NotifyLobbyPlayerStateChanged_Local(TEXT("OnRep_Room"));
-}
-
-void AMosesPlayerState::OnRep_PlayerNickName()
-{
-	UE_LOG(LogMosesPlayer, Warning, TEXT("[Nick][CL][PS] OnRep Nick=%s PS=%s Pid=%s"),
-		*PlayerNickName,
-		*GetNameSafe(this),
-		*PersistentId.ToString(EGuidFormats::DigitsWithHyphens));
-
-	NotifyLobbyPlayerStateChanged_Local(TEXT("OnRep_PlayerNickName"));
-}
-
-void AMosesPlayerState::OnRep_Deaths()
-{
-	UE_LOG(LogMosesPlayer, Verbose, TEXT("%s OnRep_Deaths=%d PS=%s"),
-		MOSES_TAG_SCORE_CL, Deaths, *GetNameSafe(this));
-
-	BroadcastDeaths();
-}
-
-void AMosesPlayerState::BroadcastSelectedCharacterChanged(const TCHAR* Reason)
-{
-	const int32 NewId = SelectedCharacterId;
-
-	OnSelectedCharacterChangedNative.Broadcast(NewId);
-	OnSelectedCharacterChangedBP.Broadcast(NewId);
-
-	UE_LOG(LogMosesPlayer, Verbose, TEXT("[PS] SelectedCharacterChanged Reason=%s Id=%d"),
-		Reason ? Reason : TEXT("None"), NewId);
-}
-
-void AMosesPlayerState::NotifyLobbyPlayerStateChanged_Local(const TCHAR* Reason) const
-{
-	APlayerController* PC = Cast<APlayerController>(GetOwner());
-	if (!PC || !PC->IsLocalController())
-	{
-		return;
-	}
-
-	ULocalPlayer* LP = PC->GetLocalPlayer();
-	if (!LP)
-	{
-		return;
-	}
-
-	UMosesLobbyLocalPlayerSubsystem* LPS = LP->GetSubsystem<UMosesLobbyLocalPlayerSubsystem>();
-	if (!LPS)
-	{
-		return;
-	}
-
-	UE_LOG(LogMosesPlayer, Verbose, TEXT("[LPS][NotifyFromPS] Reason=%s PS=%s"),
-		Reason ? Reason : TEXT("None"),
-		*GetNameSafe(this));
-
-	LPS->NotifyPlayerStateChanged();
-}
-
-void AMosesPlayerState::BindCombatDelegatesOnce()
-{
-	if (bCombatDelegatesBound || !CombatComponent)
-	{
-		return;
-	}
-
-	bCombatDelegatesBound = true;
-
-	UE_LOG(LogMosesCombat, Warning, TEXT("%s Bound Combat delegates PS=%s CC=%s"),
-		MOSES_TAG_COMBAT_CL, *GetNameSafe(this), *GetNameSafe(CombatComponent));
-}
-
-void AMosesPlayerState::HandleCombatDataChanged_BP(const FString& Reason)
-{
-	// BP 확장 지점
-}
-
-void AMosesPlayerState::HandleCombatDataChanged_Native(const TCHAR* Reason)
-{
-	UE_LOG(LogMosesCombat, Verbose, TEXT("%s CombatDataChanged Reason=%s PS=%s"),
-		MOSES_TAG_COMBAT_CL, Reason ? Reason : TEXT("None"), *GetNameSafe(this));
-
-	BroadcastAmmoAndGrenade();
-}
-
-void AMosesPlayerState::BroadcastAmmoAndGrenade()
-{
-	if (!CombatComponent)
-	{
-		return;
-	}
-
-	// TODO: 4슬롯/무기별 탄약 분리는 이후 단계에서 확장
-}
-
-void AMosesPlayerState::BroadcastScore()
-{
-	const int32 IntScore = FMath::RoundToInt(GetScore());
-	OnScoreChanged.Broadcast(IntScore);
-
-	UE_LOG(LogMosesPlayer, Verbose, TEXT("%s ScoreUpdated=%d PS=%s"),
-		MOSES_TAG_SCORE_CL, IntScore, *GetNameSafe(this));
-}
-
-void AMosesPlayerState::BroadcastDeaths()
-{
-	OnDeathsChanged.Broadcast(Deaths);
-
-	UE_LOG(LogMosesPlayer, Verbose, TEXT("%s DeathsUpdated=%d PS=%s"),
-		MOSES_TAG_SCORE_CL, Deaths, *GetNameSafe(this));
 }
 
 void AMosesPlayerState::BindASCAttributeDelegates()
@@ -630,6 +252,313 @@ void AMosesPlayerState::HandleMaxShieldChanged_Internal(const FOnAttributeChange
 	UE_LOG(LogMosesHP, Verbose, TEXT("%s OnMaxShieldChanged %.0f/%.0f PS=%s"),
 		MOSES_TAG_HUD_CL, Cur, Max, *GetNameSafe(this));
 }
+
+// ============================================================================
+// [MOD] AbilitySet Apply
+// ============================================================================
+
+void AMosesPlayerState::ServerApplyCombatAbilitySetOnce(UMosesAbilitySet* InAbilitySet)
+{
+	MOSES_GUARD_AUTHORITY_VOID(this, "GAS", TEXT("Client attempted ServerApplyCombatAbilitySetOnce"));
+
+	if (bCombatAbilitySetApplied)
+	{
+		return;
+	}
+
+	if (!InAbilitySet || !MosesAbilitySystemComponent)
+	{
+		UE_LOG(LogMosesGAS, Warning, TEXT("[GAS][SV][PS] ApplyAbilitySet FAIL PS=%s"), *GetNameSafe(this));
+		return;
+	}
+
+	InAbilitySet->GiveToAbilitySystem(*MosesAbilitySystemComponent, CombatAbilitySetHandles);
+	bCombatAbilitySetApplied = true;
+
+	UE_LOG(LogMosesGAS, Warning, TEXT("[GAS][SV][PS] AbilitySet Applied PS=%s Set=%s"),
+		*GetNameSafe(this), *GetNameSafe(InAbilitySet));
+}
+
+// ============================================================================
+// [MOD] Match default loadout: Rifle + 30/90
+// ============================================================================
+
+void AMosesPlayerState::ServerEnsureMatchDefaultLoadout()
+{
+	MOSES_GUARD_AUTHORITY_VOID(this, "WEAPON", TEXT("Client attempted ServerEnsureMatchDefaultLoadout"));
+
+	if (bMatchDefaultLoadoutGranted)
+	{
+		UE_LOG(LogMosesWeapon, Verbose, TEXT("[WEAPON][SV][PS] DefaultMatchLoadout already granted PS=%s"), *GetNameSafe(this));
+		return;
+	}
+
+	if (!CombatComponent)
+	{
+		UE_LOG(LogMosesWeapon, Warning, TEXT("[WEAPON][SV][PS] DefaultMatchLoadout FAIL (No CombatComponent) PS=%s"), *GetNameSafe(this));
+		return;
+	}
+
+	const FGameplayTag Slot1Rifle = FGameplayTag::RequestGameplayTag(FName(TEXT("Weapon.Rifle.A")));
+	const FGameplayTag NoneTag;
+
+	CombatComponent->ServerInitDefaultSlots_4(Slot1Rifle, NoneTag, NoneTag, NoneTag);
+	CombatComponent->ServerGrantDefaultRifleAmmo_30_90();
+
+	bMatchDefaultLoadoutGranted = true;
+
+	UE_LOG(LogMosesWeapon, Warning, TEXT("[WEAPON][SV][PS] DefaultMatchLoadout Granted Weapon=Weapon.Rifle.A Ammo=30/90 PS=%s"),
+		*GetNameSafe(this));
+
+	BroadcastAmmoAndGrenade();
+}
+
+// ============================================================================
+// Lobby/Info server functions
+// ============================================================================
+
+void AMosesPlayerState::EnsurePersistentId_Server()
+{
+	MOSES_GUARD_AUTHORITY_VOID(this, "PS", TEXT("Client attempted EnsurePersistentId_Server"));
+
+	if (PersistentId.IsValid())
+	{
+		return;
+	}
+
+	PersistentId = FGuid::NewGuid();
+	ForceNetUpdate();
+
+	UE_LOG(LogMosesPlayer, Warning, TEXT("%s PersistentId Generated %s PS=%s"),
+		MOSES_TAG_PS_SV, *PersistentId.ToString(EGuidFormats::DigitsWithHyphens), *GetNameSafe(this));
+}
+
+void AMosesPlayerState::ServerSetLoggedIn(bool bInLoggedIn)
+{
+	MOSES_GUARD_AUTHORITY_VOID(this, "PS", TEXT("Client attempted ServerSetLoggedIn"));
+
+	if (bLoggedIn == bInLoggedIn)
+	{
+		return;
+	}
+
+	bLoggedIn = bInLoggedIn;
+	ForceNetUpdate();
+
+	UE_LOG(LogMosesPlayer, Verbose, TEXT("%s ServerSetLoggedIn=%d PS=%s"),
+		MOSES_TAG_PS_SV, bLoggedIn ? 1 : 0, *GetNameSafe(this));
+
+	NotifyLobbyPlayerStateChanged_Local(TEXT("ServerSetLoggedIn"));
+}
+
+void AMosesPlayerState::ServerSetReady(bool bInReady)
+{
+	MOSES_GUARD_AUTHORITY_VOID(this, "PS", TEXT("Client attempted ServerSetReady"));
+
+	if (bReady == bInReady)
+	{
+		return;
+	}
+
+	bReady = bInReady;
+	ForceNetUpdate();
+
+	UE_LOG(LogMosesPlayer, Verbose, TEXT("%s ServerSetReady=%d PS=%s"),
+		MOSES_TAG_PS_SV, bReady ? 1 : 0, *GetNameSafe(this));
+
+	NotifyLobbyPlayerStateChanged_Local(TEXT("ServerSetReady"));
+}
+
+void AMosesPlayerState::ServerSetSelectedCharacterId_Implementation(int32 InId)
+{
+	MOSES_GUARD_AUTHORITY_VOID(this, "PS", TEXT("Client attempted ServerSetSelectedCharacterId"));
+
+	SelectedCharacterId = FMath::Max(1, InId);
+	ForceNetUpdate();
+
+	UE_LOG(LogMosesPlayer, Verbose, TEXT("%s ServerSetSelectedCharacterId=%d PS=%s"),
+		MOSES_TAG_PS_SV, SelectedCharacterId, *GetNameSafe(this));
+
+	BroadcastSelectedCharacterChanged(TEXT("ServerSetSelectedCharacterId"));
+	NotifyLobbyPlayerStateChanged_Local(TEXT("ServerSetSelectedCharacterId"));
+}
+
+void AMosesPlayerState::ServerSetRoom(const FGuid& InRoomId, bool bInIsHost)
+{
+	MOSES_GUARD_AUTHORITY_VOID(this, "PS", TEXT("Client attempted ServerSetRoom"));
+
+	if (RoomId == InRoomId && bIsRoomHost == bInIsHost)
+	{
+		return;
+	}
+
+	RoomId = InRoomId;
+	bIsRoomHost = bInIsHost;
+
+	ForceNetUpdate();
+
+	UE_LOG(LogMosesPlayer, Verbose, TEXT("%s ServerSetRoom RoomId=%s Host=%d PS=%s"),
+		MOSES_TAG_PS_SV,
+		*RoomId.ToString(EGuidFormats::DigitsWithHyphens),
+		bIsRoomHost ? 1 : 0,
+		*GetNameSafe(this));
+
+	NotifyLobbyPlayerStateChanged_Local(TEXT("ServerSetRoom"));
+}
+
+void AMosesPlayerState::ServerSetPlayerNickName(const FString& InNickName)
+{
+	MOSES_GUARD_AUTHORITY_VOID(this, "PS", TEXT("Client attempted ServerSetPlayerNickName"));
+
+	const FString Clean = InNickName.TrimStartAndEnd().Left(16);
+	if (Clean.IsEmpty())
+	{
+		return;
+	}
+
+	if (PlayerNickName == Clean)
+	{
+		return;
+	}
+
+	PlayerNickName = Clean;
+	ForceNetUpdate();
+
+	UE_LOG(LogMosesPlayer, Warning, TEXT("%s ServerSetNickName=%s PS=%s"),
+		MOSES_TAG_PS_SV, *PlayerNickName, *GetNameSafe(this));
+
+	NotifyLobbyPlayerStateChanged_Local(TEXT("ServerSetPlayerNickName"));
+}
+
+void AMosesPlayerState::ServerAddDeath()
+{
+	MOSES_GUARD_AUTHORITY_VOID(this, "PS", TEXT("Client attempted ServerAddDeath"));
+
+	const int32 OldDeaths = Deaths;
+	Deaths++;
+	ForceNetUpdate();
+
+	UE_LOG(LogMosesPlayer, Warning, TEXT("%s Deaths %d -> %d PS=%s"),
+		MOSES_TAG_SCORE_SV, OldDeaths, Deaths, *GetNameSafe(this));
+
+	OnRep_Deaths(); // 리슨서버 즉시 반영
+}
+
+// ============================================================================
+// RepNotifies
+// ============================================================================
+
+void AMosesPlayerState::OnRep_PersistentId()
+{
+	NotifyLobbyPlayerStateChanged_Local(TEXT("OnRep_PersistentId"));
+}
+
+void AMosesPlayerState::OnRep_LoggedIn()
+{
+	NotifyLobbyPlayerStateChanged_Local(TEXT("OnRep_LoggedIn"));
+}
+
+void AMosesPlayerState::OnRep_Ready()
+{
+	NotifyLobbyPlayerStateChanged_Local(TEXT("OnRep_Ready"));
+}
+
+void AMosesPlayerState::OnRep_SelectedCharacterId()
+{
+	BroadcastSelectedCharacterChanged(TEXT("OnRep_SelectedCharacterId"));
+	NotifyLobbyPlayerStateChanged_Local(TEXT("OnRep_SelectedCharacterId"));
+}
+
+void AMosesPlayerState::OnRep_Room()
+{
+	NotifyLobbyPlayerStateChanged_Local(TEXT("OnRep_Room"));
+}
+
+void AMosesPlayerState::OnRep_PlayerNickName()
+{
+	NotifyLobbyPlayerStateChanged_Local(TEXT("OnRep_PlayerNickName"));
+}
+
+void AMosesPlayerState::OnRep_Deaths()
+{
+	BroadcastDeaths();
+}
+
+// ============================================================================
+// Broadcast
+// ============================================================================
+
+void AMosesPlayerState::BroadcastSelectedCharacterChanged(const TCHAR* Reason)
+{
+	const int32 NewId = SelectedCharacterId;
+
+	OnSelectedCharacterChangedNative.Broadcast(NewId);
+	OnSelectedCharacterChangedBP.Broadcast(NewId);
+
+	UE_LOG(LogMosesPlayer, Verbose, TEXT("[PS] SelectedCharacterChanged Reason=%s Id=%d"),
+		Reason ? Reason : TEXT("None"), NewId);
+}
+
+void AMosesPlayerState::BroadcastAmmoAndGrenade()
+{
+	int32 Mag = 0;
+	int32 Reserve = 0;
+
+	if (CombatComponent)
+	{
+		Mag = CombatComponent->GetCurrentMagAmmo();
+		Reserve = CombatComponent->GetCurrentReserveAmmo();
+	}
+
+	OnAmmoChanged.Broadcast(Mag, Reserve);
+	OnGrenadeChanged.Broadcast(0);
+}
+
+void AMosesPlayerState::BroadcastScore()
+{
+	const int32 IntScore = FMath::RoundToInt(GetScore());
+	OnScoreChanged.Broadcast(IntScore);
+}
+
+void AMosesPlayerState::BroadcastDeaths()
+{
+	OnDeathsChanged.Broadcast(Deaths);
+}
+
+// ============================================================================
+// Local notify
+// ============================================================================
+
+void AMosesPlayerState::NotifyLobbyPlayerStateChanged_Local(const TCHAR* Reason) const
+{
+	APlayerController* PC = Cast<APlayerController>(GetOwner());
+	if (!PC || !PC->IsLocalController())
+	{
+		return;
+	}
+
+	ULocalPlayer* LP = PC->GetLocalPlayer();
+	if (!LP)
+	{
+		return;
+	}
+
+	UMosesLobbyLocalPlayerSubsystem* LPS = LP->GetSubsystem<UMosesLobbyLocalPlayerSubsystem>();
+	if (!LPS)
+	{
+		return;
+	}
+
+	UE_LOG(LogMosesPlayer, Verbose, TEXT("[LPS][NotifyFromPS] Reason=%s PS=%s"),
+		Reason ? Reason : TEXT("None"),
+		*GetNameSafe(this));
+
+	LPS->NotifyPlayerStateChanged();
+}
+
+// ============================================================================
+// DoD log
+// ============================================================================
 
 void AMosesPlayerState::DOD_PS_Log(const UObject* Caller, const TCHAR* Phase) const
 {

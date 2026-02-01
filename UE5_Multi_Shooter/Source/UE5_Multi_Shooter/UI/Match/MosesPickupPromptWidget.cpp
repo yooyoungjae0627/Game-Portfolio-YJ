@@ -1,5 +1,5 @@
 ﻿// ============================================================================
-// MosesPickupPromptWidget.cpp (FULL)  [NEW]
+// MosesPickupPromptWidget.cpp (FULL)
 // ============================================================================
 
 #include "UE5_Multi_Shooter/UI/Match/MosesPickupPromptWidget.h"

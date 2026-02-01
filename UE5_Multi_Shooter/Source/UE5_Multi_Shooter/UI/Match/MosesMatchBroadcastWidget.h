@@ -1,9 +1,10 @@
 ﻿// ============================================================================
-// MosesMatchBroadcastWidget.h (FULL)
+// MosesMatchBroadcastWidget.h (FULL)  [MOD]
 // ----------------------------------------------------------------------------
 // - GameState의 MosesBroadcastComponent RepNotify->Delegate를 받아
 //   방송 메시지를 HUD에 출력한다.
 // - 자동 숨김은 로컬 타이머로 처리한다(게임 상태 변경 아님).
+// - [MOD] NativeDestruct에서 Delegate Unbind + Timer 정리
 // ============================================================================
 
 #pragma once
@@ -33,11 +34,11 @@ private:
 	void HideSelf();
 
 private:
-	UPROPERTY(meta=(BindWidgetOptional))
-	TObjectPtr<UTextBlock> Text_Broadcast;
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UTextBlock> Text_Broadcast = nullptr;
 
 	UPROPERTY(Transient)
-	TObjectPtr<UMosesBroadcastComponent> CachedBroadcast;
+	TObjectPtr<UMosesBroadcastComponent> CachedBroadcast = nullptr;
 
 	FTimerHandle TimerHandle_AutoHide;
 };
