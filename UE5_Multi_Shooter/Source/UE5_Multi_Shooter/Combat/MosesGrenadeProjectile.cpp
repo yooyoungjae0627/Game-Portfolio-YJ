@@ -185,7 +185,8 @@ void AMosesGrenadeProjectile::ApplyRadialDamage_Server(const FVector& Center)
 					const FGameplayEffectSpecHandle SpecHandle = SrcASC->MakeOutgoingSpec(DamageGE, 1.f, Ctx);
 					if (SpecHandle.IsValid())
 					{
-						SpecHandle.Data->SetSetByCallerMagnitude(FMosesGameplayTags::Get().Data_Damage, DamageAmount);
+						const float SignedDamage = -FMath::Abs(DamageAmount);
+						SpecHandle.Data->SetSetByCallerMagnitude(FMosesGameplayTags::Get().Data_Damage, SignedDamage);
 						SrcASC->ApplyGameplayEffectSpecToTarget(*SpecHandle.Data.Get(), TargetASC);
 
 						bAppliedByGAS = true;

@@ -8,8 +8,6 @@
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
 #include "UE5_Multi_Shooter/Player/MosesPlayerState.h"
 #include "UE5_Multi_Shooter/System/MosesLobbyLocalPlayerSubsystem.h"
-
-// [MOD][DAY8]
 #include "UE5_Multi_Shooter/Combat/MosesCombatComponent.h"
 #include "UE5_Multi_Shooter/Weapon/MosesWeaponRegistrySubsystem.h"
 #include "UE5_Multi_Shooter/Weapon/MosesWeaponData.h"

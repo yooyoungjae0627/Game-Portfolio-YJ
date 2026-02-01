@@ -5,8 +5,6 @@
 #include "UE5_Multi_Shooter/Weapon/MosesWeaponData.h"
 #include "UE5_Multi_Shooter/Weapon/MosesWeaponRegistrySubsystem.h"
 #include "UE5_Multi_Shooter/Player/MosesPlayerState.h"
-
-// [DAY9]
 #include "UE5_Multi_Shooter/Combat/MosesGrenadeProjectile.h"
 
 #include "Engine/World.h"
@@ -15,8 +13,6 @@
 #include "GameFramework/Controller.h"
 #include "Kismet/GameplayStatics.h"
 #include "TimerManager.h"
-
-// GAS
 #include "AbilitySystemInterface.h"
 #include "AbilitySystemComponent.h"
 #include "GameplayEffect.h"
@@ -753,42 +749,49 @@ bool UMosesCombatComponent::Server_ApplyDamageToTarget_GAS(AActor* TargetActor, 
 {
 	if (!GetOwner() || !GetOwner()->HasAuthority())
 	{
+		UE_LOG(LogMosesGAS, Warning, TEXT("[GAS][SV] APPLY FAIL (NotAuthority)"));
 		return false;
 	}
 
 	if (!TargetActor)
 	{
+		UE_LOG(LogMosesGAS, Warning, TEXT("[GAS][SV] APPLY FAIL (Target=null)"));
 		return false;
 	}
 
 	AMosesPlayerState* PS = MosesCombat_Private::GetOwnerPS(this);
 	if (!PS)
 	{
+		UE_LOG(LogMosesGAS, Warning, TEXT("[GAS][SV] APPLY FAIL (NoOwnerPS)"));
 		return false;
 	}
 
 	UAbilitySystemComponent* SourceASC = PS->GetAbilitySystemComponent();
 	if (!SourceASC)
 	{
+		UE_LOG(LogMosesGAS, Warning, TEXT("[GAS][SV] APPLY FAIL (NoSourceASC) PS=%s"), *GetNameSafe(PS));
 		return false;
 	}
 
 	IAbilitySystemInterface* TargetASI = Cast<IAbilitySystemInterface>(TargetActor);
 	if (!TargetASI)
 	{
+		UE_LOG(LogMosesGAS, Warning, TEXT("[GAS][SV] APPLY FAIL (TargetNoASI) Target=%s"), *GetNameSafe(TargetActor));
 		return false;
 	}
 
 	UAbilitySystemComponent* TargetASC = TargetASI->GetAbilitySystemComponent();
 	if (!TargetASC)
 	{
+		UE_LOG(LogMosesGAS, Warning, TEXT("[GAS][SV] APPLY FAIL (TargetNoASC) Target=%s"), *GetNameSafe(TargetActor));
 		return false;
 	}
 
 	TSubclassOf<UGameplayEffect> GEClass = DamageGE_SetByCaller.LoadSynchronous();
 	if (!GEClass)
 	{
-		UE_LOG(LogMosesGAS, Warning, TEXT("[GAS][SV] DamageGE_SetByCaller is null (load failed)"));
+		UE_LOG(LogMosesGAS, Error, TEXT("[GAS][SV] APPLY FAIL (NoDamageGE) SoftPath=%s"),
+			*DamageGE_SetByCaller.ToSoftObjectPath().ToString());
 		return false;
 	}
 
@@ -800,16 +803,23 @@ bool UMosesCombatComponent::Server_ApplyDamageToTarget_GAS(AActor* TargetActor, 
 	const FGameplayEffectSpecHandle SpecHandle = SourceASC->MakeOutgoingSpec(GEClass, 1.f, Ctx);
 	if (!SpecHandle.IsValid())
 	{
+		UE_LOG(LogMosesGAS, Warning, TEXT("[GAS][SV] APPLY FAIL (SpecInvalid) Target=%s"), *GetNameSafe(TargetActor));
 		return false;
 	}
 
-	SpecHandle.Data->SetSetByCallerMagnitude(FMosesGameplayTags::Get().Data_Damage, Damage);
+	// ✅ [FIX] Damage는 "양수"로 계산하지만, Health Add 방식의 GE를 쓰는 경우
+	//         Health를 깎으려면 음수로 넣어야 한다.
+	//         -> DAY7~9에서는 빠르게 닫기 위해 여기서 음수로 주입한다.
+	const float SignedDamage = -FMath::Abs(Damage);
+
+	SpecHandle.Data->SetSetByCallerMagnitude(FMosesGameplayTags::Get().Data_Damage, SignedDamage);
 
 	SourceASC->ApplyGameplayEffectSpecToTarget(*SpecHandle.Data.Get(), TargetASC);
 
-	UE_LOG(LogMosesGAS, Warning, TEXT("[DAMAGE][SV] Applied To=%s Amount=%.1f Weapon=%s"),
+	UE_LOG(LogMosesGAS, Warning, TEXT("[GAS][SV] APPLY OK Target=%s Damage=%.1f Signed=%.1f Weapon=%s"),
 		*GetNameSafe(TargetActor),
 		Damage,
+		SignedDamage,
 		WeaponData ? *WeaponData->WeaponId.ToString() : TEXT("None"));
 
 	return true;

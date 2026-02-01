@@ -1,4 +1,8 @@
 ﻿#include "UE5_Multi_Shooter/UI/Match/MosesMatchHUD.h"
+#include "UE5_Multi_Shooter/Player/MosesPlayerController.h"
+#include "UE5_Multi_Shooter/Weapon/MosesWeaponRegistrySubsystem.h"
+#include "UE5_Multi_Shooter/Combat/MosesCombatComponent.h"
+#include "UE5_Multi_Shooter/Weapon/MosesWeaponData.h"
 
 #include "Components/ProgressBar.h"
 #include "Components/TextBlock.h"
@@ -9,12 +13,12 @@
 #include "GameFramework/Pawn.h"
 #include "Styling/SlateColor.h"
 
+#include "UE5_Multi_Shooter/GAS/MosesGameplayTags.h"
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
 #include "UE5_Multi_Shooter/Player/MosesPlayerState.h"
 #include "UE5_Multi_Shooter/GameMode/GameState/MosesMatchGameState.h"
 #include "UE5_Multi_Shooter/UI/Match/MosesMatchAnnouncementWidget.h"
 
-// [DAY7/8]
 #include "UE5_Multi_Shooter/UI/Match/MosesCrosshairWidget.h"
 #include "UE5_Multi_Shooter/UI/Match/MosesScopeWidget.h"
 
@@ -378,6 +382,55 @@ void UMosesMatchHUD::TickCrosshairUpdate()
 		return;
 	}
 
+	APlayerController* PC = GetOwningPlayer();
+	if (!PC)
+	{
+		return;
+	}
+
+	AMosesPlayerController* MosesPC = Cast<AMosesPlayerController>(PC);
+
+	AMosesPlayerState* PS = PC->GetPlayerState<AMosesPlayerState>();
+	if (!PS)
+	{
+		return;
+	}
+
+	UMosesCombatComponent* Combat = PS->FindComponentByClass<UMosesCombatComponent>();
+	if (!Combat)
+	{
+		return;
+	}
+
+	const FGameplayTag WeaponId = Combat->GetEquippedWeaponId();
+
+	// WeaponData 해석
+	const UWorld* World = GetWorld();
+	const UGameInstance* GI = World ? World->GetGameInstance() : nullptr;
+	UMosesWeaponRegistrySubsystem* Registry = GI ? GI->GetSubsystem<UMosesWeaponRegistrySubsystem>() : nullptr;
+
+	const UMosesWeaponData* WeaponData = Registry ? Registry->ResolveWeaponData(WeaponId) : nullptr;
+
+	const bool bIsSniper = (WeaponData && WeaponData->WeaponId == FMosesGameplayTags::Get().Weapon_Sniper_A);
+	const bool bScopeOn = (MosesPC ? MosesPC->IsScopeActive_Local() : false);
+
+	// ✅ 스나이퍼는 "스코프 OFF"면 크로스헤어 숨김
+	if (bIsSniper && !bScopeOn)
+	{
+		CrosshairWidget->SetVisibility(ESlateVisibility::Collapsed);
+		return;
+	}
+
+	// 스코프 ON일 때도 스코프 UI만 보이게 하려면 Crosshair 숨겨도 됨(취향)
+	if (bIsSniper && bScopeOn)
+	{
+		CrosshairWidget->SetVisibility(ESlateVisibility::Collapsed);
+		return;
+	}
+
+	// 그 외 무기: 항상 Crosshair 표시
+	CrosshairWidget->SetVisibility(ESlateVisibility::Visible);
+
 	const float SpreadFactor = CalculateCrosshairSpreadFactor_Local();
 	CrosshairWidget->SetSpreadFactor(SpreadFactor);
 
@@ -385,7 +438,10 @@ void UMosesMatchHUD::TickCrosshairUpdate()
 	if (LastLoggedCrosshairSpread < 0.0f || FMath::Abs(SpreadFactor - LastLoggedCrosshairSpread) >= CrosshairLogThreshold)
 	{
 		LastLoggedCrosshairSpread = SpreadFactor;
-		UE_LOG(LogMosesHUD, Log, TEXT("[HUD][CL] Crosshair Spread=%.2f"), SpreadFactor);
+		UE_LOG(LogMosesHUD, Log, TEXT("[HUD][CL] Crosshair Spread=%.2f Weapon=%s Scope=%d"),
+			SpreadFactor,
+			*WeaponId.ToString(),
+			bScopeOn ? 1 : 0);
 	}
 }
 

@@ -289,6 +289,9 @@ public:
 	/** 로컬 입력(우클릭 Release)에서 호출: Scope OFF */
 	void Scope_OnReleased_Local();
 
+public:
+	bool IsScopeActive_Local() const { return bScopeActive_Local; }
+
 private:
 	/** Scope 토글(로컬) */
 	void SetScopeActive_Local(bool bActive, const UMosesWeaponData* WeaponData);
