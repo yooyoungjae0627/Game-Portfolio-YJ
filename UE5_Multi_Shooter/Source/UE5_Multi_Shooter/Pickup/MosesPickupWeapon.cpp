@@ -1,5 +1,5 @@
 ﻿// ============================================================================
-// MosesPickupWeapon.cpp (FULL)  [MOD]
+// MosesPickupWeapon.cpp (FULL)  [MOD + Billboard]
 // ============================================================================
 
 #include "UE5_Multi_Shooter/Pickup/MosesPickupWeapon.h"
@@ -11,6 +11,10 @@
 
 #include "Blueprint/UserWidget.h"
 #include "GameFramework/Pawn.h"
+#include "GameFramework/PlayerController.h"
+#include "Camera/PlayerCameraManager.h"
+#include "Engine/World.h"
+#include "TimerManager.h"
 
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
 #include "UE5_Multi_Shooter/Player/MosesSlotOwnershipComponent.h"
@@ -38,7 +42,6 @@ AMosesPickupWeapon::AMosesPickupWeapon()
 	InteractSphere->SetCollisionResponseToChannel(ECC_Pawn, ECR_Overlap);
 	InteractSphere->SetGenerateOverlapEvents(true);
 
-	// Prompt Widget (World UI)
 	PromptWidgetComponent = CreateDefaultSubobject<UWidgetComponent>(TEXT("PromptWidget"));
 	PromptWidgetComponent->SetupAttachment(Root);
 	PromptWidgetComponent->SetWidgetSpace(EWidgetSpace::World);
@@ -59,10 +62,9 @@ void AMosesPickupWeapon::BeginPlay()
 		InteractSphere->OnComponentEndOverlap.AddDynamic(this, &AMosesPickupWeapon::HandleSphereEndOverlap);
 	}
 
-	// Prompt widget는 기본 Hidden
 	SetPromptVisible_Local(false);
+	StopPromptBillboard_Local();
 
-	// 월드 스켈레탈 메시 적용(선택)
 	if (PickupData && PickupData->WorldMesh.IsValid())
 	{
 		Mesh->SetSkeletalMesh(PickupData->WorldMesh.Get());
@@ -107,7 +109,7 @@ bool AMosesPickupWeapon::ServerTryPickup(AMosesPlayerState* RequesterPS, FText& 
 		return false;
 	}
 
-	UMosesSlotOwnershipComponent* Slots = RequesterPS ? RequesterPS->GetSlotOwnershipComponent() : nullptr; // [MOD]
+	UMosesSlotOwnershipComponent* Slots = RequesterPS ? RequesterPS->GetSlotOwnershipComponent() : nullptr;
 	if (!Slots)
 	{
 		UE_LOG(LogMosesPickup, Error, TEXT("[PICKUP][SV] FAIL MissingSlots Actor=%s Player=%s"),
@@ -115,7 +117,6 @@ bool AMosesPickupWeapon::ServerTryPickup(AMosesPlayerState* RequesterPS, FText& 
 		return false;
 	}
 
-	// Atomic consume
 	bConsumed = true;
 
 	Slots->ServerAcquireSlot(PickupData->SlotIndex, PickupData->ItemId);
@@ -147,7 +148,6 @@ void AMosesPickupWeapon::HandleSphereBeginOverlap(
 		return;
 	}
 
-	// 로컬 UX + [MOD] 타겟 세팅은 로컬 Pawn만
 	if (Pawn->IsLocallyControlled())
 	{
 		LocalPromptPawn = Pawn;
@@ -155,8 +155,8 @@ void AMosesPickupWeapon::HandleSphereBeginOverlap(
 		SetLocalHighlight(true);
 		ApplyPromptText_Local();
 		SetPromptVisible_Local(true);
+		StartPromptBillboard_Local();
 
-		// [MOD] Overlap 기반 타겟 등록
 		if (UMosesInteractionComponent* IC = GetInteractionComponentFromPawn(Pawn))
 		{
 			IC->SetCurrentInteractTarget_Local(this);
@@ -188,8 +188,8 @@ void AMosesPickupWeapon::HandleSphereEndOverlap(
 
 		SetLocalHighlight(false);
 		SetPromptVisible_Local(false);
+		StopPromptBillboard_Local();
 
-		// [MOD] Overlap 기반 타겟 해제
 		if (UMosesInteractionComponent* IC = GetInteractionComponentFromPawn(Pawn))
 		{
 			IC->ClearCurrentInteractTarget_Local(this);
@@ -235,14 +235,94 @@ void AMosesPickupWeapon::ApplyPromptText_Local()
 
 bool AMosesPickupWeapon::CanPickup_Server(const AMosesPlayerState* RequesterPS) const
 {
-	if (!RequesterPS || !PickupData)
-	{
-		return false;
-	}
-	return true;
+	return (RequesterPS != nullptr && PickupData != nullptr);
 }
 
 UMosesInteractionComponent* AMosesPickupWeapon::GetInteractionComponentFromPawn(APawn* Pawn) const
 {
 	return Pawn ? Pawn->FindComponentByClass<UMosesInteractionComponent>() : nullptr;
+}
+
+// ============================================================================
+// [MOD] Billboard (Local only)
+// ============================================================================
+
+void AMosesPickupWeapon::StartPromptBillboard_Local()
+{
+	if (HasAuthority())
+	{
+		return;
+	}
+
+	if (!PromptWidgetComponent || !PromptWidgetComponent->IsVisible())
+	{
+		return;
+	}
+
+	if (GetWorldTimerManager().IsTimerActive(TimerHandle_PromptBillboard))
+	{
+		return;
+	}
+
+	ApplyBillboardRotation_Local();
+
+	GetWorldTimerManager().SetTimer(
+		TimerHandle_PromptBillboard,
+		this,
+		&ThisClass::TickPromptBillboard_Local,
+		PromptBillboardInterval,
+		true);
+
+	UE_LOG(LogMosesPickup, VeryVerbose, TEXT("[PICKUP][CL] Billboard START Actor=%s"), *GetNameSafe(this));
+}
+
+void AMosesPickupWeapon::StopPromptBillboard_Local()
+{
+	if (GetWorldTimerManager().IsTimerActive(TimerHandle_PromptBillboard))
+	{
+		GetWorldTimerManager().ClearTimer(TimerHandle_PromptBillboard);
+		UE_LOG(LogMosesPickup, VeryVerbose, TEXT("[PICKUP][CL] Billboard STOP Actor=%s"), *GetNameSafe(this));
+	}
+}
+
+void AMosesPickupWeapon::TickPromptBillboard_Local()
+{
+	ApplyBillboardRotation_Local();
+}
+
+void AMosesPickupWeapon::ApplyBillboardRotation_Local()
+{
+	if (!PromptWidgetComponent || !PromptWidgetComponent->IsVisible())
+	{
+		return;
+	}
+
+	APawn* Pawn = LocalPromptPawn.Get();
+	if (!Pawn || !Pawn->IsLocallyControlled())
+	{
+		return;
+	}
+
+	APlayerController* PC = Cast<APlayerController>(Pawn->GetController());
+	if (!PC || !PC->IsLocalController() || !PC->PlayerCameraManager)
+	{
+		return;
+	}
+
+	const FVector CamLoc = PC->PlayerCameraManager->GetCameraLocation();
+	const FVector MyLoc = PromptWidgetComponent->GetComponentLocation();
+
+	FVector ToCam = CamLoc - MyLoc;
+	if (ToCam.IsNearlyZero())
+	{
+		return;
+	}
+
+	FRotator LookRot = ToCam.Rotation();
+
+	// ✅ UI는 눕지 않게 Yaw만 권장
+	LookRot.Pitch = 0.f;
+	LookRot.Roll = 0.f;
+
+	PromptWidgetComponent->SetWorldRotation(LookRot);
 }

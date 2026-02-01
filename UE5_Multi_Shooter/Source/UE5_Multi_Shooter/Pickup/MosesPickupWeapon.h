@@ -1,17 +1,5 @@
 // ============================================================================
-// MosesPickupWeapon.h (FULL)  [MOD]
-// ----------------------------------------------------------------------------
-// - 월드에 배치되는 픽업 액터
-// - 로컬 하이라이트(CustomDepth) + 로컬 말풍선(WidgetComponent)은 클라 코스메틱.
-// - 서버 원자성: bConsumed로 "OK 1 / FAIL 1" 보장.
-// - 성공 시 PlayerState SSOT(슬롯 소유/ItemId) 갱신 + 중앙 Announcement 텍스트 반환.
-//
-// [MOD 핵심]
-// - [MOD] Overlap 기반 타겟 시스템:
-//   * 로컬 Pawn이 InteractSphere에 들어오면, Pawn의 UMosesInteractionComponent에
-//     SetCurrentInteractTarget_Local(this)를 호출한다.
-//   * 나가면 ClearCurrentInteractTarget_Local(this).
-// - (라인트레이스/TraceTarget 의존 제거 가능)
+// MosesPickupWeapon.h (FULL)  [MOD + Billboard]
 // ============================================================================
 
 #pragma once
@@ -28,6 +16,7 @@ class UMosesPickupWeaponData;
 class UMosesPickupPromptWidget;
 class AMosesPlayerState;
 class UMosesInteractionComponent;
+class APawn;
 
 UCLASS()
 class UE5_MULTI_SHOOTER_API AMosesPickupWeapon : public AActor
@@ -37,17 +26,13 @@ class UE5_MULTI_SHOOTER_API AMosesPickupWeapon : public AActor
 public:
 	AMosesPickupWeapon();
 
-	// 클라: 로컬 하이라이트 On/Off (Overlap 등에서 호출)
 	void SetLocalHighlight(bool bEnable);
-
-	// 서버: 픽업 시도 (E)
 	bool ServerTryPickup(AMosesPlayerState* RequesterPS, FText& OutAnnounceText);
 
 protected:
 	virtual void BeginPlay() override;
 
 private:
-	// ---- Overlap for local highlight + prompt + [MOD] target set/clear ----
 	UFUNCTION()
 	void HandleSphereBeginOverlap(
 		UPrimitiveComponent* OverlappedComp,
@@ -64,39 +49,43 @@ private:
 		UPrimitiveComponent* OtherComp,
 		int32 OtherBodyIndex);
 
-	// ---- Prompt helpers ----
 	void SetPromptVisible_Local(bool bVisible);
 	void ApplyPromptText_Local();
 
-	// ---- Guards ----
 	bool CanPickup_Server(const AMosesPlayerState* RequesterPS) const;
-
-	// [MOD] interaction component resolve
 	UMosesInteractionComponent* GetInteractionComponentFromPawn(APawn* Pawn) const;
 
+	// [MOD] Billboard (Local only)
+	void StartPromptBillboard_Local();
+	void StopPromptBillboard_Local();
+	void TickPromptBillboard_Local();
+	void ApplyBillboardRotation_Local();
+
 private:
-	// ---- Components ----
 	UPROPERTY(VisibleAnywhere)
-	TObjectPtr<USceneComponent> Root;
+	TObjectPtr<USceneComponent> Root = nullptr;
 
 	UPROPERTY(VisibleAnywhere)
-	TObjectPtr<USkeletalMeshComponent> Mesh;
+	TObjectPtr<USkeletalMeshComponent> Mesh = nullptr;
 
 	UPROPERTY(VisibleAnywhere)
-	TObjectPtr<USphereComponent> InteractSphere;
+	TObjectPtr<USphereComponent> InteractSphere = nullptr;
 
 	UPROPERTY(VisibleAnywhere)
-	TObjectPtr<UWidgetComponent> PromptWidgetComponent;
+	TObjectPtr<UWidgetComponent> PromptWidgetComponent = nullptr;
 
-	// ---- Data ----
 	UPROPERTY(EditDefaultsOnly, Category = "Pickup")
-	TObjectPtr<UMosesPickupWeaponData> PickupData;
+	TObjectPtr<UMosesPickupWeaponData> PickupData = nullptr;
 
-	// ---- Server atomic ----
 	UPROPERTY()
 	bool bConsumed = false;
 
-	// ---- Local prompt owner ----
 	UPROPERTY(Transient)
 	TWeakObjectPtr<APawn> LocalPromptPawn;
+
+	// [MOD] Billboard tick (Local only)
+	UPROPERTY(EditDefaultsOnly, Category = "Pickup|Prompt")
+	float PromptBillboardInterval = 0.033f; // ~30fps
+
+	FTimerHandle TimerHandle_PromptBillboard;
 };

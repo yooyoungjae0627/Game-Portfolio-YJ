@@ -1,19 +1,8 @@
 // ============================================================================
 // MosesFlagSpot.h (FULL)
 // ----------------------------------------------------------------------------
-// 기획 변경 반영: "라인트레이스 조준" 제거, "오버랩 기반(존 안에서 E)"으로 단순화
-//
-// - CaptureZone 오버랩 시: 로컬 프롬프트 표시 + InteractionTarget 세팅
-// - 존 안에서 E Press: 서버에 캡처 시작 요청
-// - 존 이탈/Release/Dead/Damaged 시: 서버가 캡처 취소 확정
-//
-// 서버 권위/SSOT 원칙
-// - 캡처 진행도/성공/취소 판정은 서버에서만 수행
-// - PlayerState(SSOT)의 UMosesCaptureComponent에 상태를 기록/복제
-//
-// 네트워크 주의(중요)
-// - InteractionComponent가 RPC로 Spot을 전달할 수 있도록 Spot은 Replicate ON 권장.
-//   (Spot이 레벨 고정 6개라 비용은 사실상 무시 가능)
+// - Overlap 기반(존 안에서 E) FlagSpot
+// - PromptWidget: 로컬 플레이어에게만 표시 + 항상 카메라를 바라봄(Billboard)
 // ============================================================================
 
 #pragma once
@@ -102,6 +91,12 @@ private:
 
 	UMosesInteractionComponent* GetInteractionComponentFromPawn(APawn* Pawn) const;
 
+	// [MOD] Billboard (Local only)
+	void StartPromptBillboard_Local();
+	void StopPromptBillboard_Local();
+	void TickPromptBillboard_Local();
+	void ApplyBillboardRotation_Local();
+
 	// ---------------------------------------------------------------------
 	// Guards
 	// ---------------------------------------------------------------------
@@ -140,6 +135,10 @@ private:
 	UPROPERTY(EditDefaultsOnly, Category = "Flag|Feedback")
 	TSoftObjectPtr<UMosesFlagFeedbackData> FeedbackData;
 
+	// [MOD] Billboard tick (Local only)
+	UPROPERTY(EditDefaultsOnly, Category = "Flag|Prompt")
+	float PromptBillboardInterval = 0.033f; // ~30fps
+
 private:
 	// ---------------------------------------------------------------------
 	// Runtime (Server)
@@ -161,4 +160,6 @@ private:
 	// ---------------------------------------------------------------------
 	UPROPERTY(Transient)
 	TWeakObjectPtr<APawn> LocalPromptPawn;
+
+	FTimerHandle TimerHandle_PromptBillboard;
 };
