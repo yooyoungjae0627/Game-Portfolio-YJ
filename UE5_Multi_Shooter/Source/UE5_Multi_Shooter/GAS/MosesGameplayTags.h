@@ -1,31 +1,17 @@
-#pragma once
+ï»¿#pragma once
 
 #include "GameplayTagContainer.h"
 
 class UGameplayTagsManager;
 
-/**
- * Native GameplayTags Singleton
- * - ÇÁ·ÎÁ§Æ® Àü¿ª¿¡¼­ »ç¿ëÇÒ ³×ÀÌÆ¼ºê GameplayTag¸¦ "¿£Áø ÃÊ±âÈ­ ÃÊ¹İ"¿¡ 1È¸ µî·ÏÇÑ´Ù.
- *
- * Lyra ½ºÅ¸ÀÏ:
- * - "ÅÂ±× ¹®ÀÚ¿­"Àº ÄÚµå¿¡ »ó¼ö·Î °íÁ¤(SSOT)
- * - ¾îµğ¼­µç FMosesGameplayTags::Get().Weapon_Rifle_A ÇüÅÂ·Î »ç¿ë
- */
 struct FMosesGameplayTags
 {
 public:
-	/** ½Ì±ÛÅæ Á¢±ÙÀÚ */
 	static const FMosesGameplayTags& Get() { return GameplayTags; }
-
-	/** ¿£Áø ºÎÆÃ ÃÊ±â¿¡ 1È¸ È£ÃâµÇ¾î ³×ÀÌÆ¼ºê ÅÂ±× µî·Ï */
 	static void InitializeNativeTags();
 
 private:
-	/** ´ÜÀÏ ÅÂ±× µî·Ï ÇïÆÛ (Manager ±â¹İÀ¸·Î¸¸ µî·ÏÇÑ´Ù) */
 	static void AddTag(UGameplayTagsManager& Manager, FGameplayTag& OutTag, const ANSICHAR* TagName, const ANSICHAR* TagComment);
-
-	/** ÇÁ·ÎÁ§Æ®¿¡¼­ »ç¿ëÇÒ ¸ğµç GameplayTag Á¤ÀÇ */
 	static void AddAllTags(UGameplayTagsManager& Manager);
 
 public:
@@ -44,20 +30,25 @@ public:
 	FGameplayTag State_Dead;
 
 	/* ---------- Weapon Tags ---------- */
-	FGameplayTag Weapon_Rifle_A;     
-	FGameplayTag Weapon_Rifle_B;     
-	FGameplayTag Weapon_Rifle_C;     
-	FGameplayTag Weapon_Pistol;      
-	FGameplayTag Weapon_Grenade;     
+	FGameplayTag Weapon_Rifle_A;
+	FGameplayTag Weapon_Rifle_B;
+	FGameplayTag Weapon_Rifle_C;
+
+	FGameplayTag Weapon_Shotgun_A;          // âœ… ADD
+	FGameplayTag Weapon_Sniper_A;           // âœ… ADD
+	FGameplayTag Weapon_GrenadeLauncher_A;  // âœ… ADD
+
+	FGameplayTag Weapon_Pistol;
+	FGameplayTag Weapon_Grenade;
+
+	/* ---------- GAS SetByCaller Tags ---------- */
+	FGameplayTag Data_Damage;               // âœ… ADD (Data.Damage)
 
 	/* ---------- Zombie Tags ---------- */
-	FGameplayTag Zombie_Attack_A;    
-	FGameplayTag Zombie_Attack_B;    
+	FGameplayTag Zombie_Attack_A;
+	FGameplayTag Zombie_Attack_B;
 
 private:
-	/** Àü¿ª ½Ì±ÛÅæ ÀÎ½ºÅÏ½º */
 	static FMosesGameplayTags GameplayTags;
-
-	/** Áßº¹ È£Ãâ ¹æÁö °¡µå */
 	static bool bInitialized;
 };

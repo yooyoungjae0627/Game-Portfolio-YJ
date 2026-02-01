@@ -1,18 +1,11 @@
-#include "MosesGameplayTags.h"
+ï»¿#include "MosesGameplayTags.h"
 #include "GameplayTagsManager.h"
 
-// (¼±ÅÃ) ·Î±× ³Ö°í ½ÍÀ¸¸é ¿©±â¿¡ MosesLogChannels include
-// #include "UE5_Multi_Shooter/MosesLogChannels.h"
-
-/** ½Ì±ÛÅæ ÀÎ½ºÅÏ½º Á¤ÀÇ */
 FMosesGameplayTags FMosesGameplayTags::GameplayTags;
 bool FMosesGameplayTags::bInitialized = false;
 
 void FMosesGameplayTags::InitializeNativeTags()
 {
-	// Native GameplayTags´Â "¿£Áø ÃÊ±âÈ­ ÃÊ¹Ý"¿¡¸¸ Ãß°¡ °¡´É.
-	// GameInstance::Init() ½ÃÁ¡Àº ÀÌ¹Ì bDoneAddingNativeTags=trueÀÏ ¼ö ÀÖ¾î ensure·Î ÅÍÁü.
-	// µû¶ó¼­ AssetManager::StartInitialLoading(or StartupModule)¿¡¼­ 1È¸¸¸ ÃÊ±âÈ­ÇÑ´Ù.
 	if (bInitialized)
 	{
 		return;
@@ -22,9 +15,6 @@ void FMosesGameplayTags::InitializeNativeTags()
 
 	UGameplayTagsManager& Manager = UGameplayTagsManager::Get();
 	AddAllTags(Manager);
-
-	// (¼±ÅÃ) Áõ°Å ·Î±×
-	// UE_LOG(LogMosesAsset, Log, TEXT("[TAGS] Native GameplayTags initialized"));
 }
 
 void FMosesGameplayTags::AddTag(UGameplayTagsManager& Manager, FGameplayTag& OutTag, const ANSICHAR* TagName, const ANSICHAR* TagComment)
@@ -37,32 +27,36 @@ void FMosesGameplayTags::AddTag(UGameplayTagsManager& Manager, FGameplayTag& Out
 
 void FMosesGameplayTags::AddAllTags(UGameplayTagsManager& Manager)
 {
-	// ÃÊ±âÈ­ »óÅÂ ÅÂ±×
+	// InitState
 	AddTag(Manager, GameplayTags.InitState_Spawned, "InitState.Spawned", "Actor just spawned");
 	AddTag(Manager, GameplayTags.InitState_DataAvailable, "InitState.DataAvailable", "Required data is ready");
 	AddTag(Manager, GameplayTags.InitState_DataInitialized, "InitState.DataInitialized", "Internal initialization done");
 	AddTag(Manager, GameplayTags.InitState_GameplayReady, "InitState.GameplayReady", "Ready for gameplay");
 
-	// ÀÔ·Â ÀÇ¹Ì ÅÂ±×
+	// Input
 	AddTag(Manager, GameplayTags.InputTag_Move, "InputTag.Move", "Move input");
 	AddTag(Manager, GameplayTags.InputTag_Look_Mouse, "InputTag.Look.Mouse", "Mouse look input");
 
-	// Combat / Dead Á¤Ã¥ ÅÂ±×
+	// State
 	AddTag(Manager, GameplayTags.State_Phase_Combat, "State.Phase.Combat", "In combat phase (server authoritative)");
 	AddTag(Manager, GameplayTags.State_Dead, "State.Dead", "Dead state (server authoritative)");
 
-	// ------------------------------
-	// Weapon Tags
-	// ------------------------------
-	AddTag(Manager, GameplayTags.Weapon_Rifle_A, "Weapon.Rifle.A", "Rifle A (DataAsset key)");    
-	AddTag(Manager, GameplayTags.Weapon_Rifle_B, "Weapon.Rifle.B", "Rifle B (DataAsset key)");    
-	AddTag(Manager, GameplayTags.Weapon_Rifle_C, "Weapon.Rifle.C", "Rifle C (DataAsset key)");    
-	AddTag(Manager, GameplayTags.Weapon_Pistol, "Weapon.Pistol", "Pistol (DataAsset key)");      
-	AddTag(Manager, GameplayTags.Weapon_Grenade, "Weapon.Grenade", "Grenade (DataAsset key)");    
+	// Weapons (DataAsset key)
+	AddTag(Manager, GameplayTags.Weapon_Rifle_A, "Weapon.Rifle.A", "Rifle A (DataAsset key)");
+	AddTag(Manager, GameplayTags.Weapon_Rifle_B, "Weapon.Rifle.B", "Rifle B (DataAsset key)");
+	AddTag(Manager, GameplayTags.Weapon_Rifle_C, "Weapon.Rifle.C", "Rifle C (DataAsset key)");
 
-	// ------------------------------
-	// Zombie Tags (optional)
-	// ------------------------------
-	AddTag(Manager, GameplayTags.Zombie_Attack_A, "Zombie.Attack.A", "Zombie attack type A");      
-	AddTag(Manager, GameplayTags.Zombie_Attack_B, "Zombie.Attack.B", "Zombie attack type B");      
+	AddTag(Manager, GameplayTags.Weapon_Shotgun_A, "Weapon.Shotgun.A", "Shotgun A (DataAsset key)");                 // âœ… ADD
+	AddTag(Manager, GameplayTags.Weapon_Sniper_A, "Weapon.Sniper.A", "Sniper A (DataAsset key)");                    // âœ… ADD
+	AddTag(Manager, GameplayTags.Weapon_GrenadeLauncher_A, "Weapon.GrenadeLauncher.A", "GrenadeLauncher A (DataAsset key)"); // âœ… ADD
+
+	AddTag(Manager, GameplayTags.Weapon_Pistol, "Weapon.Pistol", "Pistol (DataAsset key)");
+	AddTag(Manager, GameplayTags.Weapon_Grenade, "Weapon.Grenade", "Grenade (DataAsset key)");
+
+	// GAS SetByCaller
+	AddTag(Manager, GameplayTags.Data_Damage, "Data.Damage", "SetByCaller damage");                                  // âœ… ADD
+
+	// Zombie
+	AddTag(Manager, GameplayTags.Zombie_Attack_A, "Zombie.Attack.A", "Zombie attack type A");
+	AddTag(Manager, GameplayTags.Zombie_Attack_B, "Zombie.Attack.B", "Zombie attack type B");
 }
