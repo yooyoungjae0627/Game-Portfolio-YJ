@@ -1,12 +1,15 @@
 ﻿// ============================================================================
-// MosesCaptureComponent.cpp (FULL)  [MOD]
+// MosesCaptureComponent.cpp (FULL)
 // ============================================================================
 
 #include "UE5_Multi_Shooter/Flag/MosesCaptureComponent.h"
 #include "UE5_Multi_Shooter/Flag/MosesFlagSpot.h"
 
+#include "Net/UnrealNetwork.h"
+
 UMosesCaptureComponent::UMosesCaptureComponent()
 {
+	PrimaryComponentTick.bCanEverTick = false;
 	SetIsReplicatedByDefault(true);
 }
 

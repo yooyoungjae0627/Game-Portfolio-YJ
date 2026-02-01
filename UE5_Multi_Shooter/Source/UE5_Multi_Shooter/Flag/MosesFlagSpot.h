@@ -1,25 +1,35 @@
 // ============================================================================
-// MosesFlagSpot.h (FULL)  [MOD]
+// MosesFlagSpot.h (FULL)
 // ----------------------------------------------------------------------------
-// [MOD 핵심]
-// - Overlap 기반 타겟 시스템 적용:
-//   * CaptureZone BeginOverlap(클라 로컬)에서 InteractionComponent에 Target Set
-//   * CaptureZone EndOverlap(클라 로컬)에서 Target Clear
-// - "존 안에서 E" 로 캡처가 시작되도록 UX가 단순화된다.
-// - 서버 로직(3초 유지/취소/성공/Announcement)은 기존 구조 유지.
+// 기획 변경 반영: "라인트레이스 조준" 제거, "오버랩 기반(존 안에서 E)"으로 단순화
+//
+// - CaptureZone 오버랩 시: 로컬 프롬프트 표시 + InteractionTarget 세팅
+// - 존 안에서 E Press: 서버에 캡처 시작 요청
+// - 존 이탈/Release/Dead/Damaged 시: 서버가 캡처 취소 확정
+//
+// 서버 권위/SSOT 원칙
+// - 캡처 진행도/성공/취소 판정은 서버에서만 수행
+// - PlayerState(SSOT)의 UMosesCaptureComponent에 상태를 기록/복제
+//
+// 네트워크 주의(중요)
+// - InteractionComponent가 RPC로 Spot을 전달할 수 있도록 Spot은 Replicate ON 권장.
+//   (Spot이 레벨 고정 6개라 비용은 사실상 무시 가능)
 // ============================================================================
 
 #pragma once
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
+
 #include "MosesFlagSpot.generated.h"
 
 class USphereComponent;
 class UStaticMeshComponent;
 class UWidgetComponent;
 
+class APawn;
 class AMosesPlayerState;
+
 class UMosesFlagFeedbackData;
 class UMosesInteractionComponent;
 
@@ -43,6 +53,9 @@ class UE5_MULTI_SHOOTER_API AMosesFlagSpot : public AActor
 public:
 	AMosesFlagSpot();
 
+	// ---------------------------------------------------------------------
+	// Server authority API
+	// ---------------------------------------------------------------------
 	bool ServerTryStartCapture(AMosesPlayerState* RequesterPS);
 	void ServerCancelCapture(AMosesPlayerState* RequesterPS, EMosesCaptureCancelReason Reason);
 	void SetFlagSystemEnabled(bool bEnable);
@@ -51,7 +64,9 @@ protected:
 	virtual void BeginPlay() override;
 
 private:
-	// ---- Internal flow ----
+	// ---------------------------------------------------------------------
+	// Internal flow (Server)
+	// ---------------------------------------------------------------------
 	void StartCapture_Internal(AMosesPlayerState* NewCapturerPS);
 	void CancelCapture_Internal(EMosesCaptureCancelReason Reason);
 	void FinishCapture_Internal();
@@ -59,7 +74,9 @@ private:
 	void TickCaptureProgress_Server();
 	void ResetCaptureState_Server();
 
-	// ---- Overlap callbacks ----
+	// ---------------------------------------------------------------------
+	// Overlap callbacks
+	// ---------------------------------------------------------------------
 	UFUNCTION()
 	void HandleZoneBeginOverlap(
 		UPrimitiveComponent* OverlappedComp,
@@ -76,34 +93,44 @@ private:
 		UPrimitiveComponent* OtherComp,
 		int32 OtherBodyIndex);
 
-	// ---- Prompt helpers (Local only) ----
+	// ---------------------------------------------------------------------
+	// Prompt helpers (Local only)
+	// ---------------------------------------------------------------------
 	void SetPromptVisible_Local(bool bVisible);
 	void ApplyPromptText_Local();
 	bool IsLocalPawn(const APawn* Pawn) const;
 
-	// [MOD] interaction component resolve
 	UMosesInteractionComponent* GetInteractionComponentFromPawn(APawn* Pawn) const;
 
-	// ---- Guards ----
+	// ---------------------------------------------------------------------
+	// Guards
+	// ---------------------------------------------------------------------
 	bool CanStartCapture_Server(const AMosesPlayerState* RequesterPS) const;
 	bool IsCapturer_Server(const AMosesPlayerState* RequesterPS) const;
-
 	bool IsDead_Server(const AMosesPlayerState* PS) const;
+
 	float ResolveBroadcastSeconds() const;
 
 private:
-	UPROPERTY(VisibleAnywhere)
-	TObjectPtr<USceneComponent> Root;
+	// ---------------------------------------------------------------------
+	// Components
+	// ---------------------------------------------------------------------
+	UPROPERTY(VisibleAnywhere, Category = "Flag")
+	TObjectPtr<USceneComponent> Root = nullptr;
 
-	UPROPERTY(VisibleAnywhere)
-	TObjectPtr<UStaticMeshComponent> SpotMesh;
+	UPROPERTY(VisibleAnywhere, Category = "Flag")
+	TObjectPtr<UStaticMeshComponent> SpotMesh = nullptr;
 
-	UPROPERTY(VisibleAnywhere)
-	TObjectPtr<USphereComponent> CaptureZone;
+	UPROPERTY(VisibleAnywhere, Category = "Flag")
+	TObjectPtr<USphereComponent> CaptureZone = nullptr;
 
-	UPROPERTY(VisibleAnywhere)
-	TObjectPtr<UWidgetComponent> PromptWidgetComponent;
+	UPROPERTY(VisibleAnywhere, Category = "Flag")
+	TObjectPtr<UWidgetComponent> PromptWidgetComponent = nullptr;
 
+private:
+	// ---------------------------------------------------------------------
+	// Tunables
+	// ---------------------------------------------------------------------
 	UPROPERTY(EditDefaultsOnly, Category = "Flag|Capture")
 	float CaptureHoldSeconds = 3.0f;
 
@@ -113,16 +140,25 @@ private:
 	UPROPERTY(EditDefaultsOnly, Category = "Flag|Feedback")
 	TSoftObjectPtr<UMosesFlagFeedbackData> FeedbackData;
 
-	UPROPERTY()
-	TObjectPtr<AMosesPlayerState> CapturerPS;
+private:
+	// ---------------------------------------------------------------------
+	// Runtime (Server)
+	// ---------------------------------------------------------------------
+	UPROPERTY(Transient)
+	TObjectPtr<AMosesPlayerState> CapturerPS = nullptr;
 
+	UPROPERTY(Transient)
 	float CaptureElapsedSeconds = 0.0f;
 
 	FTimerHandle TimerHandle_CaptureTick;
 
-	UPROPERTY()
+	UPROPERTY(Transient)
 	bool bFlagSystemEnabled = true;
 
+private:
+	// ---------------------------------------------------------------------
+	// Runtime (Client local)
+	// ---------------------------------------------------------------------
 	UPROPERTY(Transient)
 	TWeakObjectPtr<APawn> LocalPromptPawn;
 };
