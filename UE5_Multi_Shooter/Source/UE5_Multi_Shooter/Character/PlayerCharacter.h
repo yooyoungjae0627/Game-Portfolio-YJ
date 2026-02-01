@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "GameplayTagContainer.h"
 #include "UE5_Multi_Shooter/Character/MosesCharacter.h"
+
 #include "PlayerCharacter.generated.h"
 
 class AController;
@@ -15,6 +16,23 @@ class UMosesInteractionComponent;
 class USkeletalMeshComponent;
 class UAnimMontage;
 
+/**
+ * APlayerCharacter
+ *
+ * [역할]
+ * - Pawn(Body)은 "표시/입력"만 담당한다.
+ * - SSOT는 PlayerState(CombatComponent)이며, Pawn은 RepNotify->Delegate 이벤트를 받아 코스메틱을 재현한다.
+ *
+ * [DAY6 목표]
+ * - 무기 4개(슬롯1~4)가 항상 보인다:
+ *   - 손(Hand) 1개 + 등(Back) 3개
+ * - Swap은 서버 승인 결과(CombatComponent SwapContext RepNotify)로만 시작한다.
+ * - Swap 몽타주 AnimNotify 타이밍에서 Hand/Back Attach를 교체한다.
+ *
+ * [금지]
+ * - Tick 기반 폴링/갱신 금지
+ * - UMG Binding 금지
+ */
 UCLASS()
 class UE5_MULTI_SHOOTER_API APlayerCharacter : public AMosesCharacter
 {
@@ -42,11 +60,8 @@ public:
 	void Input_EquipSlot1();
 	void Input_EquipSlot2();
 	void Input_EquipSlot3();
-
-	// [MOD] Slot4
 	void Input_EquipSlot4();
 
-	// [MOD] Reload
 	void Input_Reload();
 
 	// =========================================================================
@@ -54,6 +69,12 @@ public:
 	// =========================================================================
 	void Input_FirePressed();
 	void Input_FireReleased();
+
+	// =========================================================================
+	// [DAY6] AnimNotify entrypoints (Swap montage)
+	// =========================================================================
+	void HandleSwapDetachNotify();
+	void HandleSwapAttachNotify();
 
 protected:
 	virtual void BeginPlay() override;
@@ -98,17 +119,40 @@ private:
 
 private:
 	// =========================================================================
-	// Combat bind
+	// Combat bind (RepNotify -> Delegate -> Cosmetic)
 	// =========================================================================
 	void BindCombatComponent();
 	void UnbindCombatComponent();
 
 	void HandleEquippedChanged(int32 SlotIndex, FGameplayTag WeaponId);
 	void HandleDeadChanged(bool bNewDead);
+	void HandleReloadingChanged(bool bReloading);
 
-	void RefreshWeaponCosmetic(FGameplayTag WeaponId);
+	// [DAY6] 서버 승인 Swap 이벤트(From/To/Serial)
+	void HandleSwapStarted(int32 FromSlot, int32 ToSlot, int32 Serial);
 
 	UMosesCombatComponent* GetCombatComponent_Checked() const;
+
+private:
+	// =========================================================================
+	// Weapon visuals (DAY6: Hand + Back1/2/3)
+	// =========================================================================
+	void RefreshAllWeaponMeshes_FromSSOT();
+	void RefreshWeaponMesh_ForSlot(int32 SlotIndex, FGameplayTag WeaponId, USkeletalMeshComponent* TargetMeshComp);
+
+	void ApplyAttachmentPlan_Immediate(int32 EquippedSlot);
+	FName GetHandSocketName() const;
+	FName GetBackSocketNameForSlot(int32 EquippedSlot, int32 SlotIndex) const;
+
+	USkeletalMeshComponent* GetMeshCompForSlot(int32 SlotIndex) const;
+	void CacheSlotMeshMapping();
+
+private:
+	// =========================================================================
+	// Swap montage runtime (Cosmetic only)
+	// =========================================================================
+	void BeginSwapCosmetic_Local(int32 FromSlot, int32 ToSlot, int32 Serial);
+	void EndSwapCosmetic_Local(const TCHAR* Reason);
 
 private:
 	// =========================================================================
@@ -141,8 +185,22 @@ private:
 	UPROPERTY(VisibleAnywhere, Category = "Moses|Components")
 	TObjectPtr<UMosesInteractionComponent> InteractionComponent = nullptr;
 
+	// ---------------------------------------------------------------------
+	// [DAY6] Weapon Meshes (Cosmetic only)
+	// - 서버 권위 상태(SSOT)에 따라 보여주기만 한다.
+	// - Replicate 하지 않는다.
+	// ---------------------------------------------------------------------
 	UPROPERTY(VisibleAnywhere, Category = "Moses|Weapon")
-	TObjectPtr<USkeletalMeshComponent> WeaponMeshComp = nullptr;
+	TObjectPtr<USkeletalMeshComponent> WeaponMesh_Hand = nullptr;
+
+	UPROPERTY(VisibleAnywhere, Category = "Moses|Weapon")
+	TObjectPtr<USkeletalMeshComponent> WeaponMesh_Back1 = nullptr;
+
+	UPROPERTY(VisibleAnywhere, Category = "Moses|Weapon")
+	TObjectPtr<USkeletalMeshComponent> WeaponMesh_Back2 = nullptr;
+
+	UPROPERTY(VisibleAnywhere, Category = "Moses|Weapon")
+	TObjectPtr<USkeletalMeshComponent> WeaponMesh_Back3 = nullptr;
 
 private:
 	// =========================================================================
@@ -154,8 +212,20 @@ private:
 	UPROPERTY(EditDefaultsOnly, Category = "Moses|Move")
 	float SprintSpeed = 800.0f;
 
-	UPROPERTY(EditDefaultsOnly, Category = "Moses|Weapon")
-	FName CharacterWeaponSocketName = TEXT("WeaponSocket");
+	// ---------------------------------------------------------------------
+	// [DAY6] Socket names (Skeleton sockets must exist)
+	// ---------------------------------------------------------------------
+	UPROPERTY(EditDefaultsOnly, Category = "Moses|Weapon|Socket")
+	FName WeaponSocket_Hand = TEXT("WeaponSocket_Hand");
+
+	UPROPERTY(EditDefaultsOnly, Category = "Moses|Weapon|Socket")
+	FName WeaponSocket_Back_1 = TEXT("WeaponSocket_Back_1");
+
+	UPROPERTY(EditDefaultsOnly, Category = "Moses|Weapon|Socket")
+	FName WeaponSocket_Back_2 = TEXT("WeaponSocket_Back_2");
+
+	UPROPERTY(EditDefaultsOnly, Category = "Moses|Weapon|Socket")
+	FName WeaponSocket_Back_3 = TEXT("WeaponSocket_Back_3");
 
 private:
 	// =========================================================================
@@ -172,6 +242,17 @@ private:
 
 	UPROPERTY(EditDefaultsOnly, Category = "Moses|Anim")
 	TObjectPtr<UAnimMontage> SprintMontage = nullptr;
+
+	// ---------------------------------------------------------------------
+	// [DAY6] Swap / Reload montages (Cosmetic only)
+	// - Swap은 서버 승인 SwapStarted 이벤트로만 재생
+	// - Reload는 서버 승인(=bIsReloading replicated true)에서만 재생
+	// ---------------------------------------------------------------------
+	UPROPERTY(EditDefaultsOnly, Category = "Moses|Anim|Weapon")
+	TObjectPtr<UAnimMontage> SwapMontage = nullptr;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Moses|Anim|Weapon")
+	TObjectPtr<UAnimMontage> ReloadMontage = nullptr;
 
 private:
 	// =========================================================================
@@ -207,4 +288,34 @@ private:
 
 	UPROPERTY(EditDefaultsOnly, Category = "Moses|Fire")
 	float AutoFireTickRate = 0.06f;
+
+private:
+	// =========================================================================
+	// [DAY6] Swap runtime state (Cosmetic only)
+	// =========================================================================
+	UPROPERTY(Transient)
+	bool bSwapInProgress = false;
+
+	UPROPERTY(Transient)
+	int32 PendingSwapFromSlot = 1;
+
+	UPROPERTY(Transient)
+	int32 PendingSwapToSlot = 1;
+
+	UPROPERTY(Transient)
+	int32 PendingSwapSerial = 0;
+
+	// SlotIndex(1~4) -> MeshComponent mapping cache
+	UPROPERTY(Transient)
+	TObjectPtr<USkeletalMeshComponent> SlotMeshCache[5] = { nullptr, nullptr, nullptr, nullptr, nullptr };
+
+	UPROPERTY(Transient)
+	bool bSlotMeshCacheBuilt = false;
+
+	// Notify guard
+	UPROPERTY(Transient)
+	bool bSwapDetachDone = false;
+
+	UPROPERTY(Transient)
+	bool bSwapAttachDone = false;
 };

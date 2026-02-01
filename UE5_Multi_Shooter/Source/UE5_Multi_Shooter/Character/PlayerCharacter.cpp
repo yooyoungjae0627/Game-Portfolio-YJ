@@ -59,6 +59,20 @@ static void Moses_ApplyRotationPolicy(ACharacter* Char, const TCHAR* FromTag)
 	}
 }
 
+static void Moses_ConfigWeaponMeshComp(USkeletalMeshComponent* Comp)
+{
+	if (!Comp)
+	{
+		return;
+	}
+
+	Comp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	Comp->SetGenerateOverlapEvents(false);
+	Comp->SetIsReplicated(false);
+	Comp->SetCastShadow(true);
+	Comp->bReceivesDecals = false;
+}
+
 // ============================================================================
 // Ctor / Lifecycle
 // ============================================================================
@@ -75,11 +89,24 @@ APlayerCharacter::APlayerCharacter()
 
 	InteractionComponent = CreateDefaultSubobject<UMosesInteractionComponent>(TEXT("InteractionComponent"));
 
-	WeaponMeshComp = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("WeaponMeshComp"));
-	WeaponMeshComp->SetupAttachment(GetMesh());
-	WeaponMeshComp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-	WeaponMeshComp->SetGenerateOverlapEvents(false);
-	WeaponMeshComp->SetIsReplicated(false);
+	// ---------------------------------------------------------------------
+	// [DAY6] Weapon mesh components (Hand + Back1/2/3)
+	// ---------------------------------------------------------------------
+	WeaponMesh_Hand = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("WeaponMesh_Hand"));
+	WeaponMesh_Hand->SetupAttachment(GetMesh());
+	Moses_ConfigWeaponMeshComp(WeaponMesh_Hand);
+
+	WeaponMesh_Back1 = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("WeaponMesh_Back1"));
+	WeaponMesh_Back1->SetupAttachment(GetMesh());
+	Moses_ConfigWeaponMeshComp(WeaponMesh_Back1);
+
+	WeaponMesh_Back2 = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("WeaponMesh_Back2"));
+	WeaponMesh_Back2->SetupAttachment(GetMesh());
+	Moses_ConfigWeaponMeshComp(WeaponMesh_Back2);
+
+	WeaponMesh_Back3 = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("WeaponMesh_Back3"));
+	WeaponMesh_Back3->SetupAttachment(GetMesh());
+	Moses_ConfigWeaponMeshComp(WeaponMesh_Back3);
 
 	Moses_ApplyRotationPolicy(this, TEXT("Ctor"));
 }
@@ -88,17 +115,29 @@ void APlayerCharacter::PostInitializeComponents()
 {
 	Super::PostInitializeComponents();
 
-	if (WeaponMeshComp && GetMesh())
+	// 초기 Attach는 "일단" 소켓 존재 여부와 무관하게 실행한다.
+	// 실제 소켓이 없으면 에디터에서 바로 확인 가능(로그로도 확인)
+	if (GetMesh())
 	{
-		WeaponMeshComp->AttachToComponent(
-			GetMesh(),
-			FAttachmentTransformRules::SnapToTargetNotIncludingScale,
-			CharacterWeaponSocketName);
-
-		UE_LOG(LogMosesWeapon, Verbose, TEXT("[WEAPON][COS] PostInit Attach Socket=%s Pawn=%s"),
-			*CharacterWeaponSocketName.ToString(),
-			*GetNameSafe(this));
+		if (WeaponMesh_Hand)
+		{
+			WeaponMesh_Hand->AttachToComponent(GetMesh(), FAttachmentTransformRules::SnapToTargetNotIncludingScale, GetHandSocketName());
+		}
+		if (WeaponMesh_Back1)
+		{
+			WeaponMesh_Back1->AttachToComponent(GetMesh(), FAttachmentTransformRules::SnapToTargetNotIncludingScale, WeaponSocket_Back_1);
+		}
+		if (WeaponMesh_Back2)
+		{
+			WeaponMesh_Back2->AttachToComponent(GetMesh(), FAttachmentTransformRules::SnapToTargetNotIncludingScale, WeaponSocket_Back_2);
+		}
+		if (WeaponMesh_Back3)
+		{
+			WeaponMesh_Back3->AttachToComponent(GetMesh(), FAttachmentTransformRules::SnapToTargetNotIncludingScale, WeaponSocket_Back_3);
+		}
 	}
+
+	CacheSlotMeshMapping();
 
 	Moses_ApplyRotationPolicy(this, TEXT("PostInit"));
 }
@@ -115,6 +154,13 @@ void APlayerCharacter::BeginPlay()
 	}
 
 	BindCombatComponent();
+
+	// LateJoin/리스폰/레벨 이동에서도 초기 상태를 바로 적용할 수 있도록 한 번 갱신
+	RefreshAllWeaponMeshes_FromSSOT();
+	if (CachedCombatComponent)
+	{
+		ApplyAttachmentPlan_Immediate(CachedCombatComponent->GetCurrentSlot());
+	}
 }
 
 void APlayerCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
@@ -183,6 +229,13 @@ void APlayerCharacter::OnRep_PlayerState()
 {
 	Super::OnRep_PlayerState();
 	BindCombatComponent();
+
+	// PlayerState가 붙는 순간이 "SSOT 접근 가능" 시점이므로 초기 시각화를 보장한다.
+	RefreshAllWeaponMeshes_FromSSOT();
+	if (CachedCombatComponent)
+	{
+		ApplyAttachmentPlan_Immediate(CachedCombatComponent->GetCurrentSlot());
+	}
 }
 
 // ============================================================================
@@ -587,12 +640,19 @@ void APlayerCharacter::BindCombatComponent()
 
 	CachedCombatComponent->OnEquippedChanged.AddUObject(this, &APlayerCharacter::HandleEquippedChanged);
 	CachedCombatComponent->OnDeadChanged.AddUObject(this, &APlayerCharacter::HandleDeadChanged);
+	CachedCombatComponent->OnReloadingChanged.AddUObject(this, &APlayerCharacter::HandleReloadingChanged);
+
+	// [DAY6] 서버 승인 Swap 컨텍스트 이벤트
+	CachedCombatComponent->OnSwapStarted.AddUObject(this, &APlayerCharacter::HandleSwapStarted);
 
 	UE_LOG(LogMosesWeapon, Log, TEXT("[WEAPON][Bind] CombatComponent Bound Pawn=%s PS=%s"),
 		*GetNameSafe(this),
 		*GetNameSafe(GetPlayerState()));
 
-	HandleEquippedChanged(CachedCombatComponent->GetCurrentSlot(), CachedCombatComponent->GetEquippedWeaponId());
+	// 초기 상태를 즉시 적용
+	RefreshAllWeaponMeshes_FromSSOT();
+	ApplyAttachmentPlan_Immediate(CachedCombatComponent->GetCurrentSlot());
+
 	HandleDeadChanged(CachedCombatComponent->IsDead());
 }
 
@@ -605,6 +665,8 @@ void APlayerCharacter::UnbindCombatComponent()
 
 	CachedCombatComponent->OnEquippedChanged.RemoveAll(this);
 	CachedCombatComponent->OnDeadChanged.RemoveAll(this);
+	CachedCombatComponent->OnReloadingChanged.RemoveAll(this);
+	CachedCombatComponent->OnSwapStarted.RemoveAll(this);
 
 	CachedCombatComponent = nullptr;
 }
@@ -627,7 +689,15 @@ void APlayerCharacter::HandleEquippedChanged(int32 SlotIndex, FGameplayTag Weapo
 		*WeaponId.ToString(),
 		*GetNameSafe(this));
 
-	RefreshWeaponCosmetic(WeaponId);
+	// 슬롯/무기 구성은 SSOT를 기준으로 항상 다시 그린다.
+	RefreshAllWeaponMeshes_FromSSOT();
+
+	// 스왑 몽타주 중에는 Notify가 Attach 교체를 담당하므로,
+	// 중간에 계획을 덮어쓰지 않도록 "스왑 중이 아닐 때만" 즉시 적용한다.
+	if (!bSwapInProgress && CachedCombatComponent)
+	{
+		ApplyAttachmentPlan_Immediate(CachedCombatComponent->GetCurrentSlot());
+	}
 }
 
 void APlayerCharacter::HandleDeadChanged(bool bNewDead)
@@ -649,10 +719,145 @@ void APlayerCharacter::HandleDeadChanged(bool bNewDead)
 	ApplyDeadCosmetics_Local();
 }
 
-void APlayerCharacter::RefreshWeaponCosmetic(FGameplayTag WeaponId)
+void APlayerCharacter::HandleReloadingChanged(bool bReloading)
 {
-	if (!WeaponId.IsValid() || !WeaponMeshComp)
+	// 서버 승인 결과(=bIsReloading replicated true)에서만 코스메틱 재생
+	if (!bReloading)
 	{
+		return;
+	}
+
+	if (GetNetMode() == NM_DedicatedServer)
+	{
+		return;
+	}
+
+	if (!ReloadMontage)
+	{
+		UE_LOG(LogMosesWeapon, VeryVerbose, TEXT("[RELOAD][COS] ReloadMontage missing Pawn=%s"), *GetNameSafe(this));
+		return;
+	}
+
+	TryPlayMontage_Local(ReloadMontage, TEXT("RELOAD"));
+
+	UE_LOG(LogMosesWeapon, Log, TEXT("[RELOAD][COS] ReloadMontage PLAY Pawn=%s"), *GetNameSafe(this));
+}
+
+void APlayerCharacter::HandleSwapStarted(int32 FromSlot, int32 ToSlot, int32 Serial)
+{
+	// 서버 승인 결과로만 들어오는 이벤트다.
+	BeginSwapCosmetic_Local(FromSlot, ToSlot, Serial);
+}
+
+// ============================================================================
+// Weapon visuals (DAY6: Hand + Back1/2/3)
+// ============================================================================
+
+void APlayerCharacter::CacheSlotMeshMapping()
+{
+	// SlotIndex -> "대표 컴포넌트"는 고정한다.
+	// 실제 Attach 위치(Hand/Back)는 이벤트 시점에 바뀐다.
+	SlotMeshCache[1] = WeaponMesh_Hand;   // Slot1의 "대표"는 HandComp (스왑 중에는 Attach만 이동)
+	SlotMeshCache[2] = WeaponMesh_Back1;  // Slot2 대표
+	SlotMeshCache[3] = WeaponMesh_Back2;  // Slot3 대표
+	SlotMeshCache[4] = WeaponMesh_Back3;  // Slot4 대표
+
+	bSlotMeshCacheBuilt = true;
+
+	UE_LOG(LogMosesWeapon, Verbose, TEXT("[WEAPON][COS] SlotMeshCache built Pawn=%s"), *GetNameSafe(this));
+}
+
+USkeletalMeshComponent* APlayerCharacter::GetMeshCompForSlot(int32 SlotIndex) const
+{
+	if (!bSlotMeshCacheBuilt)
+	{
+		return nullptr;
+	}
+
+	if (SlotIndex < 1 || SlotIndex > 4)
+	{
+		return nullptr;
+	}
+
+	return SlotMeshCache[SlotIndex];
+}
+
+FName APlayerCharacter::GetHandSocketName() const
+{
+	return WeaponSocket_Hand;
+}
+
+FName APlayerCharacter::GetBackSocketNameForSlot(int32 EquippedSlot, int32 SlotIndex) const
+{
+	// EquippedSlot은 Hand로 가므로, SlotIndex는 Back 중 하나로 매핑되어야 한다.
+	// 정책: Equipped 제외 슬롯을 오름차순으로 정렬하여 Back_1/2/3에 순서대로 배치한다.
+	TArray<int32> Others;
+	Others.Reserve(3);
+
+	for (int32 S = 1; S <= 4; ++S)
+	{
+		if (S != EquippedSlot)
+		{
+			Others.Add(S);
+		}
+	}
+
+	Others.Sort();
+
+	int32 BackIndex = 0;
+	for (int32 i = 0; i < Others.Num(); ++i)
+	{
+		if (Others[i] == SlotIndex)
+		{
+			BackIndex = i; // 0..2
+			break;
+		}
+	}
+
+	switch (BackIndex)
+	{
+	case 0: return WeaponSocket_Back_1;
+	case 1: return WeaponSocket_Back_2;
+	case 2: return WeaponSocket_Back_3;
+	default: break;
+	}
+
+	return WeaponSocket_Back_1;
+}
+
+void APlayerCharacter::RefreshAllWeaponMeshes_FromSSOT()
+{
+	if (!CachedCombatComponent)
+	{
+		return;
+	}
+
+	// SlotMeshCache가 아직 안 잡혔다면 보장
+	if (!bSlotMeshCacheBuilt)
+	{
+		CacheSlotMeshMapping();
+	}
+
+	for (int32 Slot = 1; Slot <= 4; ++Slot)
+	{
+		const FGameplayTag WeaponId = CachedCombatComponent->GetWeaponIdForSlot(Slot);
+		USkeletalMeshComponent* TargetComp = GetMeshCompForSlot(Slot);
+		RefreshWeaponMesh_ForSlot(Slot, WeaponId, TargetComp);
+	}
+}
+
+void APlayerCharacter::RefreshWeaponMesh_ForSlot(int32 SlotIndex, FGameplayTag WeaponId, USkeletalMeshComponent* TargetMeshComp)
+{
+	if (!TargetMeshComp)
+	{
+		return;
+	}
+
+	// 무기가 없는 슬롯은 "안 보이게" 처리한다(파밍 전 None 슬롯)
+	if (!WeaponId.IsValid())
+	{
+		TargetMeshComp->SetSkeletalMesh(nullptr);
+		TargetMeshComp->SetVisibility(false, true);
 		return;
 	}
 
@@ -672,6 +877,8 @@ void APlayerCharacter::RefreshWeaponCosmetic(FGameplayTag WeaponId)
 	const UMosesWeaponData* Data = Registry->ResolveWeaponData(WeaponId);
 	if (!Data || Data->WeaponSkeletalMesh.IsNull())
 	{
+		TargetMeshComp->SetSkeletalMesh(nullptr);
+		TargetMeshComp->SetVisibility(false, true);
 		return;
 	}
 
@@ -680,17 +887,207 @@ void APlayerCharacter::RefreshWeaponCosmetic(FGameplayTag WeaponId)
 	{
 		LoadedMesh = Data->WeaponSkeletalMesh.LoadSynchronous();
 	}
+
 	if (!LoadedMesh)
+	{
+		TargetMeshComp->SetSkeletalMesh(nullptr);
+		TargetMeshComp->SetVisibility(false, true);
+		return;
+	}
+
+	TargetMeshComp->SetSkeletalMesh(LoadedMesh);
+	TargetMeshComp->SetVisibility(true, true);
+
+	UE_LOG(LogMosesWeapon, VeryVerbose, TEXT("[WEAPON][COS] MeshSet Slot=%d Weapon=%s Mesh=%s Pawn=%s"),
+		SlotIndex,
+		*WeaponId.ToString(),
+		*GetNameSafe(LoadedMesh),
+		*GetNameSafe(this));
+}
+
+void APlayerCharacter::ApplyAttachmentPlan_Immediate(int32 EquippedSlot)
+{
+	if (!GetMesh())
 	{
 		return;
 	}
 
-	WeaponMeshComp->SetSkeletalMesh(LoadedMesh);
-
-	if (USkeletalMeshComponent* CharMesh = GetMesh())
+	if (!CachedCombatComponent)
 	{
-		WeaponMeshComp->AttachToComponent(CharMesh, FAttachmentTransformRules::SnapToTargetNotIncludingScale, CharacterWeaponSocketName);
+		return;
 	}
+
+	EquippedSlot = FMath::Clamp(EquippedSlot, 1, 4);
+
+	// EquippedSlot -> Hand, Others -> Back sockets
+	for (int32 Slot = 1; Slot <= 4; ++Slot)
+	{
+		USkeletalMeshComponent* Comp = GetMeshCompForSlot(Slot);
+		if (!Comp)
+		{
+			continue;
+		}
+
+		// 무기 없는 슬롯이면 attach는 의미 없지만, 상태 일관성을 위해 붙여도 무방
+		const FName SocketName = (Slot == EquippedSlot) ? GetHandSocketName() : GetBackSocketNameForSlot(EquippedSlot, Slot);
+
+		Comp->AttachToComponent(GetMesh(), FAttachmentTransformRules::SnapToTargetNotIncludingScale, SocketName);
+	}
+
+	UE_LOG(LogMosesWeapon, Log, TEXT("[WEAPON][COS] ApplyAttachmentPlan EquippedSlot=%d Pawn=%s"),
+		EquippedSlot,
+		*GetNameSafe(this));
+}
+
+// ============================================================================
+// [DAY6] Swap runtime (Cosmetic only)
+// ============================================================================
+
+void APlayerCharacter::BeginSwapCosmetic_Local(int32 FromSlot, int32 ToSlot, int32 Serial)
+{
+	if (GetNetMode() == NM_DedicatedServer)
+	{
+		return;
+	}
+
+	FromSlot = FMath::Clamp(FromSlot, 1, 4);
+	ToSlot = FMath::Clamp(ToSlot, 1, 4);
+
+	// 방어: 같은 슬롯이면 스왑 연출 필요 없음
+	if (FromSlot == ToSlot)
+	{
+		return;
+	}
+
+	// 이전 스왑이 남아있으면 강제 종료(예: 짧은 입력 연속)
+	if (bSwapInProgress)
+	{
+		EndSwapCosmetic_Local(TEXT("ForceEnd(Overlapped)"));
+	}
+
+	bSwapInProgress = true;
+	PendingSwapFromSlot = FromSlot;
+	PendingSwapToSlot = ToSlot;
+	PendingSwapSerial = Serial;
+
+	bSwapDetachDone = false;
+	bSwapAttachDone = false;
+
+	UE_LOG(LogMosesWeapon, Warning, TEXT("[SWAP][COS] BeginSwap From=%d To=%d Serial=%d Pawn=%s"),
+		FromSlot, ToSlot, Serial, *GetNameSafe(this));
+
+	// Swap 도중에도 무기 메쉬는 SSOT 기준으로 항상 최신이어야 한다.
+	RefreshAllWeaponMeshes_FromSSOT();
+
+	// 몽타주 재생(서버 승인 결과에서만 호출됨)
+	if (!SwapMontage)
+	{
+		UE_LOG(LogMosesWeapon, Warning, TEXT("[SWAP][COS] SwapMontage missing -> Fallback ApplyAttachmentPlan Pawn=%s"), *GetNameSafe(this));
+		// 몽타주가 없으면 즉시 Attach 계획만 적용하고 종료
+		ApplyAttachmentPlan_Immediate(ToSlot);
+		EndSwapCosmetic_Local(TEXT("NoMontageFallback"));
+		return;
+	}
+
+	TryPlayMontage_Local(SwapMontage, TEXT("SWAP"));
+}
+
+void APlayerCharacter::EndSwapCosmetic_Local(const TCHAR* Reason)
+{
+	// 스왑이 끝나면 "정답 상태"를 SSOT 기준으로 한 번 더 강제한다.
+	// Notify가 누락되거나 몽타주가 끊겨도 결과가 일치해야 한다.
+	if (CachedCombatComponent)
+	{
+		ApplyAttachmentPlan_Immediate(CachedCombatComponent->GetCurrentSlot());
+	}
+
+	UE_LOG(LogMosesWeapon, Warning, TEXT("[SWAP][COS] EndSwap Reason=%s Detach=%d Attach=%d Pawn=%s"),
+		Reason ? Reason : TEXT("None"),
+		bSwapDetachDone ? 1 : 0,
+		bSwapAttachDone ? 1 : 0,
+		*GetNameSafe(this));
+
+	bSwapInProgress = false;
+	bSwapDetachDone = false;
+	bSwapAttachDone = false;
+}
+
+void APlayerCharacter::HandleSwapDetachNotify()
+{
+	if (GetNetMode() == NM_DedicatedServer)
+	{
+		return;
+	}
+
+	if (!bSwapInProgress)
+	{
+		return;
+	}
+
+	if (bSwapDetachDone)
+	{
+		return;
+	}
+
+	bSwapDetachDone = true;
+
+	// "기존 손 무기"를 등으로 보낸다.
+	// FromSlot이 등에서 어느 위치로 가야 하는지는 "스왑 완료 후" 기준(ToSlot equipped)으로 결정한다.
+	const int32 FromSlot = PendingSwapFromSlot;
+	const int32 ToSlot = PendingSwapToSlot;
+
+	USkeletalMeshComponent* FromComp = GetMeshCompForSlot(FromSlot);
+	if (!FromComp || !GetMesh())
+	{
+		return;
+	}
+
+	const FName BackSocket = GetBackSocketNameForSlot(ToSlot, FromSlot);
+	FromComp->AttachToComponent(GetMesh(), FAttachmentTransformRules::SnapToTargetNotIncludingScale, BackSocket);
+
+	UE_LOG(LogMosesWeapon, Warning, TEXT("[SWAP][COS][DETACH] FromSlot=%d -> Socket=%s Pawn=%s"),
+		FromSlot,
+		*BackSocket.ToString(),
+		*GetNameSafe(this));
+}
+
+void APlayerCharacter::HandleSwapAttachNotify()
+{
+	if (GetNetMode() == NM_DedicatedServer)
+	{
+		return;
+	}
+
+	if (!bSwapInProgress)
+	{
+		return;
+	}
+
+	if (bSwapAttachDone)
+	{
+		return;
+	}
+
+	bSwapAttachDone = true;
+
+	// "새 무기"를 손에 붙인다.
+	const int32 ToSlot = PendingSwapToSlot;
+
+	USkeletalMeshComponent* ToComp = GetMeshCompForSlot(ToSlot);
+	if (!ToComp || !GetMesh())
+	{
+		return;
+	}
+
+	ToComp->AttachToComponent(GetMesh(), FAttachmentTransformRules::SnapToTargetNotIncludingScale, GetHandSocketName());
+
+	UE_LOG(LogMosesWeapon, Warning, TEXT("[SWAP][COS][ATTACH] ToSlot=%d -> HandSocket=%s Pawn=%s"),
+		ToSlot,
+		*GetHandSocketName().ToString(),
+		*GetNameSafe(this));
+
+	// Attach까지 끝났으면 "정답 상태"로 한 번 더 맞춘 후 종료
+	EndSwapCosmetic_Local(TEXT("NotifyAttachDone"));
 }
 
 // ============================================================================
@@ -699,6 +1096,11 @@ void APlayerCharacter::RefreshWeaponCosmetic(FGameplayTag WeaponId)
 
 void APlayerCharacter::TryPlayMontage_Local(UAnimMontage* Montage, const TCHAR* DebugTag) const
 {
+	if (GetNetMode() == NM_DedicatedServer)
+	{
+		return;
+	}
+
 	if (!Montage)
 	{
 		return;
@@ -730,7 +1132,7 @@ void APlayerCharacter::TryPlayMontage_Local(UAnimMontage* Montage, const TCHAR* 
 }
 
 // ============================================================================
-// Fire AV - WeaponData 기반
+// Fire AV - WeaponData 기반 (현재 장착 무기 = Hand mesh 기준)
 // ============================================================================
 
 void APlayerCharacter::PlayFireAV_Local(FGameplayTag WeaponId) const
@@ -745,7 +1147,9 @@ void APlayerCharacter::PlayFireAV_Local(FGameplayTag WeaponId) const
 		return;
 	}
 
-	if (!WeaponMeshComp || !WeaponMeshComp->GetSkeletalMeshAsset())
+	// 현재 손에 붙은 무기가 발사 연출의 기준이다.
+	USkeletalMeshComponent* HandComp = WeaponMesh_Hand;
+	if (!HandComp || !HandComp->GetSkeletalMeshAsset())
 	{
 		return;
 	}
@@ -770,7 +1174,7 @@ void APlayerCharacter::PlayFireAV_Local(FGameplayTag WeaponId) const
 	}
 
 	const FName MuzzleSocket = Data->MuzzleSocketName;
-	if (!MuzzleSocket.IsNone() && !WeaponMeshComp->DoesSocketExist(MuzzleSocket))
+	if (!MuzzleSocket.IsNone() && !HandComp->DoesSocketExist(MuzzleSocket))
 	{
 		return;
 	}
@@ -789,7 +1193,7 @@ void APlayerCharacter::PlayFireAV_Local(FGameplayTag WeaponId) const
 	{
 		UGameplayStatics::SpawnEmitterAttached(
 			MuzzleFX,
-			WeaponMeshComp,
+			HandComp,
 			MuzzleSocket,
 			FVector::ZeroVector,
 			FRotator::ZeroRotator,
@@ -809,7 +1213,7 @@ void APlayerCharacter::PlayFireAV_Local(FGameplayTag WeaponId) const
 
 	if (FireSnd)
 	{
-		UGameplayStatics::SpawnSoundAttached(FireSnd, WeaponMeshComp, MuzzleSocket);
+		UGameplayStatics::SpawnSoundAttached(FireSnd, HandComp, MuzzleSocket);
 	}
 }
 

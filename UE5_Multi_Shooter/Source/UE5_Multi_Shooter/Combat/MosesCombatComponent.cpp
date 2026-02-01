@@ -1,13 +1,13 @@
 ﻿// ============================================================================
-// MosesCombatComponent.cpp (FULL)  [MOD]
+// MosesCombatComponent.cpp (FULL)  [MOD: DAY6 SwapContext + BackWeapons]
 // ----------------------------------------------------------------------------
 // Owner = PlayerState (SSOT)
 // ----------------------------------------------------------------------------
-// [MOD]
 // - 슬롯 1~4 확장
 // - Reload 서버 권위 + 서버 타이머
 // - 기본 지급: Slot1 Rifle.A + 30/90
 // - Damage: GAS(SetByCaller Data.Damage) 우선 + ASC 없으면 ApplyDamage fallback
+// - [DAY6] SwapContext(From/To/Serial) 복제 -> Pawn 코스메틱(몽타주/Notify Attach 교체) 트리거
 // ============================================================================
 
 #include "UE5_Multi_Shooter/Combat/MosesCombatComponent.h"
@@ -107,6 +107,11 @@ void UMosesCombatComponent::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>
 
 	DOREPLIFETIME(UMosesCombatComponent, bIsDead);
 	DOREPLIFETIME(UMosesCombatComponent, bIsReloading);
+
+	// [DAY6]
+	DOREPLIFETIME(UMosesCombatComponent, SwapSerial);
+	DOREPLIFETIME(UMosesCombatComponent, LastSwapFromSlot);
+	DOREPLIFETIME(UMosesCombatComponent, LastSwapToSlot);
 }
 
 // ============================================================================
@@ -140,7 +145,7 @@ int32 UMosesCombatComponent::GetCurrentReserveAmmo() const
 }
 
 // ============================================================================
-// Default init / loadout (Server)  [MOD]
+// Default init / loadout (Server)
 // ============================================================================
 
 void UMosesCombatComponent::ServerInitDefaultSlots_4(const FGameplayTag& InSlot1, const FGameplayTag& InSlot2, const FGameplayTag& InSlot3, const FGameplayTag& InSlot4)
@@ -184,7 +189,6 @@ void UMosesCombatComponent::ServerGrantDefaultRifleAmmo_30_90()
 		return;
 	}
 
-	// 기획: Rifle 기본 지급 = 30/90
 	SetSlotAmmo_Internal(1, 30, 90);
 
 	CurrentSlot = 1;
@@ -245,12 +249,31 @@ void UMosesCombatComponent::ServerEquipSlot_Implementation(int32 SlotIndex)
 	const int32 OldSlot = CurrentSlot;
 	const FGameplayTag OldWeaponId = GetEquippedWeaponId();
 
+	if (OldSlot == NewSlot)
+	{
+		return;
+	}
+
+	// ---------------------------------------------------------------------
+	// [DAY6] 서버 승인 SwapContext 갱신 (코스메틱 트리거)
+	// - 반드시 "승인된 경우에만" 변경되어야 한다.
+	// - Serial을 증가시키면 OnRep_SwapSerial을 통해 클라에서 SwapStarted를 재생할 수 있다.
+	// ---------------------------------------------------------------------
+	LastSwapFromSlot = OldSlot;
+	LastSwapToSlot = NewSlot;
+	SwapSerial++;
+
+	// 실제 SSOT 전환
 	CurrentSlot = NewSlot;
 
 	Server_EnsureAmmoInitializedForSlot(CurrentSlot, NewWeaponId);
 
-	UE_LOG(LogMosesWeapon, Warning, TEXT("[WEAPON][SV] Swap Slot %d -> %d Weapon %s -> %s"),
-		OldSlot, CurrentSlot, *OldWeaponId.ToString(), *NewWeaponId.ToString());
+	UE_LOG(LogMosesWeapon, Warning, TEXT("[WEAPON][SV] Swap OK Slot %d -> %d Weapon %s -> %s Serial=%d"),
+		OldSlot, CurrentSlot, *OldWeaponId.ToString(), *NewWeaponId.ToString(), SwapSerial);
+
+	// RepNotify 직접 호출(리슨서버/서버 단독 실행에서도 일관)
+	OnRep_SwapSerial();
+	OnRep_CurrentSlot();
 
 	BroadcastEquippedChanged(TEXT("ServerEquipSlot"));
 	BroadcastAmmoChanged(TEXT("ServerEquipSlot"));
@@ -319,7 +342,7 @@ void UMosesCombatComponent::ServerFire_Implementation()
 }
 
 // ============================================================================
-// Reload API 
+// Reload API
 // ============================================================================
 
 void UMosesCombatComponent::RequestReload()
@@ -424,6 +447,7 @@ void UMosesCombatComponent::Server_FinishReload()
 	UE_LOG(LogMosesWeapon, Warning, TEXT("[WEAPON][SV] ReloadFinish Slot=%d Weapon=%s Mag=%d Reserve=%d"),
 		CurrentSlot, *WeaponId.ToString(), Mag, Reserve);
 }
+
 // ============================================================================
 // Guard (basic)
 // ============================================================================
@@ -600,7 +624,6 @@ void UMosesCombatComponent::Server_PerformHitscanAndApplyDamage(const UMosesWeap
 	UE_LOG(LogMosesCombat, Warning, TEXT("[HIT][SV] Victim=%s Bone=%s Headshot=%d Damage=%.1f"),
 		*GetNameSafe(Hit.GetActor()), *Hit.BoneName.ToString(), bHeadshot ? 1 : 0, AppliedDamage);
 
-	// GAS 우선
 	const bool bAppliedByGAS = Server_ApplyDamageToTarget_GAS(Hit.GetActor(), AppliedDamage, Controller, OwnerPawn, WeaponData);
 	if (!bAppliedByGAS)
 	{
@@ -657,7 +680,7 @@ bool UMosesCombatComponent::Server_ApplyDamageToTarget_GAS(AActor* TargetActor, 
 	FGameplayEffectContextHandle Ctx = SourceASC->MakeEffectContext();
 	Ctx.AddInstigator(DamageCauser, InstigatorController);
 	Ctx.AddSourceObject(this);
-	Ctx.AddSourceObject(WeaponData); // 디버그/리플레이 확장 여지
+	Ctx.AddSourceObject(WeaponData);
 
 	const FGameplayEffectSpecHandle SpecHandle = SourceASC->MakeOutgoingSpec(GEClass, 1.f, Ctx);
 	if (!SpecHandle.IsValid())
@@ -665,7 +688,6 @@ bool UMosesCombatComponent::Server_ApplyDamageToTarget_GAS(AActor* TargetActor, 
 		return false;
 	}
 
-	// SetByCaller: Data.Damage
 	static const FGameplayTag DamageTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Data.Damage")));
 	SpecHandle.Data->SetSetByCallerMagnitude(DamageTag, Damage);
 
@@ -680,7 +702,7 @@ bool UMosesCombatComponent::Server_ApplyDamageToTarget_GAS(AActor* TargetActor, 
 }
 
 // ============================================================================
-// Cosmetic propagation
+// Cosmetic propagation (Fire only - already server approved by ServerFire)
 // ============================================================================
 
 void UMosesCombatComponent::Server_PropagateFireCosmetics(FGameplayTag ApprovedWeaponId)
@@ -712,6 +734,7 @@ void UMosesCombatComponent::ServerMarkDead()
 	}
 
 	bIsDead = true;
+	OnRep_IsDead();
 	BroadcastDeadChanged(TEXT("ServerMarkDead"));
 }
 
@@ -740,6 +763,12 @@ void UMosesCombatComponent::OnRep_IsDead() { BroadcastDeadChanged(TEXT("OnRep_Is
 void UMosesCombatComponent::OnRep_IsReloading()
 {
 	BroadcastReloadingChanged(TEXT("OnRep_IsReloading"));
+}
+
+void UMosesCombatComponent::OnRep_SwapSerial()
+{
+	// SwapSerial이 바뀌었다는 것은 "서버 승인 스왑"이 있었다는 의미다.
+	BroadcastSwapStarted(TEXT("OnRep_SwapSerial"));
 }
 
 // ============================================================================
@@ -781,6 +810,22 @@ void UMosesCombatComponent::BroadcastReloadingChanged(const TCHAR* ContextTag)
 
 	UE_LOG(LogMosesWeapon, Verbose, TEXT("[RELOAD][REP] %s Reloading=%d Slot=%d"),
 		ContextTag ? ContextTag : TEXT("None"), bIsReloading ? 1 : 0, CurrentSlot);
+}
+
+void UMosesCombatComponent::BroadcastSwapStarted(const TCHAR* ContextTag)
+{
+	// 방어: From/To는 항상 1~4 범위여야 한다.
+	const int32 FromSlot = MosesCombat_Private::ClampSlotIndex(LastSwapFromSlot);
+	const int32 ToSlot = MosesCombat_Private::ClampSlotIndex(LastSwapToSlot);
+
+	OnSwapStarted.Broadcast(FromSlot, ToSlot, SwapSerial);
+
+	UE_LOG(LogMosesWeapon, Warning, TEXT("[SWAP][REP] %s From=%d To=%d Serial=%d PS=%s"),
+		ContextTag ? ContextTag : TEXT("None"),
+		FromSlot,
+		ToSlot,
+		SwapSerial,
+		*GetNameSafe(GetOwner()));
 }
 
 // ============================================================================
@@ -828,7 +873,7 @@ void UMosesCombatComponent::Server_EnsureAmmoInitializedForSlot(int32 SlotIndex,
 	// 기본은 0/0 유지. (기본 지급은 Slot1만 별도)
 	if (Mag == 0 && Reserve == 0)
 	{
-		UE_LOG(LogMosesCombat, Verbose, TEXT("[AMMO][SV] EnsureAmmo Slot=%d Weapon=%s (keep 0/0)"),
+		UE_LOG(LogMosesCombat, VeryVerbose, TEXT("[AMMO][SV] EnsureAmmo Slot=%d Weapon=%s (keep 0/0)"),
 			SlotIndex, *WeaponId.ToString());
 	}
 }
