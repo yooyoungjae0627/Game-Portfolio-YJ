@@ -1,12 +1,4 @@
-﻿// ============================================================================
-// MosesMatchHUD.cpp (FULL)
-// - PhaseText: Warmup -> "워밍업"(흰색), Combat -> "매치"(빨강), Result -> "결과"(흰색)
-// - Tick/Binding 금지: Delegate 이벤트에서만 SetText/SetColor
-// - [FIX] HUD 제거/재생성 타이밍에 이벤트가 "누락"되어 Phase/Time이 엉키는 문제 해결
-//        -> BindRetry + GS Snapshot Apply
-// ============================================================================
-
-#include "UE5_Multi_Shooter/UI/Match/MosesMatchHUD.h"
+﻿#include "UE5_Multi_Shooter/UI/Match/MosesMatchHUD.h"
 
 #include "Components/ProgressBar.h"
 #include "Components/TextBlock.h"
@@ -14,13 +6,17 @@
 #include "Engine/World.h"
 #include "TimerManager.h"
 #include "GameFramework/PlayerController.h"
-
+#include "GameFramework/Pawn.h"
 #include "Styling/SlateColor.h"
 
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
 #include "UE5_Multi_Shooter/Player/MosesPlayerState.h"
 #include "UE5_Multi_Shooter/GameMode/GameState/MosesMatchGameState.h"
 #include "UE5_Multi_Shooter/UI/Match/MosesMatchAnnouncementWidget.h"
+
+// [DAY7/8]
+#include "UE5_Multi_Shooter/UI/Match/MosesCrosshairWidget.h"
+#include "UE5_Multi_Shooter/UI/Match/MosesScopeWidget.h"
 
 UMosesMatchHUD::UMosesMatchHUD(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
@@ -47,11 +43,23 @@ void UMosesMatchHUD::NativeOnInitialized()
 
 	// 3) [FIX] 아직 바인딩이 완성 안 됐으면 재시도 타이머
 	StartBindRetry();
+
+	// --------------------------------------------------------------------
+	// [DAY7] Crosshair Update Loop (표시 전용)
+	// - CrosshairWidget이 있으면 타이머를 돌린다.
+	// --------------------------------------------------------------------
+	StartCrosshairUpdate();
+
+	// --------------------------------------------------------------------
+	// [DAY8] ScopeWidget 초기 숨김
+	// --------------------------------------------------------------------
+	SetScopeVisible_Local(false);
 }
 
 void UMosesMatchHUD::NativeDestruct()
 {
 	StopBindRetry();
+	StopCrosshairUpdate();
 
 	if (AMosesPlayerState* PS = CachedPlayerState.Get())
 	{
@@ -78,6 +86,18 @@ void UMosesMatchHUD::NativeDestruct()
 	CachedMatchGameState.Reset();
 
 	Super::NativeDestruct();
+}
+
+// --------------------------------------------------------------------
+// [DAY8] Scope UI
+// --------------------------------------------------------------------
+
+void UMosesMatchHUD::SetScopeVisible_Local(bool bVisible)
+{
+	if (ScopeWidget)
+	{
+		ScopeWidget->SetScopeVisible(bVisible);
+	}
 }
 
 // --------------------------------------------------------------------
@@ -291,6 +311,85 @@ void UMosesMatchHUD::RefreshInitial()
 }
 
 // --------------------------------------------------------------------
+// [DAY7] Crosshair Update (표시 전용)
+// --------------------------------------------------------------------
+
+void UMosesMatchHUD::StartCrosshairUpdate()
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	if (!CrosshairWidget)
+	{
+		// 위젯이 없으면 루프 필요 없음
+		return;
+	}
+
+	if (World->GetTimerManager().IsTimerActive(CrosshairTimerHandle))
+	{
+		return;
+	}
+
+	World->GetTimerManager().SetTimer(
+		CrosshairTimerHandle,
+		this,
+		&ThisClass::TickCrosshairUpdate,
+		CrosshairUpdateInterval,
+		true);
+}
+
+void UMosesMatchHUD::StopCrosshairUpdate()
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	if (World->GetTimerManager().IsTimerActive(CrosshairTimerHandle))
+	{
+		World->GetTimerManager().ClearTimer(CrosshairTimerHandle);
+	}
+}
+
+float UMosesMatchHUD::CalculateCrosshairSpreadFactor_Local() const
+{
+	APlayerController* PC = GetOwningPlayer();
+	APawn* Pawn = PC ? PC->GetPawn() : nullptr;
+	if (!Pawn)
+	{
+		return 0.0f;
+	}
+
+	const float Speed2D = Pawn->GetVelocity().Size2D();
+
+	// 표시 정책(간단): 600 기준으로 0~1 정규화
+	// WeaponData 기반으로 정밀하게 하려면, CombatComponent->WeaponData(SpreadSpeedRef)로 확장 가능.
+	return FMath::Clamp(Speed2D / 600.0f, 0.0f, 1.0f);
+}
+
+void UMosesMatchHUD::TickCrosshairUpdate()
+{
+	if (!CrosshairWidget)
+	{
+		return;
+	}
+
+	const float SpreadFactor = CalculateCrosshairSpreadFactor_Local();
+	CrosshairWidget->SetSpreadFactor(SpreadFactor);
+
+	// 로그 스팸 방지
+	if (LastLoggedCrosshairSpread < 0.0f || FMath::Abs(SpreadFactor - LastLoggedCrosshairSpread) >= CrosshairLogThreshold)
+	{
+		LastLoggedCrosshairSpread = SpreadFactor;
+		UE_LOG(LogMosesHUD, Log, TEXT("[HUD][CL] Crosshair Spread=%.2f"), SpreadFactor);
+	}
+}
+
+// --------------------------------------------------------------------
 // PlayerState Handlers
 // --------------------------------------------------------------------
 
@@ -370,14 +469,10 @@ FText UMosesMatchHUD::GetPhaseText_KR(EMosesMatchPhase Phase)
 {
 	switch (Phase)
 	{
-	case EMosesMatchPhase::Warmup:
-		return FText::FromString(TEXT("워밍업"));
-	case EMosesMatchPhase::Combat:
-		return FText::FromString(TEXT("매치"));
-	case EMosesMatchPhase::Result:
-		return FText::FromString(TEXT("결과"));
-	default:
-		return FText::FromString(TEXT("알 수 없음"));
+	case EMosesMatchPhase::Warmup: return FText::FromString(TEXT("워밍업"));
+	case EMosesMatchPhase::Combat: return FText::FromString(TEXT("매치"));
+	case EMosesMatchPhase::Result: return FText::FromString(TEXT("결과"));
+	default:                       return FText::FromString(TEXT("알 수 없음"));
 	}
 }
 

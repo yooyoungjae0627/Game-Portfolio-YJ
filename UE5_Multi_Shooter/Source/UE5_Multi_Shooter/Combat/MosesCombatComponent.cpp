@@ -1,22 +1,13 @@
-﻿// ============================================================================
-// MosesCombatComponent.cpp (FULL)  [MOD: DAY6 SwapContext + BackWeapons]
-// ----------------------------------------------------------------------------
-// Owner = PlayerState (SSOT)
-// ----------------------------------------------------------------------------
-// - 슬롯 1~4 확장
-// - Reload 서버 권위 + 서버 타이머
-// - 기본 지급: Slot1 Rifle.A + 30/90
-// - Damage: GAS(SetByCaller Data.Damage) 우선 + ASC 없으면 ApplyDamage fallback
-// - [DAY6] SwapContext(From/To/Serial) 복제 -> Pawn 코스메틱(몽타주/Notify Attach 교체) 트리거
-// ============================================================================
-
-#include "UE5_Multi_Shooter/Combat/MosesCombatComponent.h"
+﻿#include "UE5_Multi_Shooter/Combat/MosesCombatComponent.h"
 
 #include "UE5_Multi_Shooter/Character/PlayerCharacter.h"
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
 #include "UE5_Multi_Shooter/Weapon/MosesWeaponData.h"
 #include "UE5_Multi_Shooter/Weapon/MosesWeaponRegistrySubsystem.h"
 #include "UE5_Multi_Shooter/Player/MosesPlayerState.h"
+
+// [DAY9]
+#include "UE5_Multi_Shooter/Combat/MosesGrenadeProjectile.h"
 
 #include "Engine/World.h"
 #include "Engine/GameInstance.h"
@@ -31,6 +22,8 @@
 #include "GameplayEffect.h"
 #include "GameplayEffectTypes.h"
 #include "GameplayTagContainer.h"
+
+#include "UE5_Multi_Shooter/GAS/MosesGameplayTags.h"
 
 namespace MosesCombat_Private
 {
@@ -108,7 +101,7 @@ void UMosesCombatComponent::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>
 	DOREPLIFETIME(UMosesCombatComponent, bIsDead);
 	DOREPLIFETIME(UMosesCombatComponent, bIsReloading);
 
-	// [DAY6]
+	// SwapContext
 	DOREPLIFETIME(UMosesCombatComponent, SwapSerial);
 	DOREPLIFETIME(UMosesCombatComponent, LastSwapFromSlot);
 	DOREPLIFETIME(UMosesCombatComponent, LastSwapToSlot);
@@ -254,16 +247,11 @@ void UMosesCombatComponent::ServerEquipSlot_Implementation(int32 SlotIndex)
 		return;
 	}
 
-	// ---------------------------------------------------------------------
-	// [DAY6] 서버 승인 SwapContext 갱신 (코스메틱 트리거)
-	// - 반드시 "승인된 경우에만" 변경되어야 한다.
-	// - Serial을 증가시키면 OnRep_SwapSerial을 통해 클라에서 SwapStarted를 재생할 수 있다.
-	// ---------------------------------------------------------------------
+	// SwapContext 갱신(코스메틱 트리거)
 	LastSwapFromSlot = OldSlot;
 	LastSwapToSlot = NewSlot;
 	SwapSerial++;
 
-	// 실제 SSOT 전환
 	CurrentSlot = NewSlot;
 
 	Server_EnsureAmmoInitializedForSlot(CurrentSlot, NewWeaponId);
@@ -271,7 +259,6 @@ void UMosesCombatComponent::ServerEquipSlot_Implementation(int32 SlotIndex)
 	UE_LOG(LogMosesWeapon, Warning, TEXT("[WEAPON][SV] Swap OK Slot %d -> %d Weapon %s -> %s Serial=%d"),
 		OldSlot, CurrentSlot, *OldWeaponId.ToString(), *NewWeaponId.ToString(), SwapSerial);
 
-	// RepNotify 직접 호출(리슨서버/서버 단독 실행에서도 일관)
 	OnRep_SwapSerial();
 	OnRep_CurrentSlot();
 
@@ -337,7 +324,12 @@ void UMosesCombatComponent::ServerFire_Implementation()
 	UE_LOG(LogMosesWeapon, Warning, TEXT("[WEAPON][SV] Fire Weapon=%s Slot=%d Mag=%d Reserve=%d"),
 		*ApprovedWeaponId.ToString(), CurrentSlot, GetCurrentMagAmmo(), GetCurrentReserveAmmo());
 
-	Server_PerformHitscanAndApplyDamage(WeaponData);
+	// --------------------------------------------------------------------
+	// [DAY7~DAY9][MOD] 스프레드 + (히트스캔/유탄) 분기 처리
+	// --------------------------------------------------------------------
+	Server_PerformFireAndApplyDamage(WeaponData);
+
+	// 코스메틱은 서버 승인 후 전파
 	Server_PropagateFireCosmetics(ApprovedWeaponId);
 }
 
@@ -582,10 +574,36 @@ void UMosesCombatComponent::Server_UpdateFireCooldownStamp()
 }
 
 // ============================================================================
-// Hitscan + GAS Damage
+// [DAY7~DAY9][MOD] Fire 수행(스프레드 적용 + 히트스캔/프로젝트 분기)
 // ============================================================================
 
-void UMosesCombatComponent::Server_PerformHitscanAndApplyDamage(const UMosesWeaponData* WeaponData)
+float UMosesCombatComponent::Server_CalcSpreadFactor01(const UMosesWeaponData* WeaponData, const APawn* OwnerPawn) const
+{
+	if (!WeaponData || !OwnerPawn)
+	{
+		return 0.0f;
+	}
+
+	const float Speed2D = OwnerPawn->GetVelocity().Size2D();
+	const float Ref = FMath::Max(1.0f, WeaponData->SpreadSpeedRef);
+	return FMath::Clamp(Speed2D / Ref, 0.0f, 1.0f);
+}
+
+FVector UMosesCombatComponent::Server_ApplySpreadToDirection(const FVector& AimDir, const UMosesWeaponData* WeaponData, float SpreadFactor01, float& OutHalfAngleDeg) const
+{
+	if (!WeaponData)
+	{
+		OutHalfAngleDeg = 0.0f;
+		return AimDir.GetSafeNormal();
+	}
+
+	OutHalfAngleDeg = FMath::Lerp(WeaponData->SpreadDegrees_Min, WeaponData->SpreadDegrees_Max, SpreadFactor01);
+	const float HalfAngleRad = FMath::DegreesToRadians(FMath::Max(0.0f, OutHalfAngleDeg));
+
+	return FMath::VRandCone(AimDir.GetSafeNormal(), HalfAngleRad);
+}
+
+void UMosesCombatComponent::Server_PerformFireAndApplyDamage(const UMosesWeaponData* WeaponData)
 {
 	APawn* OwnerPawn = MosesCombat_Private::GetOwnerPawn(this);
 	if (!OwnerPawn)
@@ -603,8 +621,32 @@ void UMosesCombatComponent::Server_PerformHitscanAndApplyDamage(const UMosesWeap
 	FRotator ViewRot;
 	Controller->GetPlayerViewPoint(ViewLoc, ViewRot);
 
+	const FVector AimDir = ViewRot.Vector();
+
+	// [DAY7] Spread 적용
+	const float SpreadFactor = Server_CalcSpreadFactor01(WeaponData, OwnerPawn);
+
+	float HalfAngleDeg = 0.0f;
+	const FVector SpreadDir = Server_ApplySpreadToDirection(AimDir, WeaponData, SpreadFactor, HalfAngleDeg);
+
+	UE_LOG(LogMosesCombat, Warning, TEXT("[AIM][SV] SpreadApplied Factor=%.2f HalfAngleDeg=%.2f Speed=%.1f Weapon=%s"),
+		SpreadFactor,
+		HalfAngleDeg,
+		OwnerPawn->GetVelocity().Size2D(),
+		WeaponData ? *WeaponData->WeaponId.ToString() : TEXT("None"));
+
+	// [DAY9] 유탄(Projectile) 분기
+	if (WeaponData->bIsProjectileWeapon)
+	{
+		Server_SpawnGrenadeProjectile(WeaponData, ViewLoc, SpreadDir, Controller, OwnerPawn);
+		return;
+	}
+
+	// --------------------------------------------------------------------
+	// Hitscan + GAS Damage
+	// --------------------------------------------------------------------
 	const FVector Start = ViewLoc;
-	const FVector End = Start + (ViewRot.Vector() * HitscanDistance);
+	const FVector End = Start + (SpreadDir * HitscanDistance);
 
 	FHitResult Hit;
 	FCollisionQueryParams Params(SCENE_QUERY_STAT(Moses_FireTrace), true);
@@ -633,6 +675,79 @@ void UMosesCombatComponent::Server_PerformHitscanAndApplyDamage(const UMosesWeap
 			*GetNameSafe(Hit.GetActor()), AppliedDamage);
 	}
 }
+
+void UMosesCombatComponent::Server_SpawnGrenadeProjectile(const UMosesWeaponData* WeaponData, const FVector& SpawnLoc, const FVector& FireDir, AController* InstigatorController, APawn* OwnerPawn)
+{
+	if (!WeaponData || !OwnerPawn)
+	{
+		return;
+	}
+
+	if (!GrenadeProjectileClass)
+	{
+		UE_LOG(LogMosesCombat, Warning, TEXT("[GRENADE][SV] Spawn FAIL (GrenadeProjectileClass is null)"));
+		return;
+	}
+
+	AMosesPlayerState* PS = MosesCombat_Private::GetOwnerPS(this);
+	if (!PS)
+	{
+		UE_LOG(LogMosesCombat, Warning, TEXT("[GRENADE][SV] Spawn FAIL (No PlayerState owner)"));
+		return;
+	}
+
+	UAbilitySystemComponent* SourceASC = PS->GetAbilitySystemComponent();
+	if (!SourceASC)
+	{
+		UE_LOG(LogMosesCombat, Warning, TEXT("[GRENADE][SV] Spawn FAIL (No Source ASC)"));
+		return;
+	}
+
+	// GE 로드(히트스캔과 동일)
+	TSubclassOf<UGameplayEffect> GEClass = DamageGE_SetByCaller.LoadSynchronous();
+	if (!GEClass)
+	{
+		UE_LOG(LogMosesGAS, Warning, TEXT("[GAS][SV] DamageGE_SetByCaller is null (load failed)"));
+		return;
+	}
+
+	FActorSpawnParameters Params;
+	Params.Owner = PS;
+	Params.Instigator = OwnerPawn;
+
+	const FRotator Rot = FireDir.Rotation();
+
+	AMosesGrenadeProjectile* Projectile = GetWorld()->SpawnActor<AMosesGrenadeProjectile>(GrenadeProjectileClass, SpawnLoc, Rot, Params);
+	if (!Projectile)
+	{
+		UE_LOG(LogMosesCombat, Warning, TEXT("[GRENADE][SV] Spawn FAIL (SpawnActor returned null)"));
+		return;
+	}
+
+	const float ExplodeDamage = (WeaponData->ExplosionDamageOverride > 0.0f) ? WeaponData->ExplosionDamageOverride : WeaponData->Damage;
+
+	Projectile->InitFromCombat_Server(
+		SourceASC,
+		GEClass,
+		ExplodeDamage,
+		WeaponData->ExplosionRadius,
+		InstigatorController,
+		OwnerPawn,
+		WeaponData);
+
+	Projectile->Launch_Server(FireDir, WeaponData->ProjectileSpeed);
+
+	UE_LOG(LogMosesCombat, Warning,
+		TEXT("[GRENADE][SV] Spawn OK Weapon=%s Speed=%.1f Radius=%.1f Damage=%.1f"),
+		*WeaponData->WeaponId.ToString(),
+		WeaponData->ProjectileSpeed,
+		WeaponData->ExplosionRadius,
+		ExplodeDamage);
+}
+
+// ============================================================================
+// GAS Damage (히트스캔 + 유탄 공통 파이프라인)
+// ============================================================================
 
 bool UMosesCombatComponent::Server_ApplyDamageToTarget_GAS(AActor* TargetActor, float Damage, AController* InstigatorController, AActor* DamageCauser, const UMosesWeaponData* WeaponData) const
 {
@@ -688,12 +803,11 @@ bool UMosesCombatComponent::Server_ApplyDamageToTarget_GAS(AActor* TargetActor, 
 		return false;
 	}
 
-	static const FGameplayTag DamageTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Data.Damage")));
-	SpecHandle.Data->SetSetByCallerMagnitude(DamageTag, Damage);
+	SpecHandle.Data->SetSetByCallerMagnitude(FMosesGameplayTags::Get().Data_Damage, Damage);
 
 	SourceASC->ApplyGameplayEffectSpecToTarget(*SpecHandle.Data.Get(), TargetASC);
 
-	UE_LOG(LogMosesGAS, Warning, TEXT("[GAS][SV] DamageApplied Target=%s Damage=%.1f Weapon=%s"),
+	UE_LOG(LogMosesGAS, Warning, TEXT("[DAMAGE][SV] Applied To=%s Amount=%.1f Weapon=%s"),
 		*GetNameSafe(TargetActor),
 		Damage,
 		WeaponData ? *WeaponData->WeaponId.ToString() : TEXT("None"));
@@ -767,7 +881,6 @@ void UMosesCombatComponent::OnRep_IsReloading()
 
 void UMosesCombatComponent::OnRep_SwapSerial()
 {
-	// SwapSerial이 바뀌었다는 것은 "서버 승인 스왑"이 있었다는 의미다.
 	BroadcastSwapStarted(TEXT("OnRep_SwapSerial"));
 }
 
@@ -814,7 +927,6 @@ void UMosesCombatComponent::BroadcastReloadingChanged(const TCHAR* ContextTag)
 
 void UMosesCombatComponent::BroadcastSwapStarted(const TCHAR* ContextTag)
 {
-	// 방어: From/To는 항상 1~4 범위여야 한다.
 	const int32 FromSlot = MosesCombat_Private::ClampSlotIndex(LastSwapFromSlot);
 	const int32 ToSlot = MosesCombat_Private::ClampSlotIndex(LastSwapToSlot);
 
@@ -870,7 +982,6 @@ void UMosesCombatComponent::Server_EnsureAmmoInitializedForSlot(int32 SlotIndex,
 	int32 Reserve = 0;
 	GetSlotAmmo_Internal(SlotIndex, Mag, Reserve);
 
-	// 기본은 0/0 유지. (기본 지급은 Slot1만 별도)
 	if (Mag == 0 && Reserve == 0)
 	{
 		UE_LOG(LogMosesCombat, VeryVerbose, TEXT("[AMMO][SV] EnsureAmmo Slot=%d Weapon=%s (keep 0/0)"),

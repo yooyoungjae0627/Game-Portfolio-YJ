@@ -1,14 +1,4 @@
-﻿// ============================================================================
-// MosesMatchHUD.h (FULL)
-// - PhaseText: Warmup -> "워밍업"(흰색), Combat -> "매치"(빨강), Result -> "결과"(흰색)
-// - Tick/Binding 금지: Delegate 이벤트에서만 SetText/SetColor
-// - [FIX] Phase 전환 시 HUD가 제거/재생성되어 이벤트를 "놓치는" 케이스 대응
-//        -> BindRetry + GS Snapshot Apply 로 복구
-// - [FIX] 클라2에서 Warmup 카운트가 가끔 멈추는 케이스 대응
-//        -> GS delegate 바인딩이 늦게 되더라도 스냅샷 재적용 + 재바인딩
-// ============================================================================
-
-#pragma once
+﻿#pragma once
 
 #include "CoreMinimal.h"
 #include "Blueprint/UserWidget.h"
@@ -25,6 +15,8 @@ class AMosesPlayerState;
 class AMosesMatchGameState;
 
 class UMosesMatchAnnouncementWidget;
+class UMosesCrosshairWidget;
+class UMosesScopeWidget;
 
 UCLASS(Abstract)
 class UE5_MULTI_SHOOTER_API UMosesMatchHUD : public UUserWidget
@@ -33,6 +25,13 @@ class UE5_MULTI_SHOOTER_API UMosesMatchHUD : public UUserWidget
 
 public:
 	UMosesMatchHUD(const FObjectInitializer& ObjectInitializer);
+
+public:
+	// --------------------------------------------------------------------
+	// [DAY8] Scope UI 표시 토글 (로컬 연출)
+	// - 서버 권위와 무관
+	// --------------------------------------------------------------------
+	void SetScopeVisible_Local(bool bVisible);
 
 protected:
 	virtual void NativeOnInitialized() override;
@@ -80,7 +79,6 @@ private:
 	// Helpers
 	// --------------------------------------------------------------------
 	static FString ToMMSS(int32 TotalSeconds);
-
 	static FText GetPhaseText_KR(EMosesMatchPhase Phase);
 
 	// [FIX] HUD 표시용 마지막 Phase 캐시 (역행 이벤트 무시)
@@ -88,6 +86,16 @@ private:
 
 	// [FIX] Phase 우선순위
 	static int32 GetPhasePriority(EMosesMatchPhase Phase);
+
+private:
+	// --------------------------------------------------------------------
+	// [DAY7] Crosshair Update Loop (표시 전용, Tick 금지)
+	// --------------------------------------------------------------------
+	void StartCrosshairUpdate();
+	void StopCrosshairUpdate();
+	void TickCrosshairUpdate();
+
+	float CalculateCrosshairSpreadFactor_Local() const;
 
 private:
 	// =====================================================================
@@ -134,6 +142,20 @@ private:
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UMosesMatchAnnouncementWidget> AnnouncementWidget = nullptr;
 
+	// --------------------------------------------------------------------
+	// [DAY7] Crosshair widget
+	// - WBP에서 이름을 "CrosshairWidget"으로 맞추면 자동 바인딩된다.
+	// --------------------------------------------------------------------
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UMosesCrosshairWidget> CrosshairWidget = nullptr;
+
+	// --------------------------------------------------------------------
+	// [DAY8] Scope widget (Overlay)
+	// - WBP에서 이름을 "ScopeWidget"으로 맞추면 자동 바인딩된다.
+	// --------------------------------------------------------------------
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UMosesScopeWidget> ScopeWidget = nullptr;
+
 private:
 	// =====================================================================
 	// 캐시: Delegate 해제를 위해 보관
@@ -147,6 +169,20 @@ private:
 	// =====================================================================
 	FTimerHandle BindRetryHandle;
 	int32 BindRetryTryCount = 0;
-	int32 BindRetryMaxTry = 25;        // 필요하면 늘려도 됨
-	float BindRetryInterval = 0.20f;   // GF_UI Retry랑 동일한 리듬
+	int32 BindRetryMaxTry = 25;
+	float BindRetryInterval = 0.20f;
+
+private:
+	// =====================================================================
+	// [DAY7] Crosshair Timer (표시 전용)
+	// =====================================================================
+	FTimerHandle CrosshairTimerHandle;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Moses|HUD|Crosshair")
+	float CrosshairUpdateInterval = 0.05f; // 20Hz
+
+	UPROPERTY(EditDefaultsOnly, Category = "Moses|HUD|Crosshair")
+	float CrosshairLogThreshold = 0.08f;
+
+	float LastLoggedCrosshairSpread = -1.0f;
 };

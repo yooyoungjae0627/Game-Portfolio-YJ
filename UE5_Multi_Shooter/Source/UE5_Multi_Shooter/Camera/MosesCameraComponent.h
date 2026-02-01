@@ -25,6 +25,12 @@ DECLARE_DELEGATE_RetVal(TSubclassOf<UMosesCameraMode>, FMosesCameraModeDelegate)
  * [명세]
  * - Tick 사용 안 함 (GetCameraView 호출 흐름 사용)
  * - Delegate 미바인딩 시 DefaultCameraModeClass로 폴백(화면 안정)
+ *
+ * [DAY8: Scope Local Override]
+ * - 스코프는 "로컬 연출"이므로 네트워크/SSOT에 관여하지 않는다.
+ * - 로컬 스코프가 켜져 있으면:
+ *   - FOV를 ScopedFOV_Local로 오버라이드
+ *   - PostProcess MotionBlurAmount를 ScopeBlurStrength_Local로 오버라이드
  */
 UCLASS()
 class UE5_MULTI_SHOOTER_API UMosesCameraComponent : public UCameraComponent
@@ -57,6 +63,14 @@ public:
 	/** 외부(HeroComponent)가 바인딩해서 현재 카메라 모드 클래스를 반환 */
 	FMosesCameraModeDelegate DetermineCameraModeDelegate;
 
+public:
+	// --------------------------------------------------------------------
+	// [DAY8] Scope local API (연출 전용)
+	// --------------------------------------------------------------------
+	void SetSniperScopeActive_Local(bool bActive, float InScopedFOV);
+	void SetScopeBlurStrength_Local(float InStrength01);
+	bool IsSniperScopeActive_Local() const { return bScopeActive_Local; }
+
 private:
 	UPROPERTY()
 	TObjectPtr<UMosesCameraModeStack> CameraModeStack = nullptr;
@@ -67,4 +81,12 @@ private:
 private:
 	mutable bool bLoggedNoDelegateOnce = false;
 	mutable bool bLoggedNoModeClassOnce = false;
+
+private:
+	// --------------------------------------------------------------------
+	// [DAY8] local override cache
+	// --------------------------------------------------------------------
+	bool bScopeActive_Local = false;
+	float ScopedFOV_Local = 45.0f;
+	float ScopeBlurStrength_Local = 0.0f;
 };

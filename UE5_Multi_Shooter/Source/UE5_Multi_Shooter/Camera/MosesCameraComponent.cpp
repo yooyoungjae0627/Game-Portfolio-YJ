@@ -52,8 +52,6 @@ void UMosesCameraComponent::UpdateCameraModes()
 	TSubclassOf<UMosesCameraMode> ModeClass = ResolveCameraModeClass();
 
 	// 어떤 이유로든 모드가 없다면, "안전 폴백"을 강제한다.
-	// - DefaultCameraModeClass가 BP에서 세팅되지 않았거나
-	// - Delegate 바인딩이 실패한 타이밍 등에서 카메라가 원점/이상한 값으로 튀는 것을 차단
 	if (!ModeClass)
 	{
 		if (!bLoggedNoModeClassOnce)
@@ -63,10 +61,6 @@ void UMosesCameraComponent::UpdateCameraModes()
 			bLoggedNoModeClassOnce = true;
 		}
 
-		// [IMPORTANT]
-		// 여기서 바로 특정 클래스(ThirdPerson)를 하드코딩하고 싶으면
-		// 프로젝트 정책상 "에셋 의존"이 생길 수 있으니, 최소한 DefaultCameraModeClass는 반드시 세팅하도록 하고
-		// 이 강제 폴백은 "개발 중 안전장치"로만 둔다.
 		ModeClass = DefaultCameraModeClass;
 	}
 
@@ -129,4 +123,35 @@ void UMosesCameraComponent::ApplyCameraViewToDesiredView(const FMosesCameraModeV
 	{
 		DesiredView.PostProcessSettings = PostProcessSettings;
 	}
+
+	// --------------------------------------------------------------------
+	// [DAY8][MOD] Scope Local Override (연출 전용)
+	// - 기존 카메라 시스템을 깨지 않기 위해 "최종 DesiredView 단계"에서만 최소 삽입한다.
+	// --------------------------------------------------------------------
+	if (bScopeActive_Local)
+	{
+		DesiredView.FOV = ScopedFOV_Local;
+
+		// PostProcess가 0이면 설정이 전달되지 않을 수 있으므로, 최소 1.0으로 올려준다.
+		DesiredView.PostProcessBlendWeight = FMath::Max(DesiredView.PostProcessBlendWeight, 1.0f);
+
+		// "이동 블러" 체감: MotionBlurAmount 사용(프로젝트에서 다른 PP 사용 시 교체 가능)
+		DesiredView.PostProcessSettings.bOverride_MotionBlurAmount = true;
+		DesiredView.PostProcessSettings.MotionBlurAmount = ScopeBlurStrength_Local;
+	}
+}
+
+// --------------------------------------------------------------------
+// [DAY8] Scope API
+// --------------------------------------------------------------------
+
+void UMosesCameraComponent::SetSniperScopeActive_Local(bool bActive, float InScopedFOV)
+{
+	bScopeActive_Local = bActive;
+	ScopedFOV_Local = FMath::Clamp(InScopedFOV, 5.0f, 170.0f);
+}
+
+void UMosesCameraComponent::SetScopeBlurStrength_Local(float InStrength01)
+{
+	ScopeBlurStrength_Local = FMath::Clamp(InStrength01, 0.0f, 1.0f);
 }

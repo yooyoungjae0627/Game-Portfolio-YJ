@@ -6,12 +6,19 @@
 // - [MOD] BeginPlay/OnPossess/ClientRestart에서
 //         Match면 커서 OFF, Lobby면 커서 ON, Start면 커서 ON 강제
 // - [MOD] ApplyMatchCameraPolicy는 "Lobby/Start"에서는 건드리지 않도록 보호
+//
+// [MOD][DAY8] Scope (Sniper2x + Move Blur)
+// - 로컬 연출 전용 (서버 RPC 없음)
+// - HeroComponent(입력)에서 Scope_OnPressed_Local / Scope_OnReleased_Local 호출
+// - Tag 기반으로 스나이퍼만 허용: WeaponId == FMosesGameplayTags::Get().Weapon_Sniper_A
 // =========================================================
 
 #pragma once
 
 #include "CoreMinimal.h"
 #include "GameFramework/PlayerController.h"
+#include "Net/UnrealNetwork.h"
+
 #include "MosesPlayerController.generated.h"
 
 class AMosesLobbyGameState;
@@ -20,6 +27,11 @@ class AMosesStartGameMode;
 class AMosesMatchGameMode;
 class AMosesPlayerState;
 class ACameraActor;
+
+class UMosesMatchHUD;
+class UMosesCameraComponent;
+class UMosesCombatComponent;
+class UMosesWeaponData;
 
 enum class EMosesRoomJoinResult : uint8;
 
@@ -45,6 +57,14 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnJoinedRoom, EMosesRoomJoinResult
  *
  * [ADD: START]
  * - Start 맵(StartGameLevel 등)에서도 UI 입력(닉네임 입력/버튼 클릭)을 위해 커서를 ON으로 유지한다.
+ *
+ * [MOD: DAY8 Scope]
+ * - 스코프는 로컬 연출이다.
+ * - 스나이퍼만 허용(Tag 기반)
+ * - 스코프 ON/OFF 시:
+ *   - HUD 스코프 위젯 토글
+ *   - 카메라 FOV 오버라이드(2배율)
+ *   - 이동 속도 기반 블러(로컬 타이머)
  */
 UCLASS()
 class UE5_MULTI_SHOOTER_API AMosesPlayerController : public APlayerController
@@ -186,9 +206,7 @@ private:
 	bool IsLobbyContext() const;        // [MOD] 맵 이름 기반 1순위 판정
 	bool IsLobbyMap_Local() const;      // [ADD]
 	bool IsMatchMap_Local() const;      // [ADD]
-
-	// ✅ [ADD] Start 맵 판정
-	bool IsStartMap_Local() const;
+	bool IsStartMap_Local() const;      // [ADD]
 
 private:
 	/*====================================================
@@ -202,11 +220,9 @@ private:
 	void ApplyLobbyInputMode_LocalOnly();
 	void RestoreNonLobbyInputMode_LocalOnly();
 
-	void ReapplyLobbyInputMode_NextTick_LocalOnly(); // [ADD] Travel 직후 덮어쓰기 방지
-
-	// ✅ [ADD] Start InputMode (커서 ON) + NextTick 재적용
+	void ReapplyLobbyInputMode_NextTick_LocalOnly(); // ✅ FIX: 함수 선언 정상화
 	void ApplyStartInputMode_LocalOnly();
-	void ReapplyStartInputMode_NextTick_LocalOnly();
+	void ReapplyStartInputMode_NextTick_LocalOnly(); // ✅ FIX: 함수 선언 정상화
 
 private:
 	/*====================================================
@@ -262,4 +278,50 @@ private:
 
 private:
 	FTimerHandle MatchCameraRetryTimerHandle;
+
+	// =====================================================================
+	// [MOD][DAY8] Scope Local (연출 전용)
+	// =====================================================================
+public:
+	/** 로컬 입력(우클릭 Press)에서 호출: Scope ON */
+	void Scope_OnPressed_Local();
+
+	/** 로컬 입력(우클릭 Release)에서 호출: Scope OFF */
+	void Scope_OnReleased_Local();
+
+private:
+	/** Scope 토글(로컬) */
+	void SetScopeActive_Local(bool bActive, const UMosesWeaponData* WeaponData);
+
+	/** 스코프 중 이동 블러 타이머 */
+	void StartScopeBlurTimer_Local();
+	void StopScopeBlurTimer_Local();
+	void TickScopeBlur_Local();
+
+	/** 현재 무기 데이터가 스코프 가능한지(스나이퍼인지) 판정 */
+	bool CanUseScope_Local(const UMosesWeaponData*& OutWeaponData) const;
+
+	/** 로컬 CombatComponent/Camera/HUD 찾기 */
+	UMosesCombatComponent* FindCombatComponent_Local() const;
+	UMosesCameraComponent* FindMosesCameraComponent_Local() const;
+	UMosesMatchHUD* FindMatchHUD_Local();
+
+private:
+	/** 로컬 스코프 상태 */
+	bool bScopeActive_Local = false;
+
+	/** 블러 업데이트 타이머 */
+	FTimerHandle ScopeBlurTimerHandle;
+
+	/** 블러 업데이트 주기(초) */
+	UPROPERTY(EditDefaultsOnly, Category = "Scope|Policy")
+	float ScopeBlurUpdateInterval = 0.05f; // 20Hz
+
+	/** HUD 캐시(찾았으면 재사용) */
+	UPROPERTY(Transient)
+	TWeakObjectPtr<UMosesMatchHUD> CachedMatchHUD_Local;
+
+	/** 마지막으로 스코프 ON에 사용한 무기 데이터(로컬) */
+	UPROPERTY(Transient)
+	TWeakObjectPtr<const UMosesWeaponData> CachedScopeWeaponData_Local;
 };

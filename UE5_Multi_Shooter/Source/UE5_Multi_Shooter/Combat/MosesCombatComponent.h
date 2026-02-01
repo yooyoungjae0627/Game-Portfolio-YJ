@@ -1,17 +1,4 @@
-﻿// ============================================================================
-// MosesCombatComponent.h (FULL)  [MOD: DAY6 SwapContext + BackWeapons]
-// ----------------------------------------------------------------------------
-// Owner = PlayerState (SSOT)
-// ----------------------------------------------------------------------------
-// - 슬롯 1~4 고정 확장
-// - Reload 서버 권위 + 서버 타이머
-// - 기본 지급: Slot1 Rifle.A + 30/90
-// - Damage: GAS(SetByCaller Data.Damage) 우선 적용 + ASC 없으면 ApplyDamage fallback
-// - HUD 갱신: RepNotify -> Native Delegate (Tick/Binding 금지)
-// - [DAY6] SwapContext(From/To/Serial) 복제 -> Pawn 코스메틱(몽타주/Notify Attach 교체) 트리거
-// ============================================================================
-
-#pragma once
+﻿#pragma once
 
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
@@ -21,13 +8,15 @@
 #include "MosesCombatComponent.generated.h"
 
 class UMosesWeaponData;
+class AMosesGrenadeProjectile;
+class UGameplayEffect;
 
 DECLARE_MULTICAST_DELEGATE_TwoParams(FMosesOnEquippedChanged, int32 /*SlotIndex*/, FGameplayTag /*WeaponId*/);
 DECLARE_MULTICAST_DELEGATE_TwoParams(FMosesOnAmmoChangedNative, int32 /*Mag*/, int32 /*Reserve*/);
 DECLARE_MULTICAST_DELEGATE_OneParam(FMosesOnDeadChangedNative, bool /*bNewDead*/);
 DECLARE_MULTICAST_DELEGATE_OneParam(FMosesOnReloadingChangedNative, bool /*bReloading*/);
 
-/** [DAY6] 서버 승인 Swap 컨텍스트: Pawn 코스메틱 전용 */
+/** 서버 승인 Swap 컨텍스트: Pawn 코스메틱 전용 */
 DECLARE_MULTICAST_DELEGATE_ThreeParams(FMosesOnSwapStartedNative, int32 /*FromSlot*/, int32 /*ToSlot*/, int32 /*Serial*/);
 
 UENUM(BlueprintType)
@@ -71,7 +60,7 @@ public:
 	bool IsReloading() const { return bIsReloading; }
 
 	// =========================================================================
-	// [DAY6] SwapContext Query (Cosmetic trigger only)
+	// SwapContext Query (Cosmetic trigger only)
 	// =========================================================================
 	int32 GetLastSwapFromSlot() const { return LastSwapFromSlot; }
 	int32 GetLastSwapToSlot() const { return LastSwapToSlot; }
@@ -115,7 +104,7 @@ public:
 	FMosesOnDeadChangedNative OnDeadChanged;
 	FMosesOnReloadingChangedNative OnReloadingChanged;
 
-	// [DAY6] 서버 승인 Swap 이벤트(코스메틱 트리거)
+	// 서버 승인 Swap 이벤트(코스메틱 트리거)
 	FMosesOnSwapStartedNative OnSwapStarted;
 
 	// =========================================================================
@@ -146,7 +135,7 @@ private:
 	UFUNCTION() void OnRep_IsDead();
 	UFUNCTION() void OnRep_IsReloading();
 
-	// [DAY6] 서버 승인 Swap 컨텍스트 RepNotify
+	// 서버 승인 Swap 컨텍스트 RepNotify
 	UFUNCTION() void OnRep_SwapSerial();
 
 private:
@@ -158,7 +147,6 @@ private:
 	void BroadcastDeadChanged(const TCHAR* ContextTag);
 	void BroadcastReloadingChanged(const TCHAR* ContextTag);
 
-	// [DAY6]
 	void BroadcastSwapStarted(const TCHAR* ContextTag);
 
 private:
@@ -185,7 +173,17 @@ private:
 	bool Server_IsFireCooldownReady(const UMosesWeaponData* WeaponData) const;
 	void Server_UpdateFireCooldownStamp();
 
-	void Server_PerformHitscanAndApplyDamage(const UMosesWeaponData* WeaponData);
+	// [DAY7][MOD] 스프레드 적용 후 히트스캔 수행
+	void Server_PerformFireAndApplyDamage(const UMosesWeaponData* WeaponData);
+
+	// [DAY7][MOD] 스프레드 계산/적용
+	float Server_CalcSpreadFactor01(const UMosesWeaponData* WeaponData, const APawn* OwnerPawn) const;
+	FVector Server_ApplySpreadToDirection(const FVector& AimDir, const UMosesWeaponData* WeaponData, float SpreadFactor01, float& OutHalfAngleDeg) const;
+
+	// [DAY9][MOD] Projectile 스폰(유탄)
+	void Server_SpawnGrenadeProjectile(const UMosesWeaponData* WeaponData, const FVector& SpawnLoc, const FVector& FireDir, AController* InstigatorController, APawn* OwnerPawn);
+
+	// GAS(SetByCaller Data.Damage) 우선 적용 + ASC 없으면 ApplyDamage fallback
 	bool Server_ApplyDamageToTarget_GAS(AActor* TargetActor, float Damage, AController* InstigatorController, AActor* DamageCauser, const UMosesWeaponData* WeaponData) const;
 
 	void Server_PropagateFireCosmetics(FGameplayTag ApprovedWeaponId);
@@ -247,7 +245,7 @@ private:
 	bool bIsReloading = false;
 
 	// ---------------------------------------------------------------------
-	// [DAY6] SwapContext (Server approved) - Cosmetic trigger only
+	// SwapContext (Server approved) - Cosmetic trigger only
 	// ---------------------------------------------------------------------
 	UPROPERTY(ReplicatedUsing = OnRep_SwapSerial)
 	int32 SwapSerial = 0;
@@ -294,4 +292,11 @@ private:
 
 	UPROPERTY(EditDefaultsOnly, Category = "Moses|GAS")
 	TSoftClassPtr<class UGameplayEffect> DamageGE_SetByCaller;
+
+private:
+	// =========================================================================
+	// [DAY9] Projectile class
+	// =========================================================================
+	UPROPERTY(EditDefaultsOnly, Category = "Moses|Grenade")
+	TSubclassOf<AMosesGrenadeProjectile> GrenadeProjectileClass;
 };

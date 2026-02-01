@@ -1,79 +1,84 @@
-﻿// ============================================================================
-// MosesCrosshairWidget.cpp (FULL)
-// - 로컬 코스메틱: Pawn 속도 기반 크로스헤어 확산/수렴
-// - Tick 금지: Timer로 갱신
-// ============================================================================
-
-#include "UE5_Multi_Shooter/UI/Match/MosesCrosshairWidget.h"
+﻿#include "UE5_Multi_Shooter/UI/Match/MosesCrosshairWidget.h"
 
 #include "Components/Image.h"
 #include "Components/CanvasPanelSlot.h"
-#include "GameFramework/Pawn.h"
-#include "GameFramework/PlayerController.h"
+#include "Math/UnrealMathUtility.h"
 
-#include "UE5_Multi_Shooter/MosesLogChannels.h"
-
-void UMosesCrosshairWidget::NativeConstruct()
+UMosesCrosshairWidget::UMosesCrosshairWidget(const FObjectInitializer& ObjectInitializer)
+	: Super(ObjectInitializer)
 {
-	Super::NativeConstruct();
-
-	if (UWorld* World = GetWorld())
-	{
-		World->GetTimerManager().SetTimer(
-			TimerHandle_Update,
-			this,
-			&UMosesCrosshairWidget::UpdateCrosshair_Local,
-			UpdateInterval,
-			true);
-	}
 }
 
-void UMosesCrosshairWidget::NativeDestruct()
+void UMosesCrosshairWidget::NativeOnInitialized()
 {
-	if (UWorld* World = GetWorld())
-	{
-		World->GetTimerManager().ClearTimer(TimerHandle_Update);
-	}
+	Super::NativeOnInitialized();
 
-	Super::NativeDestruct();
+	CacheBaseOffsetsIfNeeded();
+	SetSpreadFactor(0.0f);
 }
 
-float UMosesCrosshairWidget::ComputeSpreadFactor_Local() const
+void UMosesCrosshairWidget::CacheBaseOffsetsIfNeeded()
 {
-	APlayerController* PC = GetOwningPlayer();
-	APawn* Pawn = PC ? PC->GetPawn() : nullptr;
-	if (!Pawn)
-	{
-		return 0.0f;
-	}
-
-	const float Speed = Pawn->GetVelocity().Size();
-	return FMath::Clamp(Speed / 600.0f, 0.0f, 1.0f);
-}
-
-void UMosesCrosshairWidget::SetImageOffset(UImage* Img, float X, float Y) const
-{
-	if (!Img)
+	if (bCachedBase)
 	{
 		return;
 	}
 
-	// ✅ 'Slot' 이름은 UWidget::Slot 멤버를 가리므로 CanvasSlot로 변경
-	if (UCanvasPanelSlot* CanvasSlot = Cast<UCanvasPanelSlot>(Img->Slot))
+	auto Cache = [](UImage* Img, FVector2D& OutPos)
+		{
+			if (!Img)
+			{
+				OutPos = FVector2D::ZeroVector;
+				return;
+			}
+
+			if (UCanvasPanelSlot* CanvasSlot = Cast<UCanvasPanelSlot>(Img->Slot)) // ✅ FIX: Slot -> CanvasSlot
+			{
+				OutPos = CanvasSlot->GetPosition();
+			}
+			else
+			{
+				OutPos = FVector2D::ZeroVector;
+			}
+		};
+
+	Cache(Crosshair_Up, BaseUp);
+	Cache(Crosshair_Down, BaseDown);
+	Cache(Crosshair_Left, BaseLeft);
+	Cache(Crosshair_Right, BaseRight);
+
+	bCachedBase = true;
+}
+
+void UMosesCrosshairWidget::ApplyOffset(UImage* Image, const FVector2D& BasePos, const FVector2D& AddPos)
+{
+	if (!Image)
 	{
-		CanvasSlot->SetPosition(FVector2D(X, Y));
+		return;
+	}
+
+	if (UCanvasPanelSlot* CanvasSlot = Cast<UCanvasPanelSlot>(Image->Slot)) // ✅ FIX: Slot -> CanvasSlot
+	{
+		CanvasSlot->SetPosition(BasePos + AddPos);
 	}
 }
 
-void UMosesCrosshairWidget::UpdateCrosshair_Local()
+void UMosesCrosshairWidget::SetSpreadFactor(float InSpreadFactor01)
 {
-	const float Spread = ComputeSpreadFactor_Local();
-	const float Offset = FMath::Lerp(MinOffset, MaxOffset, Spread);
+	CacheBaseOffsetsIfNeeded();
 
-	SetImageOffset(Img_Top, 0.0f, -Offset);
-	SetImageOffset(Img_Bottom, 0.0f, Offset);
-	SetImageOffset(Img_Left, -Offset, 0.0f);
-	SetImageOffset(Img_Right, Offset, 0.0f);
+	const float Spread = FMath::Clamp(InSpreadFactor01, 0.0f, 1.0f);
+	if (FMath::IsNearlyEqual(CachedSpread, Spread, 0.001f))
+	{
+		return;
+	}
 
-	UE_LOG(LogMosesHUD, VeryVerbose, TEXT("[HUD][CL] Crosshair Spread=%.2f Offset=%.1f"), Spread, Offset);
+	CachedSpread = Spread;
+
+	const float Pixels = FMath::Lerp(MinSpreadPixels, MaxSpreadPixels, Spread);
+
+	ApplyOffset(Crosshair_Up, BaseUp, FVector2D(0.0f, -Pixels));
+	ApplyOffset(Crosshair_Down, BaseDown, FVector2D(0.0f, Pixels));
+	ApplyOffset(Crosshair_Left, BaseLeft, FVector2D(-Pixels, 0.0f));
+	ApplyOffset(Crosshair_Right, BaseRight, FVector2D(Pixels, 0.0f));
 }

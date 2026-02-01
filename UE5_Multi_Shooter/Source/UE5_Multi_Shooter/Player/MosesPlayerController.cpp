@@ -9,6 +9,17 @@
 #include "UE5_Multi_Shooter/Player/MosesPlayerState.h"
 #include "UE5_Multi_Shooter/System/MosesLobbyLocalPlayerSubsystem.h"
 
+// [MOD][DAY8]
+#include "UE5_Multi_Shooter/Combat/MosesCombatComponent.h"
+#include "UE5_Multi_Shooter/Weapon/MosesWeaponRegistrySubsystem.h"
+#include "UE5_Multi_Shooter/Weapon/MosesWeaponData.h"
+#include "UE5_Multi_Shooter/Camera/MosesCameraComponent.h"
+#include "UE5_Multi_Shooter/UI/Match/MosesMatchHUD.h"
+#include "UE5_Multi_Shooter/GAS/MosesGameplayTags.h"
+
+// UMG helper (HUD 찾기)
+#include "Blueprint/WidgetBlueprintLibrary.h"
+
 #include "Camera/CameraActor.h"
 #include "Engine/LocalPlayer.h"
 #include "Engine/World.h"
@@ -276,6 +287,12 @@ void AMosesPlayerController::BeginPlay()
 
 void AMosesPlayerController::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	// [MOD][DAY8] 스코프 타이머 정리(로컬)
+	StopScopeBlurTimer_Local();
+	bScopeActive_Local = false;
+	CachedScopeWeaponData_Local.Reset();
+	CachedMatchHUD_Local.Reset();
+
 	Super::EndPlay(EndPlayReason);
 }
 
@@ -1132,4 +1149,232 @@ void AMosesPlayerController::RetryApplyMatchCameraPolicy_NextTick_LocalOnly()
 
 			ApplyMatchCameraPolicy_LocalOnly(TEXT("NextTickRetry"));
 		}));
+}
+
+// ============================================================================
+// [MOD][DAY8] Scope Local (로컬 연출)
+// ============================================================================
+
+UMosesCombatComponent* AMosesPlayerController::FindCombatComponent_Local() const
+{
+	AMosesPlayerState* PS = GetPlayerState<AMosesPlayerState>();
+	return PS ? PS->FindComponentByClass<UMosesCombatComponent>() : nullptr;
+}
+
+UMosesCameraComponent* AMosesPlayerController::FindMosesCameraComponent_Local() const
+{
+	APawn* P = GetPawn();
+	return P ? P->FindComponentByClass<UMosesCameraComponent>() : nullptr;
+}
+
+UMosesMatchHUD* AMosesPlayerController::FindMatchHUD_Local()
+{
+	if (CachedMatchHUD_Local.IsValid())
+	{
+		return CachedMatchHUD_Local.Get();
+	}
+
+	// HUD는 GF_UI에서 AddToViewport 될 수 있으므로 "월드 전체 위젯 검색"으로 안전하게 찾는다.
+	TArray<UUserWidget*> Widgets;
+	UWidgetBlueprintLibrary::GetAllWidgetsOfClass(this, Widgets, UMosesMatchHUD::StaticClass(), false);
+
+	for (UUserWidget* W : Widgets)
+	{
+		if (UMosesMatchHUD* HUD = Cast<UMosesMatchHUD>(W))
+		{
+			// OwningPlayer가 나(이 PC)인 HUD만 사용
+			if (HUD->GetOwningPlayer() == this)
+			{
+				CachedMatchHUD_Local = HUD;
+				return HUD;
+			}
+		}
+	}
+
+	return nullptr;
+}
+
+bool AMosesPlayerController::CanUseScope_Local(const UMosesWeaponData*& OutWeaponData) const
+{
+	OutWeaponData = nullptr;
+
+	if (!IsLocalController())
+	{
+		return false;
+	}
+
+	UMosesCombatComponent* Combat = FindCombatComponent_Local();
+	if (!Combat)
+	{
+		return false;
+	}
+
+	const FGameplayTag WeaponId = Combat->GetEquippedWeaponId();
+	if (!WeaponId.IsValid())
+	{
+		return false;
+	}
+
+	// 로컬에서 WeaponData 해석: RegistrySubsystem 사용
+	const UWorld* World = GetWorld();
+	const UGameInstance* GI = World ? World->GetGameInstance() : nullptr;
+	if (!GI)
+	{
+		return false;
+	}
+
+	UMosesWeaponRegistrySubsystem* Registry = GI->GetSubsystem<UMosesWeaponRegistrySubsystem>();
+	if (!Registry)
+	{
+		return false;
+	}
+
+	const UMosesWeaponData* WeaponData = Registry->ResolveWeaponData(WeaponId);
+	if (!WeaponData)
+	{
+		return false;
+	}
+
+	// ✅ Sniper 판정은 enum 대신 Tag 기반(빌드 에러 방지 + 데이터키 일치)
+	if (WeaponData->WeaponId != FMosesGameplayTags::Get().Weapon_Sniper_A)
+	{
+		return false;
+	}
+
+	OutWeaponData = WeaponData;
+	return true;
+}
+
+void AMosesPlayerController::Scope_OnPressed_Local()
+{
+	const UMosesWeaponData* WeaponData = nullptr;
+	if (!CanUseScope_Local(WeaponData))
+	{
+		return;
+	}
+
+	SetScopeActive_Local(true, WeaponData);
+}
+
+void AMosesPlayerController::Scope_OnReleased_Local()
+{
+	// OFF는 WeaponData 없어도 처리 가능(리셋)
+	SetScopeActive_Local(false, nullptr);
+}
+
+void AMosesPlayerController::SetScopeActive_Local(bool bActive, const UMosesWeaponData* WeaponData)
+{
+	if (!IsLocalController())
+	{
+		return;
+	}
+
+	if (bScopeActive_Local == bActive)
+	{
+		return;
+	}
+
+	bScopeActive_Local = bActive;
+
+	// HUD 표시 토글
+	if (UMosesMatchHUD* HUD = FindMatchHUD_Local())
+	{
+		HUD->SetScopeVisible_Local(bScopeActive_Local);
+	}
+
+	// 카메라 오버라이드
+	if (UMosesCameraComponent* Cam = FindMosesCameraComponent_Local())
+	{
+		if (bScopeActive_Local)
+		{
+			const float ScopedFOV = WeaponData ? WeaponData->ScopeFOV : 45.0f;
+			Cam->SetSniperScopeActive_Local(true, ScopedFOV);
+			Cam->SetScopeBlurStrength_Local(0.0f);
+		}
+		else
+		{
+			Cam->SetSniperScopeActive_Local(false, 45.0f);
+			Cam->SetScopeBlurStrength_Local(0.0f);
+		}
+	}
+
+	if (bScopeActive_Local)
+	{
+		CachedScopeWeaponData_Local = WeaponData;
+		StartScopeBlurTimer_Local();
+		UE_LOG(LogMosesHUD, Log, TEXT("[SCOPE][CL] ScopeOn"));
+	}
+	else
+	{
+		StopScopeBlurTimer_Local();
+		CachedScopeWeaponData_Local.Reset();
+		UE_LOG(LogMosesHUD, Log, TEXT("[SCOPE][CL] ScopeOff"));
+	}
+}
+
+void AMosesPlayerController::StartScopeBlurTimer_Local()
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	if (World->GetTimerManager().IsTimerActive(ScopeBlurTimerHandle))
+	{
+		return;
+	}
+
+	World->GetTimerManager().SetTimer(
+		ScopeBlurTimerHandle,
+		this,
+		&ThisClass::TickScopeBlur_Local,
+		ScopeBlurUpdateInterval,
+		true);
+}
+
+void AMosesPlayerController::StopScopeBlurTimer_Local()
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	if (World->GetTimerManager().IsTimerActive(ScopeBlurTimerHandle))
+	{
+		World->GetTimerManager().ClearTimer(ScopeBlurTimerHandle);
+	}
+}
+
+void AMosesPlayerController::TickScopeBlur_Local()
+{
+	if (!bScopeActive_Local)
+	{
+		return;
+	}
+
+	APawn* P = GetPawn();
+	if (!P)
+	{
+		return;
+	}
+
+	UMosesCameraComponent* Cam = FindMosesCameraComponent_Local();
+	if (!Cam)
+	{
+		return;
+	}
+
+	const UMosesWeaponData* WeaponData = CachedScopeWeaponData_Local.Get();
+
+	const float BlurMin = WeaponData ? WeaponData->ScopeBlur_Min : 0.0f;
+	const float BlurMax = WeaponData ? WeaponData->ScopeBlur_Max : 0.85f;
+	const float SpeedRef = WeaponData ? FMath::Max(1.0f, WeaponData->ScopeBlur_SpeedRef) : 600.0f;
+
+	const float Speed2D = P->GetVelocity().Size2D();
+	const float Factor = FMath::Clamp(Speed2D / SpeedRef, 0.0f, 1.0f);
+	const float Blur = FMath::Lerp(BlurMin, BlurMax, Factor);
+
+	Cam->SetScopeBlurStrength_Local(Blur);
 }
