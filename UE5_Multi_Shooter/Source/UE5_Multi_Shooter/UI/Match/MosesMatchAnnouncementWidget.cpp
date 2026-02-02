@@ -31,28 +31,43 @@ void UMosesMatchAnnouncementWidget::UpdateAnnouncement(const FMosesAnnouncementS
 		return;
 	}
 
-	// 2) Text 반영
 	if (!AnnouncementText)
 	{
 		UE_LOG(LogMosesHUD, Warning, TEXT("[HUD][CL] AnnouncementText is NULL. Check WBP child TextBlock name == 'AnnouncementText'"));
 		return;
 	}
 
-	AnnouncementText->SetText(State.Text);
+	// ---------------------------------------------------------------------
+	// 2) 원본 텍스트 → FString
+	// ---------------------------------------------------------------------
+	FString TextStr = State.Text.ToString();
 
 	// ---------------------------------------------------------------------
-	// [MOD] 캡쳐 성공은 무조건 빨간색으로 고정
-	// - 다른 알림은 기본 White
-	// - (원하면 여기서 "캡쳐 성공"만 보이고 나머지는 숨김도 가능)
+	// 3) 영어 문자 제거 (A-Z, a-z)
+	//    필요하면 숫자/특수문자도 여기서 같이 제거 가능
 	// ---------------------------------------------------------------------
+	for (int32 i = TextStr.Len() - 1; i >= 0; --i)
+	{
+		const TCHAR C = TextStr[i];
+		if ((C >= TEXT('A') && C <= TEXT('Z')) ||
+			(C >= TEXT('a') && C <= TEXT('z')))
+		{
+			TextStr.RemoveAt(i);
+		}
+	}
 
-	// ✅ "캡쳐 성공" / "Capture Complete" / "깃발 캡처 성공" 등 케이스 대응
-	const FString TextStr = State.Text.ToString();
+	// 앞뒤 공백 정리
+	TextStr = TextStr.TrimStartAndEnd();
+
+	AnnouncementText->SetText(FText::FromString(TextStr));
+
+	// ---------------------------------------------------------------------
+	// 4) 캡쳐 성공 판별 → 빨간색
+	// ---------------------------------------------------------------------
 	const bool bIsCaptureSuccess =
 		TextStr.Contains(TEXT("캡쳐 성공")) ||
-		TextStr.Contains(TEXT("Capture Complete")) ||
-		TextStr.Contains(TEXT("깃발 캡처 성공")) ||
-		TextStr.Contains(TEXT("캡처 성공"));
+		TextStr.Contains(TEXT("캡처 성공")) ||
+		TextStr.Contains(TEXT("깃발 캡처 성공"));
 
 	if (bIsCaptureSuccess)
 	{
@@ -63,6 +78,7 @@ void UMosesMatchAnnouncementWidget::UpdateAnnouncement(const FMosesAnnouncementS
 		AnnouncementText->SetColorAndOpacity(FSlateColor(FLinearColor::White));
 	}
 }
+
 
 void UMosesMatchAnnouncementWidget::SetActive(bool bActive)
 {
