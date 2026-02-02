@@ -1,5 +1,19 @@
+﻿// ============================================================================
+// UE5_Multi_Shooter/Pickup/MosesPickupWeapon.h  (FULL - UPDATED)  [STEP4]
 // ============================================================================
-// MosesPickupWeapon.h (FULL)  [MOD + Billboard]
+//
+// [STEP4 목표]
+// - 파밍(픽업) 성공 시 "소유 슬롯(SlotOwnership)"만 갱신하는 것이 아니라,
+//   CombatComponent(SSOT)의 슬롯 WeaponId + Ammo 초기화까지 서버에서 확정한다.
+// - 결과:
+//   - 파밍 직후 등(Back_1~3) 시각화는 STEP2 규칙으로 자동 반영
+//   - 1~4 스왑 시 HUD는 CurrentSlot 탄약으로 즉시 전환(STEP3)
+//   - 해당 무기만 탄약 소비/사격 가능(STEP1)
+//
+// 정책:
+// - Server Authority 100%
+// - Pawn/HUD는 RepNotify -> Delegate 결과만 표시
+//
 // ============================================================================
 
 #pragma once
@@ -27,6 +41,14 @@ public:
 	AMosesPickupWeapon();
 
 	void SetLocalHighlight(bool bEnable);
+
+	/**
+	 * ServerTryPickup
+	 * - 서버 원자성 판정(OK 1 / FAIL 1)
+	 * - 성공 시:
+	 *   1) SlotOwnershipComponent에 슬롯 소유 기록
+	 *   2) CombatComponent(SSOT)에 Slot WeaponId + Ammo 초기화까지 확정   // ✅ [STEP4]
+	 */
 	bool ServerTryPickup(AMosesPlayerState* RequesterPS, FText& OutAnnounceText);
 
 protected:
@@ -55,7 +77,7 @@ private:
 	bool CanPickup_Server(const AMosesPlayerState* RequesterPS) const;
 	UMosesInteractionComponent* GetInteractionComponentFromPawn(APawn* Pawn) const;
 
-	// [MOD] Billboard (Local only)
+	// Billboard (Local only)
 	void StartPromptBillboard_Local();
 	void StopPromptBillboard_Local();
 	void TickPromptBillboard_Local();
@@ -83,7 +105,6 @@ private:
 	UPROPERTY(Transient)
 	TWeakObjectPtr<APawn> LocalPromptPawn;
 
-	// [MOD] Billboard tick (Local only)
 	UPROPERTY(EditDefaultsOnly, Category = "Pickup|Prompt")
 	float PromptBillboardInterval = 0.033f; // ~30fps
 

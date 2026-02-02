@@ -1,4 +1,16 @@
-﻿#include "UE5_Multi_Shooter/Combat/MosesCombatComponent.h"
+﻿// ============================================================================
+// UE5_Multi_Shooter/Combat/MosesCombatComponent.cpp  (FULL - UPDATED)
+// ============================================================================
+//
+// [STEP1 핵심 변경점]
+// - ServerGrantWeaponToSlot() 추가: 파밍/획득 시 슬롯 WeaponId 세팅 + 탄약 초기화.
+// - Server_EnsureAmmoInitializedForSlot()이 실제로 WeaponData(MagSize/MaxReserve)를 사용해
+//   (0/0)인 슬롯 탄약을 초기화하도록 구현.
+// - Slot WeaponId 세팅 즉시 RepNotify/Delegate를 갱신하는 내부 함수 추가.
+//
+// ============================================================================
+
+#include "UE5_Multi_Shooter/Combat/MosesCombatComponent.h"
 
 #include "UE5_Multi_Shooter/Character/PlayerCharacter.h"
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
@@ -151,6 +163,8 @@ void UMosesCombatComponent::ServerInitDefaultSlots_4(const FGameplayTag& InSlot1
 
 	CurrentSlot = 1;
 
+	// [MOD] 초기 슬롯 무기는 들어오되, 탄약은 "WeaponData 기준 기본값"으로 자동 세팅할 수 있다.
+	//       단, Match 기본 지급(라이플 30/90)은 PlayerState에서 별도로 강제한다.
 	Server_EnsureAmmoInitializedForSlot(1, Slot1WeaponId);
 	Server_EnsureAmmoInitializedForSlot(2, Slot2WeaponId);
 	Server_EnsureAmmoInitializedForSlot(3, Slot3WeaponId);
@@ -185,6 +199,61 @@ void UMosesCombatComponent::ServerGrantDefaultRifleAmmo_30_90()
 
 	UE_LOG(LogMosesWeapon, Warning, TEXT("[AMMO][SV] DefaultRifleAmmo Granted Slot=1 Mag=30 Reserve=90 Weapon=%s"),
 		*Slot1WeaponId.ToString());
+}
+
+// ============================================================================
+// [MOD][STEP1] Grant/Pickup API (Server only)
+// ============================================================================
+
+void UMosesCombatComponent::ServerGrantWeaponToSlot(int32 SlotIndex, const FGameplayTag& WeaponId, bool bInitializeAmmoIfEmpty /*=true*/)
+{
+	if (!GetOwner() || !GetOwner()->HasAuthority())
+	{
+		return;
+	}
+
+	if (!IsValidSlotIndex(SlotIndex))
+	{
+		UE_LOG(LogMosesWeapon, Warning, TEXT("[WEAPON][SV] GrantWeaponToSlot FAIL (InvalidSlot=%d) PS=%s"),
+			SlotIndex, *GetNameSafe(GetOwner()));
+		return;
+	}
+
+	if (!WeaponId.IsValid())
+	{
+		UE_LOG(LogMosesWeapon, Warning, TEXT("[WEAPON][SV] GrantWeaponToSlot FAIL (InvalidWeaponId) Slot=%d PS=%s"),
+			SlotIndex, *GetNameSafe(GetOwner()));
+		return;
+	}
+
+	const int32 ClampedSlot = MosesCombat_Private::ClampSlotIndex(SlotIndex);
+
+	// 이미 동일 무기면 중복 세팅은 스킵(탄약 초기화는 상황에 따라 필요할 수 있으나, 여기서는 보수적으로 스킵)
+	if (GetSlotWeaponIdInternal(ClampedSlot) == WeaponId)
+	{
+		UE_LOG(LogMosesWeapon, Verbose, TEXT("[WEAPON][SV] GrantWeaponToSlot SKIP (SameWeapon) Slot=%d Weapon=%s PS=%s"),
+			ClampedSlot, *WeaponId.ToString(), *GetNameSafe(GetOwner()));
+		return;
+	}
+
+	// 슬롯 무기 SSOT 갱신
+	Server_SetSlotWeaponId_Internal(ClampedSlot, WeaponId);
+
+	// [MOD] 탄약 초기화(0/0이면 WeaponData 기준으로 채움)
+	if (bInitializeAmmoIfEmpty)
+	{
+		Server_EnsureAmmoInitializedForSlot(ClampedSlot, WeaponId);
+	}
+
+	UE_LOG(LogMosesWeapon, Warning, TEXT("[WEAPON][SV] GrantWeaponToSlot OK Slot=%d Weapon=%s (InitAmmo=%d) PS=%s"),
+		ClampedSlot, *WeaponId.ToString(), bInitializeAmmoIfEmpty ? 1 : 0, *GetNameSafe(GetOwner()));
+
+	// HUD는 CurrentSlot 기준 표시이므로,
+	// 현재 장착 슬롯의 무기가 방금 세팅된 경우 즉시 Ammo 이벤트를 쏴준다.
+	if (CurrentSlot == ClampedSlot)
+	{
+		BroadcastAmmoChanged(TEXT("ServerGrantWeaponToSlot(CurrentSlot)"));
+	}
 }
 
 // ============================================================================
@@ -250,11 +319,13 @@ void UMosesCombatComponent::ServerEquipSlot_Implementation(int32 SlotIndex)
 
 	CurrentSlot = NewSlot;
 
+	// [MOD] 스왑 직후, 해당 슬롯의 탄약이 0/0이면 WeaponData 기반으로 초기화되게 보강
 	Server_EnsureAmmoInitializedForSlot(CurrentSlot, NewWeaponId);
 
 	UE_LOG(LogMosesWeapon, Warning, TEXT("[WEAPON][SV] Swap OK Slot %d -> %d Weapon %s -> %s Serial=%d"),
 		OldSlot, CurrentSlot, *OldWeaponId.ToString(), *NewWeaponId.ToString(), SwapSerial);
 
+	// ListenServer 환경/테스트 편의: 서버에서도 즉시 Delegate 발행
 	OnRep_SwapSerial();
 	OnRep_CurrentSlot();
 
@@ -315,14 +386,13 @@ void UMosesCombatComponent::ServerFire_Implementation()
 	}
 
 	Server_UpdateFireCooldownStamp();
+
+	// ✅ 핵심: "현재 슬롯"의 탄약만 소비한다.
 	Server_ConsumeAmmo_OnApprovedFire(WeaponData);
 
 	UE_LOG(LogMosesWeapon, Warning, TEXT("[WEAPON][SV] Fire Weapon=%s Slot=%d Mag=%d Reserve=%d"),
 		*ApprovedWeaponId.ToString(), CurrentSlot, GetCurrentMagAmmo(), GetCurrentReserveAmmo());
 
-	// --------------------------------------------------------------------
-	// [DAY7~DAY9][MOD] 스프레드 + (히트스캔/유탄) 분기 처리
-	// --------------------------------------------------------------------
 	Server_PerformFireAndApplyDamage(WeaponData);
 
 	// 코스메틱은 서버 승인 후 전파
@@ -487,6 +557,7 @@ bool UMosesCombatComponent::Server_CanFire(EMosesFireGuardFailReason& OutReason,
 		return false;
 	}
 
+	// ✅ 핵심: 현재 슬롯 탄창(Mag)만 체크한다.
 	if (GetCurrentMagAmmo() <= 0)
 	{
 		OutReason = EMosesFireGuardFailReason::NoAmmo;
@@ -570,7 +641,7 @@ void UMosesCombatComponent::Server_UpdateFireCooldownStamp()
 }
 
 // ============================================================================
-// [DAY7~DAY9][MOD] Fire 수행(스프레드 적용 + 히트스캔/프로젝트 분기)
+// Fire 수행(스프레드 적용 + 히트스캔/프로젝트 분기)
 // ============================================================================
 
 float UMosesCombatComponent::Server_CalcSpreadFactor01(const UMosesWeaponData* WeaponData, const APawn* OwnerPawn) const
@@ -619,7 +690,6 @@ void UMosesCombatComponent::Server_PerformFireAndApplyDamage(const UMosesWeaponD
 
 	const FVector AimDir = ViewRot.Vector();
 
-	// [DAY7] Spread 적용
 	const float SpreadFactor = Server_CalcSpreadFactor01(WeaponData, OwnerPawn);
 
 	float HalfAngleDeg = 0.0f;
@@ -631,16 +701,13 @@ void UMosesCombatComponent::Server_PerformFireAndApplyDamage(const UMosesWeaponD
 		OwnerPawn->GetVelocity().Size2D(),
 		WeaponData ? *WeaponData->WeaponId.ToString() : TEXT("None"));
 
-	// [DAY9] 유탄(Projectile) 분기
+	// Projectile weapon (Grenade Launcher)
 	if (WeaponData->bIsProjectileWeapon)
 	{
 		Server_SpawnGrenadeProjectile(WeaponData, ViewLoc, SpreadDir, Controller, OwnerPawn);
 		return;
 	}
 
-	// --------------------------------------------------------------------
-	// Hitscan + GAS Damage
-	// --------------------------------------------------------------------
 	const FVector Start = ViewLoc;
 	const FVector End = Start + (SpreadDir * HitscanDistance);
 
@@ -699,7 +766,6 @@ void UMosesCombatComponent::Server_SpawnGrenadeProjectile(const UMosesWeaponData
 		return;
 	}
 
-	// GE 로드(히트스캔과 동일)
 	TSubclassOf<UGameplayEffect> GEClass = DamageGE_SetByCaller.LoadSynchronous();
 	if (!GEClass)
 	{
@@ -807,9 +873,9 @@ bool UMosesCombatComponent::Server_ApplyDamageToTarget_GAS(AActor* TargetActor, 
 		return false;
 	}
 
-	// ✅ [FIX] Damage는 "양수"로 계산하지만, Health Add 방식의 GE를 쓰는 경우
-	//         Health를 깎으려면 음수로 넣어야 한다.
-	//         -> DAY7~9에서는 빠르게 닫기 위해 여기서 음수로 주입한다.
+	// NOTE:
+	// - 현재 프로젝트에서는 "Health를 Add로 깎는" GE를 쓰는 경로를 가정하고 SignedDamage(음수)를 주입한다.
+	// - GE 설계가 바뀌면 여기의 부호 정책도 함께 변경되어야 한다.
 	const float SignedDamage = -FMath::Abs(Damage);
 
 	SpecHandle.Data->SetSetByCallerMagnitude(FMosesGameplayTags::Get().Data_Damage, SignedDamage);
@@ -972,6 +1038,33 @@ FGameplayTag UMosesCombatComponent::GetSlotWeaponIdInternal(int32 SlotIndex) con
 	return FGameplayTag();
 }
 
+void UMosesCombatComponent::Server_SetSlotWeaponId_Internal(int32 SlotIndex, const FGameplayTag& WeaponId)
+{
+	check(GetOwner() && GetOwner()->HasAuthority());
+
+	switch (SlotIndex)
+	{
+	case 1:
+		Slot1WeaponId = WeaponId;
+		OnRep_Slot1WeaponId();
+		break;
+	case 2:
+		Slot2WeaponId = WeaponId;
+		OnRep_Slot2WeaponId();
+		break;
+	case 3:
+		Slot3WeaponId = WeaponId;
+		OnRep_Slot3WeaponId();
+		break;
+	case 4:
+		Slot4WeaponId = WeaponId;
+		OnRep_Slot4WeaponId();
+		break;
+	default:
+		break;
+	}
+}
+
 // ============================================================================
 // Ammo helpers
 // ============================================================================
@@ -992,10 +1085,38 @@ void UMosesCombatComponent::Server_EnsureAmmoInitializedForSlot(int32 SlotIndex,
 	int32 Reserve = 0;
 	GetSlotAmmo_Internal(SlotIndex, Mag, Reserve);
 
-	if (Mag == 0 && Reserve == 0)
+	// 이미 탄약이 들어있으면 유지한다(파밍/스왑/리로드 등으로 갱신된 상태 보호)
+	if (Mag > 0 || Reserve > 0)
 	{
-		UE_LOG(LogMosesCombat, VeryVerbose, TEXT("[AMMO][SV] EnsureAmmo Slot=%d Weapon=%s (keep 0/0)"),
-			SlotIndex, *WeaponId.ToString());
+		return;
+	}
+
+	// [MOD][STEP1] WeaponData 기반 초기 탄약 세팅
+	const UWorld* World = GetWorld();
+	const UGameInstance* GI = World ? World->GetGameInstance() : nullptr;
+	const UMosesWeaponRegistrySubsystem* Registry = GI ? GI->GetSubsystem<UMosesWeaponRegistrySubsystem>() : nullptr;
+
+	const UMosesWeaponData* Data = Registry ? Registry->ResolveWeaponData(WeaponId) : nullptr;
+	if (!Data)
+	{
+		UE_LOG(LogMosesWeapon, Warning, TEXT("[AMMO][SV] EnsureAmmo FAIL (NoWeaponData) Slot=%d Weapon=%s PS=%s"),
+			SlotIndex, *WeaponId.ToString(), *GetNameSafe(GetOwner()));
+		return;
+	}
+
+	// 기본 정책: Mag=MagSize, Reserve=MaxReserve
+	const int32 InitMag = FMath::Max(0, Data->MagSize);
+	const int32 InitReserve = FMath::Max(0, Data->MaxReserve);
+
+	SetSlotAmmo_Internal(SlotIndex, InitMag, InitReserve);
+
+	UE_LOG(LogMosesWeapon, Warning, TEXT("[AMMO][SV] EnsureAmmo INIT Slot=%d Weapon=%s Ammo=%d/%d PS=%s"),
+		SlotIndex, *WeaponId.ToString(), InitMag, InitReserve, *GetNameSafe(GetOwner()));
+
+	// CurrentSlot이면 HUD 전환 즉시 반영
+	if (CurrentSlot == SlotIndex)
+	{
+		BroadcastAmmoChanged(TEXT("Server_EnsureAmmoInitializedForSlot(CurrentSlot)"));
 	}
 }
 

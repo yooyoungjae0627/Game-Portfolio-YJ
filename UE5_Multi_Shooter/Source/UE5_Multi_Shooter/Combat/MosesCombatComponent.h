@@ -1,4 +1,22 @@
-﻿#pragma once
+﻿// ============================================================================
+// UE5_Multi_Shooter/Combat/MosesCombatComponent.h  (FULL - UPDATED)
+// ============================================================================
+//
+// UMosesCombatComponent
+// - SSOT(PlayerState) 소유 컴포넌트.
+// - 슬롯(1~4) 고정 무기/탄약/리로드/사격/스왑을 서버 권위로 판정한다.
+// - Pawn/HUD는 RepNotify -> Native Delegate 이벤트만 받아 "표시"만 한다.
+//
+// [이번 STEP1 작업 목표]
+// - (핵심) 파밍으로 슬롯에 무기가 들어오면, 해당 슬롯의 탄약이 WeaponData 기준으로 초기화되어
+//   스왑(1~4) 시 "그 무기의 탄약만" HUD에 표시되고, "그 무기의 탄약만" 소비되게 한다.
+// - 이를 위해 서버 전용 API(ServerGrantWeaponToSlot)를 제공하고,
+//   Server_EnsureAmmoInitializedForSlot가 실제로 WeaponData 기반 초기 탄약을 세팅하도록 수정한다.
+// - Tick 금지, HUD Binding 금지. RepNotify -> Delegate만 사용.
+//
+// ============================================================================
+
+#pragma once
 
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
@@ -38,6 +56,15 @@ enum class EMosesFireGuardFailReason : uint8
 	IsDead,
 };
 
+/**
+ * UMosesCombatComponent
+ *
+ * 정책:
+ * - Server Authority 100%
+ * - SSOT = PlayerState 소유 컴포넌트
+ * - Pawn = Cosmetic Only (손/등 소켓 Attach, 몽타주, VFX/SFX)
+ * - HUD = RepNotify -> Delegate only
+ */
 UCLASS(ClassGroup = (Moses), meta = (BlueprintSpawnableComponent))
 class UE5_MULTI_SHOOTER_API UMosesCombatComponent : public UActorComponent
 {
@@ -95,6 +122,13 @@ public:
 	// =========================================================================
 	void ServerInitDefaultSlots_4(const FGameplayTag& InSlot1, const FGameplayTag& InSlot2, const FGameplayTag& InSlot3, const FGameplayTag& InSlot4);
 	void ServerGrantDefaultRifleAmmo_30_90();
+
+	// =========================================================================
+	// [MOD][STEP1] Pickup/Grant API (Server only)
+	// - 파밍 성공 시, 해당 슬롯 WeaponId 세팅 + WeaponData 기반 탄약 초기화까지 SSOT에서 확정한다.
+	// - Pawn/HUD는 RepNotify -> Delegate로 자동 갱신된다.
+	// =========================================================================
+	void ServerGrantWeaponToSlot(int32 SlotIndex, const FGameplayTag& WeaponId, bool bInitializeAmmoIfEmpty = true); // ✅ [MOD]
 
 	// =========================================================================
 	// Delegates (RepNotify -> Delegate)
@@ -156,9 +190,14 @@ private:
 	bool IsValidSlotIndex(int32 SlotIndex) const;
 	FGameplayTag GetSlotWeaponIdInternal(int32 SlotIndex) const;
 
-	void Server_EnsureAmmoInitializedForSlot(int32 SlotIndex, const FGameplayTag& WeaponId);
+	// [MOD] 실제 WeaponData 기준으로 초기 탄약을 세팅한다.
+	void Server_EnsureAmmoInitializedForSlot(int32 SlotIndex, const FGameplayTag& WeaponId); // ✅ [MOD]
+
 	void GetSlotAmmo_Internal(int32 SlotIndex, int32& OutMag, int32& OutReserve) const;
 	void SetSlotAmmo_Internal(int32 SlotIndex, int32 NewMag, int32 NewReserve);
+
+	// [MOD] Slot WeaponId를 서버에서 세팅하고, 즉시 RepNotify/Delegate를 갱신한다.
+	void Server_SetSlotWeaponId_Internal(int32 SlotIndex, const FGameplayTag& WeaponId); // ✅ [MOD]
 
 private:
 	// =========================================================================
@@ -173,14 +212,14 @@ private:
 	bool Server_IsFireCooldownReady(const UMosesWeaponData* WeaponData) const;
 	void Server_UpdateFireCooldownStamp();
 
-	// [DAY7][MOD] 스프레드 적용 후 히트스캔 수행
+	// 스프레드 적용 후 히트스캔 수행
 	void Server_PerformFireAndApplyDamage(const UMosesWeaponData* WeaponData);
 
-	// [DAY7][MOD] 스프레드 계산/적용
+	// 스프레드 계산/적용
 	float Server_CalcSpreadFactor01(const UMosesWeaponData* WeaponData, const APawn* OwnerPawn) const;
 	FVector Server_ApplySpreadToDirection(const FVector& AimDir, const UMosesWeaponData* WeaponData, float SpreadFactor01, float& OutHalfAngleDeg) const;
 
-	// [DAY9][MOD] Projectile 스폰(유탄)
+	// Projectile 스폰(유탄)
 	void Server_SpawnGrenadeProjectile(const UMosesWeaponData* WeaponData, const FVector& SpawnLoc, const FVector& FireDir, AController* InstigatorController, APawn* OwnerPawn);
 
 	// GAS(SetByCaller Data.Damage) 우선 적용 + ASC 없으면 ApplyDamage fallback
@@ -295,7 +334,7 @@ private:
 
 private:
 	// =========================================================================
-	// [DAY9] Projectile class
+	// Projectile class
 	// =========================================================================
 	UPROPERTY(EditDefaultsOnly, Category = "Moses|Grenade")
 	TSubclassOf<AMosesGrenadeProjectile> GrenadeProjectileClass;

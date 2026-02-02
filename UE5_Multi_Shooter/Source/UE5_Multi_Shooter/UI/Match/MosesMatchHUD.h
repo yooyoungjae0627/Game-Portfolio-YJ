@@ -1,8 +1,26 @@
-﻿#pragma once
+﻿// ============================================================================
+// UE5_Multi_Shooter/UI/Match/MosesMatchHUD.h  (FULL - UPDATED)  [STEP3]
+// ============================================================================
+//
+// [STEP3 목표]
+// - HUD는 "현재 장착(CurrentSlot) 무기 탄약"만 표시한다.
+// - 스왑(1~4) 승인으로 CurrentSlot이 바뀌면, HUD가 즉시 그 무기의 탄약으로 전환된다.
+// - Tick/Binding 금지: RepNotify -> Delegate 기반만 사용한다.
+//
+// [핵심 변경점]
+// - 기존 HUD는 PlayerState의 OnAmmoChanged에 의존했는데,
+//   현재 코드베이스에서는 CombatComponent(SSOT)가 OnAmmoChanged를 가장 정확하게/즉시 발행한다.
+// - 따라서 HUD가 PlayerState를 바인딩한 뒤, PlayerState 소유 CombatComponent의 Delegate에도 바인딩한다.
+//   -> CurrentSlot 변화(CombatComponent OnRep_CurrentSlot)에서 AmmoChanged가 즉시 Broadcast되므로
+//      HUD는 "스왑 즉시 탄약 전환"을 보장한다.
+//
+// ============================================================================
+
+#pragma once
 
 #include "CoreMinimal.h"
 #include "Blueprint/UserWidget.h"
-
+#include "GameplayTagContainer.h"  
 #include "UE5_Multi_Shooter/GameMode/GameState/MosesMatchPhase.h"
 #include "UE5_Multi_Shooter/GameMode/GameState/MosesMatchGameState.h"
 
@@ -17,6 +35,8 @@ class AMosesMatchGameState;
 class UMosesMatchAnnouncementWidget;
 class UMosesCrosshairWidget;
 class UMosesScopeWidget;
+
+class UMosesCombatComponent;
 
 UCLASS(Abstract)
 class UE5_MULTI_SHOOTER_API UMosesMatchHUD : public UUserWidget
@@ -44,6 +64,11 @@ private:
 	void BindToPlayerState();
 	void BindToGameState_Match();
 
+	// [STEP3][MOD] CombatComponent 바인딩 (Ammo/Equip 이벤트)
+	void BindToCombatComponent_FromPlayerState();     // ✅ [MOD]
+	void UnbindCombatComponent();                      // ✅ [MOD]
+	bool IsCombatComponentBound() const;               // ✅ [MOD]
+
 	// [FIX] 바인딩이 늦게 되는(SeamlessTravel/PIE 타이밍) 케이스를 위한 재시도
 	void StartBindRetry();
 	void StopBindRetry();
@@ -65,8 +90,15 @@ private:
 	void HandleShieldChanged(float Current, float Max);
 	void HandleScoreChanged(int32 NewScore);
 	void HandleDeathsChanged(int32 NewDeaths);
-	void HandleAmmoChanged(int32 Mag, int32 Reserve);
+	void HandleAmmoChanged_FromPS(int32 Mag, int32 Reserve);      // ✅ [MOD] 이름 명확화
 	void HandleGrenadeChanged(int32 Grenade);
+
+	// --------------------------------------------------------------------
+	// [STEP3][MOD] CombatComponent Delegate Handlers
+	// - CurrentSlot 변경 / Ammo 변경이 가장 즉시/정확하게 들어오는 경로
+	// --------------------------------------------------------------------
+	void HandleAmmoChanged_FromCombat(int32 Mag, int32 Reserve);  // ✅ [MOD]
+	void HandleEquippedChanged_FromCombat(int32 SlotIndex, FGameplayTag WeaponId); // ✅ [MOD]
 
 	// --------------------------------------------------------------------
 	// MatchGameState Delegate Handlers
@@ -130,7 +162,7 @@ private:
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UTextBlock> GrenadeAmount = nullptr;
 
-	// [중요] PhaseText (BP 위젯 이름이 "PhaseText" 여야 자동 바인딩)
+	// PhaseText
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UTextBlock> PhaseText = nullptr;
 
@@ -142,17 +174,11 @@ private:
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UMosesMatchAnnouncementWidget> AnnouncementWidget = nullptr;
 
-	// --------------------------------------------------------------------
-	// [DAY7] Crosshair widget
-	// - WBP에서 이름을 "CrosshairWidget"으로 맞추면 자동 바인딩된다.
-	// --------------------------------------------------------------------
+	// Crosshair widget
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UMosesCrosshairWidget> CrosshairWidget = nullptr;
 
-	// --------------------------------------------------------------------
-	// [DAY8] Scope widget (Overlay)
-	// - WBP에서 이름을 "ScopeWidget"으로 맞추면 자동 바인딩된다.
-	// --------------------------------------------------------------------
+	// Scope widget (Overlay)
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UMosesScopeWidget> ScopeWidget = nullptr;
 
@@ -162,6 +188,9 @@ private:
 	// =====================================================================
 	TWeakObjectPtr<AMosesPlayerState> CachedPlayerState;
 	TWeakObjectPtr<AMosesMatchGameState> CachedMatchGameState;
+
+	// [STEP3][MOD] CombatComponent 캐시
+	TWeakObjectPtr<UMosesCombatComponent> CachedCombatComponent; // ✅ [MOD]
 
 private:
 	// =====================================================================

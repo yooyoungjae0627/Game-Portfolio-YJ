@@ -1,5 +1,14 @@
 ﻿// ============================================================================
-// MosesPickupWeapon.cpp (FULL)  [MOD + Billboard]
+// UE5_Multi_Shooter/Pickup/MosesPickupWeapon.cpp  (FULL - UPDATED)  [STEP4]
+// ============================================================================
+//
+// [STEP4 핵심 변경점]
+// - ServerTryPickup() 성공 시:
+//   - SlotOwnershipComponent::ServerAcquireSlot(...) 기존 유지
+//   - + CombatComponent::ServerGrantWeaponToSlot(SlotIndex, WeaponId, true) 추가  ✅
+//
+// 이로써 "파밍 -> 등 소켓 표시 -> 스왑 -> HUD 탄약 전환 -> 해당 무기만 사격" 흐름이 닫힌다.
+//
 // ============================================================================
 
 #include "UE5_Multi_Shooter/Pickup/MosesPickupWeapon.h"
@@ -21,6 +30,9 @@
 #include "UE5_Multi_Shooter/Player/MosesPlayerState.h"
 #include "UE5_Multi_Shooter/Player/MosesInteractionComponent.h"
 #include "UE5_Multi_Shooter/UI/Match/MosesPickupPromptWidget.h"
+
+// ✅ [STEP4] Combat SSOT 갱신을 위해 포함
+#include "UE5_Multi_Shooter/Combat/MosesCombatComponent.h"
 
 AMosesPickupWeapon::AMosesPickupWeapon()
 {
@@ -117,9 +129,26 @@ bool AMosesPickupWeapon::ServerTryPickup(AMosesPlayerState* RequesterPS, FText& 
 		return false;
 	}
 
+	// ✅ [STEP4] CombatComponent(SSOT)도 반드시 있어야 한다.
+	UMosesCombatComponent* Combat = RequesterPS ? RequesterPS->GetCombatComponent() : nullptr;
+	if (!Combat)
+	{
+		UE_LOG(LogMosesPickup, Error, TEXT("[PICKUP][SV] FAIL MissingCombatComponent Actor=%s Player=%s"),
+			*GetNameSafe(this), *GetNameSafe(RequesterPS));
+		return false;
+	}
+
+	// -----------------------------------------------------------------------------
+	// 원자성 판정: OK 1 / FAIL 1
+	// -----------------------------------------------------------------------------
 	bConsumed = true;
 
+	// 1) 슬롯 소유 기록 (로비/기타 UI 확장용으로 유지)
 	Slots->ServerAcquireSlot(PickupData->SlotIndex, PickupData->ItemId);
+
+	// 2) ✅ [STEP4 핵심] Combat SSOT 갱신: Slot WeaponId 세팅 + Ammo 초기화
+	//    - Ammo 초기화는 STEP1의 WeaponData(MagSize/MaxReserve) 기반으로 자동 세팅된다.
+	Combat->ServerGrantWeaponToSlot(PickupData->SlotIndex, PickupData->ItemId, /*bInitializeAmmoIfEmpty*/ true);
 
 	const FText NameText = !PickupData->DisplayName.IsEmpty()
 		? PickupData->DisplayName
@@ -127,7 +156,7 @@ bool AMosesPickupWeapon::ServerTryPickup(AMosesPlayerState* RequesterPS, FText& 
 
 	OutAnnounceText = FText::Format(FText::FromString(TEXT("{0} 획득")), NameText);
 
-	UE_LOG(LogMosesPickup, Log, TEXT("[PICKUP][SV] OK Player=%s Slot=%d Item=%s"),
+	UE_LOG(LogMosesPickup, Log, TEXT("[PICKUP][SV][STEP4] OK Player=%s Slot=%d Item=%s (SSOT updated)"),
 		*GetNameSafe(RequesterPS), PickupData->SlotIndex, *PickupData->ItemId.ToString());
 
 	Destroy();
@@ -244,7 +273,7 @@ UMosesInteractionComponent* AMosesPickupWeapon::GetInteractionComponentFromPawn(
 }
 
 // ============================================================================
-// [MOD] Billboard (Local only)
+// Billboard (Local only)
 // ============================================================================
 
 void AMosesPickupWeapon::StartPromptBillboard_Local()
@@ -320,7 +349,7 @@ void AMosesPickupWeapon::ApplyBillboardRotation_Local()
 
 	FRotator LookRot = ToCam.Rotation();
 
-	// ✅ UI는 눕지 않게 Yaw만 권장
+	// UI는 눕지 않게 Yaw만
 	LookRot.Pitch = 0.f;
 	LookRot.Roll = 0.f;
 

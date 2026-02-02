@@ -1,4 +1,25 @@
-﻿#pragma once
+﻿// ============================================================================
+// UE5_Multi_Shooter/Character/PlayerCharacter.h  (FULL - UPDATED)  [STEP2]
+// ============================================================================
+//
+// [STEP2 목표]
+// - "등 소켓 빈칸 없이 채우기" 규칙을 Pawn 코스메틱에서 완성한다.
+//   - HandSocket  : CurrentSlot (서버 승인 결과)
+//   - Back_1~Back_3: "무기 있는 슬롯"만 모아서 빈칸 없이 채움
+//     예) Slot3만 있음 -> Back_1 = Slot3
+//         Slot2,3 있음 -> Back_1 = Slot2, Back_2 = Slot3
+//
+// - Swap Montage AnimNotify 타이밍에서도 동일 규칙이 유지되어야 한다.
+//   (Detach: FromSlot을 최종 상태 기준 Back_n으로, Attach: ToSlot을 Hand로)
+//
+// 정책 유지:
+// - Tick 금지, UMG Binding 금지
+// - SSOT = PlayerState(CombatComponent)
+// - Pawn = Cosmetic Only (Attach/Montage/VFX/SFX)
+//
+// ============================================================================
+
+#pragma once
 
 #include "CoreMinimal.h"
 #include "GameplayTagContainer.h"
@@ -16,23 +37,6 @@ class UMosesInteractionComponent;
 class USkeletalMeshComponent;
 class UAnimMontage;
 
-/**
- * APlayerCharacter
- *
- * [역할]
- * - Pawn(Body)은 "표시/입력"만 담당한다.
- * - SSOT는 PlayerState(CombatComponent)이며, Pawn은 RepNotify->Delegate 이벤트를 받아 코스메틱을 재현한다.
- *
- * [DAY6 목표]
- * - 무기 4개(슬롯1~4)가 항상 보인다:
- *   - 손(Hand) 1개 + 등(Back) 3개
- * - Swap은 서버 승인 결과(CombatComponent SwapContext RepNotify)로만 시작한다.
- * - Swap 몽타주 AnimNotify 타이밍에서 Hand/Back Attach를 교체한다.
- *
- * [금지]
- * - Tick 기반 폴링/갱신 금지
- * - UMG Binding 금지
- */
 UCLASS()
 class UE5_MULTI_SHOOTER_API APlayerCharacter : public AMosesCharacter
 {
@@ -71,7 +75,7 @@ public:
 	void Input_FireReleased();
 
 	// =========================================================================
-	// [DAY6] AnimNotify entrypoints (Swap montage)
+	// AnimNotify entrypoints (Swap montage)
 	// =========================================================================
 	void HandleSwapDetachNotify();
 	void HandleSwapAttachNotify();
@@ -128,24 +132,47 @@ private:
 	void HandleDeadChanged(bool bNewDead);
 	void HandleReloadingChanged(bool bReloading);
 
-	// [DAY6] 서버 승인 Swap 이벤트(From/To/Serial)
+	// 서버 승인 Swap 이벤트(From/To/Serial)
 	void HandleSwapStarted(int32 FromSlot, int32 ToSlot, int32 Serial);
 
 	UMosesCombatComponent* GetCombatComponent_Checked() const;
 
 private:
 	// =========================================================================
-	// Weapon visuals (DAY6: Hand + Back1/2/3)
+	// Weapon visuals (Hand + Back1/2/3)
 	// =========================================================================
 	void RefreshAllWeaponMeshes_FromSSOT();
 	void RefreshWeaponMesh_ForSlot(int32 SlotIndex, FGameplayTag WeaponId, USkeletalMeshComponent* TargetMeshComp);
 
+	/**
+	 * ApplyAttachmentPlan_Immediate
+	 * - SSOT(CurrentSlot + 슬롯별 WeaponId)를 기준으로 손/등 소켓 Attach를 즉시 강제한다.
+	 *
+	 * [STEP2 규칙]
+	 * - EquippedSlot -> Hand
+	 * - Back_1~3 -> "무기 있는 슬롯"만 모아서 빈칸 없이 채움
+	 */
 	void ApplyAttachmentPlan_Immediate(int32 EquippedSlot);
+
 	FName GetHandSocketName() const;
-	FName GetBackSocketNameForSlot(int32 EquippedSlot, int32 SlotIndex) const;
+
+	/**
+	 * GetBackSocketNameForSlot
+	 * - EquippedSlot(Hand)을 제외한 슬롯 중 "무기 있는 슬롯"만 모아
+	 *   Back_1~3에 빈칸 없이 배치하는 소켓을 반환한다.
+	 *
+	 * 예)
+	 * - Equipped=1, Have={3}           -> Slot3 -> Back_1
+	 * - Equipped=1, Have={2,3}         -> Slot2 -> Back_1, Slot3 -> Back_2
+	 * - Equipped=2, Have={1,3,4}       -> Slot1 -> Back_1, Slot3 -> Back_2, Slot4 -> Back_3
+	 */
+	FName GetBackSocketNameForSlot(int32 EquippedSlot, int32 SlotIndex) const; // ✅ [MOD][STEP2]
 
 	USkeletalMeshComponent* GetMeshCompForSlot(int32 SlotIndex) const;
 	void CacheSlotMeshMapping();
+
+	/** [STEP2] Equipped 제외 "무기 있는 슬롯" 리스트를 만든다. (오름차순 정렬) */
+	void BuildBackSlotList_UsingSSOT(int32 EquippedSlot, TArray<int32>& OutBackSlots) const; // ✅ [MOD][STEP2]
 
 private:
 	// =========================================================================
@@ -186,9 +213,7 @@ private:
 	TObjectPtr<UMosesInteractionComponent> InteractionComponent = nullptr;
 
 	// ---------------------------------------------------------------------
-	// [DAY6] Weapon Meshes (Cosmetic only)
-	// - 서버 권위 상태(SSOT)에 따라 보여주기만 한다.
-	// - Replicate 하지 않는다.
+	// Weapon Meshes (Cosmetic only)
 	// ---------------------------------------------------------------------
 	UPROPERTY(VisibleAnywhere, Category = "Moses|Weapon")
 	TObjectPtr<USkeletalMeshComponent> WeaponMesh_Hand = nullptr;
@@ -213,7 +238,7 @@ private:
 	float SprintSpeed = 800.0f;
 
 	// ---------------------------------------------------------------------
-	// [DAY6] Socket names (Skeleton sockets must exist)
+	// Socket names (Skeleton sockets must exist)
 	// ---------------------------------------------------------------------
 	UPROPERTY(EditDefaultsOnly, Category = "Moses|Weapon|Socket")
 	FName WeaponSocket_Hand = TEXT("WeaponSocket_Hand");
@@ -243,11 +268,6 @@ private:
 	UPROPERTY(EditDefaultsOnly, Category = "Moses|Anim")
 	TObjectPtr<UAnimMontage> SprintMontage = nullptr;
 
-	// ---------------------------------------------------------------------
-	// [DAY6] Swap / Reload montages (Cosmetic only)
-	// - Swap은 서버 승인 SwapStarted 이벤트로만 재생
-	// - Reload는 서버 승인(=bIsReloading replicated true)에서만 재생
-	// ---------------------------------------------------------------------
 	UPROPERTY(EditDefaultsOnly, Category = "Moses|Anim|Weapon")
 	TObjectPtr<UAnimMontage> SwapMontage = nullptr;
 
@@ -291,7 +311,7 @@ private:
 
 private:
 	// =========================================================================
-	// [DAY6] Swap runtime state (Cosmetic only)
+	// Swap runtime state (Cosmetic only)
 	// =========================================================================
 	UPROPERTY(Transient)
 	bool bSwapInProgress = false;

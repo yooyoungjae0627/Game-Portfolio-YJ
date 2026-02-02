@@ -1,4 +1,15 @@
-﻿#include "UE5_Multi_Shooter/Character/PlayerCharacter.h"
+﻿// ============================================================================
+// UE5_Multi_Shooter/Character/PlayerCharacter.cpp  (FULL - UPDATED)  [STEP2]
+// ============================================================================
+//
+// [STEP2 핵심 변경점]
+// - GetBackSocketNameForSlot()가 "무기 있는 슬롯만" 모아서 Back_1~3을 빈칸 없이 채우도록 수정.
+// - ApplyAttachmentPlan_Immediate()가 동일 규칙을 사용하여 Attach 강제.
+// - Swap AnimNotify(Detach/Attach)도 동일 규칙으로 FromSlot을 최종 Back_n에 보내도록 보강.
+//
+// ============================================================================
+
+#include "UE5_Multi_Shooter/Character/PlayerCharacter.h"
 
 #include "UE5_Multi_Shooter/Character/Components/MosesHeroComponent.h"
 #include "UE5_Multi_Shooter/Combat/MosesCombatComponent.h"
@@ -89,9 +100,6 @@ APlayerCharacter::APlayerCharacter()
 
 	InteractionComponent = CreateDefaultSubobject<UMosesInteractionComponent>(TEXT("InteractionComponent"));
 
-	// ---------------------------------------------------------------------
-	// [DAY6] Weapon mesh components (Hand + Back1/2/3)
-	// ---------------------------------------------------------------------
 	WeaponMesh_Hand = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("WeaponMesh_Hand"));
 	WeaponMesh_Hand->SetupAttachment(GetMesh());
 	Moses_ConfigWeaponMeshComp(WeaponMesh_Hand);
@@ -116,7 +124,6 @@ void APlayerCharacter::PostInitializeComponents()
 	Super::PostInitializeComponents();
 
 	// 초기 Attach는 "일단" 소켓 존재 여부와 무관하게 실행한다.
-	// 실제 소켓이 없으면 에디터에서 바로 확인 가능(로그로도 확인)
 	if (GetMesh())
 	{
 		if (WeaponMesh_Hand)
@@ -155,7 +162,6 @@ void APlayerCharacter::BeginPlay()
 
 	BindCombatComponent();
 
-	// LateJoin/리스폰/레벨 이동에서도 초기 상태를 바로 적용할 수 있도록 한 번 갱신
 	RefreshAllWeaponMeshes_FromSSOT();
 	if (CachedCombatComponent)
 	{
@@ -230,7 +236,6 @@ void APlayerCharacter::OnRep_PlayerState()
 	Super::OnRep_PlayerState();
 	BindCombatComponent();
 
-	// PlayerState가 붙는 순간이 "SSOT 접근 가능" 시점이므로 초기 시각화를 보장한다.
 	RefreshAllWeaponMeshes_FromSSOT();
 	if (CachedCombatComponent)
 	{
@@ -642,14 +647,12 @@ void APlayerCharacter::BindCombatComponent()
 	CachedCombatComponent->OnDeadChanged.AddUObject(this, &APlayerCharacter::HandleDeadChanged);
 	CachedCombatComponent->OnReloadingChanged.AddUObject(this, &APlayerCharacter::HandleReloadingChanged);
 
-	// [DAY6] 서버 승인 Swap 컨텍스트 이벤트
 	CachedCombatComponent->OnSwapStarted.AddUObject(this, &APlayerCharacter::HandleSwapStarted);
 
 	UE_LOG(LogMosesWeapon, Log, TEXT("[WEAPON][Bind] CombatComponent Bound Pawn=%s PS=%s"),
 		*GetNameSafe(this),
 		*GetNameSafe(GetPlayerState()));
 
-	// 초기 상태를 즉시 적용
 	RefreshAllWeaponMeshes_FromSSOT();
 	ApplyAttachmentPlan_Immediate(CachedCombatComponent->GetCurrentSlot());
 
@@ -689,11 +692,9 @@ void APlayerCharacter::HandleEquippedChanged(int32 SlotIndex, FGameplayTag Weapo
 		*WeaponId.ToString(),
 		*GetNameSafe(this));
 
-	// 슬롯/무기 구성은 SSOT를 기준으로 항상 다시 그린다.
 	RefreshAllWeaponMeshes_FromSSOT();
 
-	// 스왑 몽타주 중에는 Notify가 Attach 교체를 담당하므로,
-	// 중간에 계획을 덮어쓰지 않도록 "스왑 중이 아닐 때만" 즉시 적용한다.
+	// 스왑 몽타주 중에는 Notify가 Attach 교체를 담당하므로 중간 덮어쓰기 금지.
 	if (!bSwapInProgress && CachedCombatComponent)
 	{
 		ApplyAttachmentPlan_Immediate(CachedCombatComponent->GetCurrentSlot());
@@ -721,7 +722,6 @@ void APlayerCharacter::HandleDeadChanged(bool bNewDead)
 
 void APlayerCharacter::HandleReloadingChanged(bool bReloading)
 {
-	// 서버 승인 결과(=bIsReloading replicated true)에서만 코스메틱 재생
 	if (!bReloading)
 	{
 		return;
@@ -745,22 +745,19 @@ void APlayerCharacter::HandleReloadingChanged(bool bReloading)
 
 void APlayerCharacter::HandleSwapStarted(int32 FromSlot, int32 ToSlot, int32 Serial)
 {
-	// 서버 승인 결과로만 들어오는 이벤트다.
 	BeginSwapCosmetic_Local(FromSlot, ToSlot, Serial);
 }
 
 // ============================================================================
-// Weapon visuals (DAY6: Hand + Back1/2/3)
+// Weapon visuals
 // ============================================================================
 
 void APlayerCharacter::CacheSlotMeshMapping()
 {
-	// SlotIndex -> "대표 컴포넌트"는 고정한다.
-	// 실제 Attach 위치(Hand/Back)는 이벤트 시점에 바뀐다.
-	SlotMeshCache[1] = WeaponMesh_Hand;   // Slot1의 "대표"는 HandComp (스왑 중에는 Attach만 이동)
-	SlotMeshCache[2] = WeaponMesh_Back1;  // Slot2 대표
-	SlotMeshCache[3] = WeaponMesh_Back2;  // Slot3 대표
-	SlotMeshCache[4] = WeaponMesh_Back3;  // Slot4 대표
+	SlotMeshCache[1] = WeaponMesh_Hand;
+	SlotMeshCache[2] = WeaponMesh_Back1;
+	SlotMeshCache[3] = WeaponMesh_Back2;
+	SlotMeshCache[4] = WeaponMesh_Back3;
 
 	bSlotMeshCacheBuilt = true;
 
@@ -787,27 +784,53 @@ FName APlayerCharacter::GetHandSocketName() const
 	return WeaponSocket_Hand;
 }
 
-FName APlayerCharacter::GetBackSocketNameForSlot(int32 EquippedSlot, int32 SlotIndex) const
+void APlayerCharacter::BuildBackSlotList_UsingSSOT(int32 EquippedSlot, TArray<int32>& OutBackSlots) const
 {
-	// EquippedSlot은 Hand로 가므로, SlotIndex는 Back 중 하나로 매핑되어야 한다.
-	// 정책: Equipped 제외 슬롯을 오름차순으로 정렬하여 Back_1/2/3에 순서대로 배치한다.
-	TArray<int32> Others;
-	Others.Reserve(3);
+	OutBackSlots.Reset();
 
-	for (int32 S = 1; S <= 4; ++S)
+	EquippedSlot = FMath::Clamp(EquippedSlot, 1, 4);
+
+	// [STEP2] "무기 있는 슬롯"만 모아서 Back_1~3을 빈칸 없이 채운다.
+	if (!CachedCombatComponent)
 	{
-		if (S != EquippedSlot)
+		return;
+	}
+
+	for (int32 Slot = 1; Slot <= 4; ++Slot)
+	{
+		if (Slot == EquippedSlot)
 		{
-			Others.Add(S);
+			continue;
+		}
+
+		const FGameplayTag WeaponId = CachedCombatComponent->GetWeaponIdForSlot(Slot);
+		if (WeaponId.IsValid())
+		{
+			OutBackSlots.Add(Slot);
 		}
 	}
 
-	Others.Sort();
+	OutBackSlots.Sort();
+}
 
-	int32 BackIndex = 0;
-	for (int32 i = 0; i < Others.Num(); ++i)
+FName APlayerCharacter::GetBackSocketNameForSlot(int32 EquippedSlot, int32 SlotIndex) const
+{
+	EquippedSlot = FMath::Clamp(EquippedSlot, 1, 4);
+	SlotIndex = FMath::Clamp(SlotIndex, 1, 4);
+
+	// Hand는 여기서 다루지 않는다.
+	if (SlotIndex == EquippedSlot)
 	{
-		if (Others[i] == SlotIndex)
+		return WeaponSocket_Back_1;
+	}
+
+	TArray<int32> BackSlots;
+	BuildBackSlotList_UsingSSOT(EquippedSlot, BackSlots);
+
+	int32 BackIndex = INDEX_NONE;
+	for (int32 i = 0; i < BackSlots.Num(); ++i)
+	{
+		if (BackSlots[i] == SlotIndex)
 		{
 			BackIndex = i; // 0..2
 			break;
@@ -819,10 +842,10 @@ FName APlayerCharacter::GetBackSocketNameForSlot(int32 EquippedSlot, int32 SlotI
 	case 0: return WeaponSocket_Back_1;
 	case 1: return WeaponSocket_Back_2;
 	case 2: return WeaponSocket_Back_3;
-	default: break;
+	default:
+		// 무기 없는 슬롯(또는 데이터 불일치)은 안전한 소켓으로 폴백.
+		return WeaponSocket_Back_3;
 	}
-
-	return WeaponSocket_Back_1;
 }
 
 void APlayerCharacter::RefreshAllWeaponMeshes_FromSSOT()
@@ -832,7 +855,6 @@ void APlayerCharacter::RefreshAllWeaponMeshes_FromSSOT()
 		return;
 	}
 
-	// SlotMeshCache가 아직 안 잡혔다면 보장
 	if (!bSlotMeshCacheBuilt)
 	{
 		CacheSlotMeshMapping();
@@ -853,7 +875,6 @@ void APlayerCharacter::RefreshWeaponMesh_ForSlot(int32 SlotIndex, FGameplayTag W
 		return;
 	}
 
-	// 무기가 없는 슬롯은 "안 보이게" 처리한다(파밍 전 None 슬롯)
 	if (!WeaponId.IsValid())
 	{
 		TargetMeshComp->SetSkeletalMesh(nullptr);
@@ -907,19 +928,17 @@ void APlayerCharacter::RefreshWeaponMesh_ForSlot(int32 SlotIndex, FGameplayTag W
 
 void APlayerCharacter::ApplyAttachmentPlan_Immediate(int32 EquippedSlot)
 {
-	if (!GetMesh())
-	{
-		return;
-	}
-
-	if (!CachedCombatComponent)
+	if (!GetMesh() || !CachedCombatComponent)
 	{
 		return;
 	}
 
 	EquippedSlot = FMath::Clamp(EquippedSlot, 1, 4);
 
-	// EquippedSlot -> Hand, Others -> Back sockets
+	// [STEP2] Back list는 "무기 있는 슬롯만"으로 압축된다.
+	TArray<int32> BackSlots;
+	BuildBackSlotList_UsingSSOT(EquippedSlot, BackSlots);
+
 	for (int32 Slot = 1; Slot <= 4; ++Slot)
 	{
 		USkeletalMeshComponent* Comp = GetMeshCompForSlot(Slot);
@@ -928,19 +947,37 @@ void APlayerCharacter::ApplyAttachmentPlan_Immediate(int32 EquippedSlot)
 			continue;
 		}
 
-		// 무기 없는 슬롯이면 attach는 의미 없지만, 상태 일관성을 위해 붙여도 무방
-		const FName SocketName = (Slot == EquippedSlot) ? GetHandSocketName() : GetBackSocketNameForSlot(EquippedSlot, Slot);
+		const FGameplayTag WeaponId = CachedCombatComponent->GetWeaponIdForSlot(Slot);
+		const bool bHasWeapon = WeaponId.IsValid();
 
-		Comp->AttachToComponent(GetMesh(), FAttachmentTransformRules::SnapToTargetNotIncludingScale, SocketName);
+		// 손 슬롯은 무기 유무와 관계없이 "정답 소켓"에 붙인다.
+		if (Slot == EquippedSlot)
+		{
+			Comp->AttachToComponent(GetMesh(), FAttachmentTransformRules::SnapToTargetNotIncludingScale, GetHandSocketName());
+			continue;
+		}
+
+		// 등 슬롯은 "무기 있는 슬롯"만 빈칸 없이 배치한다.
+		if (bHasWeapon)
+		{
+			const FName BackSocket = GetBackSocketNameForSlot(EquippedSlot, Slot);
+			Comp->AttachToComponent(GetMesh(), FAttachmentTransformRules::SnapToTargetNotIncludingScale, BackSocket);
+		}
+		else
+		{
+			// 무기 없는 슬롯은 숨김 상태이므로, 안전한 소켓으로 폴백 (시각 영향 없음)
+			Comp->AttachToComponent(GetMesh(), FAttachmentTransformRules::SnapToTargetNotIncludingScale, WeaponSocket_Back_3);
+		}
 	}
 
-	UE_LOG(LogMosesWeapon, Log, TEXT("[WEAPON][COS] ApplyAttachmentPlan EquippedSlot=%d Pawn=%s"),
+	UE_LOG(LogMosesWeapon, Log, TEXT("[WEAPON][COS][STEP2] ApplyAttachmentPlan EquippedSlot=%d BackSlots=%d Pawn=%s"),
 		EquippedSlot,
+		BackSlots.Num(),
 		*GetNameSafe(this));
 }
 
 // ============================================================================
-// [DAY6] Swap runtime (Cosmetic only)
+// Swap runtime (Cosmetic only)
 // ============================================================================
 
 void APlayerCharacter::BeginSwapCosmetic_Local(int32 FromSlot, int32 ToSlot, int32 Serial)
@@ -953,13 +990,11 @@ void APlayerCharacter::BeginSwapCosmetic_Local(int32 FromSlot, int32 ToSlot, int
 	FromSlot = FMath::Clamp(FromSlot, 1, 4);
 	ToSlot = FMath::Clamp(ToSlot, 1, 4);
 
-	// 방어: 같은 슬롯이면 스왑 연출 필요 없음
 	if (FromSlot == ToSlot)
 	{
 		return;
 	}
 
-	// 이전 스왑이 남아있으면 강제 종료(예: 짧은 입력 연속)
 	if (bSwapInProgress)
 	{
 		EndSwapCosmetic_Local(TEXT("ForceEnd(Overlapped)"));
@@ -976,14 +1011,12 @@ void APlayerCharacter::BeginSwapCosmetic_Local(int32 FromSlot, int32 ToSlot, int
 	UE_LOG(LogMosesWeapon, Warning, TEXT("[SWAP][COS] BeginSwap From=%d To=%d Serial=%d Pawn=%s"),
 		FromSlot, ToSlot, Serial, *GetNameSafe(this));
 
-	// Swap 도중에도 무기 메쉬는 SSOT 기준으로 항상 최신이어야 한다.
 	RefreshAllWeaponMeshes_FromSSOT();
 
-	// 몽타주 재생(서버 승인 결과에서만 호출됨)
 	if (!SwapMontage)
 	{
 		UE_LOG(LogMosesWeapon, Warning, TEXT("[SWAP][COS] SwapMontage missing -> Fallback ApplyAttachmentPlan Pawn=%s"), *GetNameSafe(this));
-		// 몽타주가 없으면 즉시 Attach 계획만 적용하고 종료
+
 		ApplyAttachmentPlan_Immediate(ToSlot);
 		EndSwapCosmetic_Local(TEXT("NoMontageFallback"));
 		return;
@@ -994,8 +1027,6 @@ void APlayerCharacter::BeginSwapCosmetic_Local(int32 FromSlot, int32 ToSlot, int
 
 void APlayerCharacter::EndSwapCosmetic_Local(const TCHAR* Reason)
 {
-	// 스왑이 끝나면 "정답 상태"를 SSOT 기준으로 한 번 더 강제한다.
-	// Notify가 누락되거나 몽타주가 끊겨도 결과가 일치해야 한다.
 	if (CachedCombatComponent)
 	{
 		ApplyAttachmentPlan_Immediate(CachedCombatComponent->GetCurrentSlot());
@@ -1019,20 +1050,13 @@ void APlayerCharacter::HandleSwapDetachNotify()
 		return;
 	}
 
-	if (!bSwapInProgress)
-	{
-		return;
-	}
-
-	if (bSwapDetachDone)
+	if (!bSwapInProgress || bSwapDetachDone)
 	{
 		return;
 	}
 
 	bSwapDetachDone = true;
 
-	// "기존 손 무기"를 등으로 보낸다.
-	// FromSlot이 등에서 어느 위치로 가야 하는지는 "스왑 완료 후" 기준(ToSlot equipped)으로 결정한다.
 	const int32 FromSlot = PendingSwapFromSlot;
 	const int32 ToSlot = PendingSwapToSlot;
 
@@ -1042,12 +1066,14 @@ void APlayerCharacter::HandleSwapDetachNotify()
 		return;
 	}
 
+	// [STEP2] FromSlot을 "최종 상태 기준(ToSlot equipped)"으로 Back_1~3에 빈칸 없이 재배치
 	const FName BackSocket = GetBackSocketNameForSlot(ToSlot, FromSlot);
 	FromComp->AttachToComponent(GetMesh(), FAttachmentTransformRules::SnapToTargetNotIncludingScale, BackSocket);
 
-	UE_LOG(LogMosesWeapon, Warning, TEXT("[SWAP][COS][DETACH] FromSlot=%d -> Socket=%s Pawn=%s"),
+	UE_LOG(LogMosesWeapon, Warning, TEXT("[SWAP][COS][DETACH][STEP2] FromSlot=%d -> Socket=%s (Equipped=%d) Pawn=%s"),
 		FromSlot,
 		*BackSocket.ToString(),
+		ToSlot,
 		*GetNameSafe(this));
 }
 
@@ -1058,19 +1084,13 @@ void APlayerCharacter::HandleSwapAttachNotify()
 		return;
 	}
 
-	if (!bSwapInProgress)
-	{
-		return;
-	}
-
-	if (bSwapAttachDone)
+	if (!bSwapInProgress || bSwapAttachDone)
 	{
 		return;
 	}
 
 	bSwapAttachDone = true;
 
-	// "새 무기"를 손에 붙인다.
 	const int32 ToSlot = PendingSwapToSlot;
 
 	USkeletalMeshComponent* ToComp = GetMeshCompForSlot(ToSlot);
@@ -1086,7 +1106,6 @@ void APlayerCharacter::HandleSwapAttachNotify()
 		*GetHandSocketName().ToString(),
 		*GetNameSafe(this));
 
-	// Attach까지 끝났으면 "정답 상태"로 한 번 더 맞춘 후 종료
 	EndSwapCosmetic_Local(TEXT("NotifyAttachDone"));
 }
 
@@ -1147,7 +1166,6 @@ void APlayerCharacter::PlayFireAV_Local(FGameplayTag WeaponId) const
 		return;
 	}
 
-	// 현재 손에 붙은 무기가 발사 연출의 기준이다.
 	USkeletalMeshComponent* HandComp = WeaponMesh_Hand;
 	if (!HandComp || !HandComp->GetSkeletalMeshAsset())
 	{
