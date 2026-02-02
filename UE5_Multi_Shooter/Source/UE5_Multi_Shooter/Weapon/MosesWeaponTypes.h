@@ -7,16 +7,24 @@
  * EMosesWeaponType
  *
  * [역할]
- * - 무기 타입 분류(총기/근접/수류탄 등).
+ * - 무기 타입 분류(총기/근접/투척 등).
  * - WeaponData, UI, GameRule에서 분기 키로 사용한다.
+ *
+ * [주의]
+ * - 기존 값(특히 Grenade=4)은 에셋 호환을 위해 유지한다.
  */
 UENUM(BlueprintType)
 enum class EMosesWeaponType : uint8
 {
-	Rifle	UMETA(DisplayName = "Rifle"),
-	Pistol	UMETA(DisplayName = "Pistol"),
-	Melee	UMETA(DisplayName = "Melee"),
-	Grenade UMETA(DisplayName = "Grenade"),
+	Rifle			UMETA(DisplayName = "Rifle"),
+	Pistol			UMETA(DisplayName = "Pistol"),
+	Melee			UMETA(DisplayName = "Melee"),
+
+	Grenade			UMETA(DisplayName = "Grenade"),			// (투척 수류탄 의미) - 기존 유지
+
+	Shotgun			UMETA(DisplayName = "Shotgun"),			// [MOD] 추가
+	Sniper			UMETA(DisplayName = "Sniper"),			// [MOD] 추가
+	GrenadeLauncher	UMETA(DisplayName = "GrenadeLauncher"),	// [MOD] 추가 (Slot4 유탄 발사기)
 };
 
 /**
@@ -52,11 +60,10 @@ enum class EMosesWeaponSlot : uint8
 };
 
 /**
- * EMosesAmmoType  ✅ [NEW]
+ * EMosesAmmoType
  *
  * [역할]
  * - 무기별 탄약을 분리하기 위한 타입.
- * - RifleAmmo != ShotgunAmmo != SniperAmmo != GrenadeAmmo
  *
  * [주의]
  * - UENUM 기본값(0) 안전을 위해 None을 둔다.
