@@ -63,6 +63,9 @@ private:
 	void TickCaptureProgress_Server();
 	void ResetCaptureState_Server();
 
+	/** [MOD] 필요 시 서버에서만 Dormancy를 늦게 세팅한다 (초기 DormantAll 금지) */
+	void ApplyDormancyPolicy_ServerOnly();
+
 	// ---------------------------------------------------------------------
 	// Overlap callbacks
 	// ---------------------------------------------------------------------
@@ -121,6 +124,15 @@ private:
 
 	UPROPERTY(VisibleAnywhere, Category = "Flag")
 	TObjectPtr<UWidgetComponent> PromptWidgetComponent = nullptr;
+
+private:
+	/** [MOD] Dormancy를 정말 쓰고 싶다면, "초기 동기 이후"로 미룬다 */
+	UPROPERTY(EditDefaultsOnly, Category = "Net|Dormancy", meta = (AllowPrivateAccess = "true"))
+	bool bUseDormancyAfterBeginPlay = false;
+
+	/** [MOD] Dormancy를 켠다면 어느 Dormancy로 갈지 */
+	UPROPERTY(EditDefaultsOnly, Category = "Net|Dormancy", meta = (AllowPrivateAccess = "true"))
+	TEnumAsByte<ENetDormancy> DormancyAfterBeginPlay = DORM_DormantAll;
 
 private:
 	// ---------------------------------------------------------------------

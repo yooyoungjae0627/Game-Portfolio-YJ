@@ -3,9 +3,7 @@
 #include "CoreMinimal.h"
 #include "GameFramework/PlayerState.h"
 #include "AbilitySystemInterface.h"
-#include "GameplayEffectTypes.h" // FOnAttributeChangeData
-
-// ✅ [FIX] 전역 타입 FMosesAbilitySet_GrantedHandles 정의가 여기 있음
+#include "GameplayEffectTypes.h"
 #include "UE5_Multi_Shooter/GAS/MosesAbilitySet.h"
 
 #include "MosesPlayerState.generated.h"
@@ -16,6 +14,7 @@ class UMosesCombatComponent;
 class UMosesSlotOwnershipComponent;
 class UMosesAbilitySet;
 class UMosesPawnData;
+class UMosesCaptureComponent;
 
 // -----------------------------------------------------------------------------
 // Native delegates (HUD = RepNotify -> Delegate only)
@@ -221,6 +220,9 @@ private:
 
 	UPROPERTY(VisibleAnywhere)
 	TObjectPtr<UMosesSlotOwnershipComponent> SlotOwnershipComponent = nullptr;
+
+	UPROPERTY(VisibleAnywhere, Category = "Moses|Components")
+	TObjectPtr<UMosesCaptureComponent> CaptureComponent = nullptr;
 
 private:
 	// ---------------------------------------------------------------------

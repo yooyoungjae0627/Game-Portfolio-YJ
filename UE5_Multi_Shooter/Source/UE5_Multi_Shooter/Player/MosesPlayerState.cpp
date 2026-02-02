@@ -1,16 +1,16 @@
 ﻿#include "UE5_Multi_Shooter/Player/MosesPlayerState.h"
+#include "UE5_Multi_Shooter/Player/MosesSlotOwnershipComponent.h"
 
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
 #include "UE5_Multi_Shooter/System/MosesAuthorityGuards.h"
 #include "UE5_Multi_Shooter/System/MosesLobbyLocalPlayerSubsystem.h"
 
 #include "UE5_Multi_Shooter/Combat/MosesCombatComponent.h"
-#include "UE5_Multi_Shooter/Player/MosesSlotOwnershipComponent.h"
 
 #include "UE5_Multi_Shooter/GAS/Components/MosesAbilitySystemComponent.h"
 #include "UE5_Multi_Shooter/GAS/AttributeSet/MosesAttributeSet.h"
-
 #include "UE5_Multi_Shooter/GAS/MosesAbilitySet.h"
+#include "UE5_Multi_Shooter/Flag/MosesCaptureComponent.h"
 
 #include "Net/UnrealNetwork.h"
 #include "GameFramework/PlayerController.h"
@@ -23,6 +23,7 @@ AMosesPlayerState::AMosesPlayerState(const FObjectInitializer& ObjectInitializer
 	bReplicates = true;
 	SetNetUpdateFrequency(100.f);
 
+	CaptureComponent = CreateDefaultSubobject<UMosesCaptureComponent>(TEXT("MosesCaptureComponent"));
 	MosesAbilitySystemComponent = CreateDefaultSubobject<UMosesAbilitySystemComponent>(TEXT("MosesASC"));
 	MosesAbilitySystemComponent->SetIsReplicated(true);
 	MosesAbilitySystemComponent->SetReplicationMode(EGameplayEffectReplicationMode::Mixed);

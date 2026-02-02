@@ -30,33 +30,42 @@ AMosesFlagSpot::AMosesFlagSpot()
 {
 	bReplicates = true;
 	SetReplicateMovement(false);
-	NetDormancy = DORM_DormantAll;
+
+	// [MOD] 생성자에서 DormantAll 금지.
+	// 초기부터 DormantAll이면 NetGUID/초기 상태 동기 타이밍이 꼬여
+	// 상호작용 거리 판정/타겟 일치성에 악영향이 날 수 있다.
+	NetDormancy = DORM_Awake; // [MOD] 기존: DORM_DormantAll
+
+	// 빈도는 상황에 따라 조정 가능. (Spot이 정적이면 낮아도 OK)
 	SetNetUpdateFrequency(1.0f);
 
-	Root = CreateDefaultSubobject<USceneComponent>(TEXT("Root"));
-	SetRootComponent(Root);
-
-	SpotMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("SpotMesh"));
-	SpotMesh->SetupAttachment(Root);
-	SpotMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-
+	// ---- Components ----
 	CaptureZone = CreateDefaultSubobject<USphereComponent>(TEXT("CaptureZone"));
-	CaptureZone->SetupAttachment(Root);
+	SetRootComponent(CaptureZone);
+
 	CaptureZone->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
 	CaptureZone->SetCollisionResponseToAllChannels(ECR_Ignore);
 	CaptureZone->SetCollisionResponseToChannel(ECC_Pawn, ECR_Overlap);
 	CaptureZone->SetGenerateOverlapEvents(true);
 	CaptureZone->InitSphereRadius(260.f);
 
+	SpotMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("SpotMesh"));
+	SpotMesh->SetupAttachment(CaptureZone);
+	SpotMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+
 	PromptWidgetComponent = CreateDefaultSubobject<UWidgetComponent>(TEXT("PromptWidget"));
-	PromptWidgetComponent->SetupAttachment(Root);
+	PromptWidgetComponent->SetupAttachment(CaptureZone);
 	PromptWidgetComponent->SetWidgetSpace(EWidgetSpace::World);
 	PromptWidgetComponent->SetDrawAtDesiredSize(true);
 	PromptWidgetComponent->SetTwoSided(true);
 	PromptWidgetComponent->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	PromptWidgetComponent->SetVisibility(false);
 	PromptWidgetComponent->SetRelativeLocation(FVector(0.f, 0.f, 110.f));
+
+	UE_LOG(LogMosesFlag, Warning, TEXT("[FLAGSPOT][CTOR] Root=CaptureZone Radius=%.1f Rep=%d Dormancy=%d"),
+		260.f, bReplicates ? 1 : 0, (int32)NetDormancy);
 }
+
 
 void AMosesFlagSpot::BeginPlay()
 {
@@ -71,6 +80,32 @@ void AMosesFlagSpot::BeginPlay()
 	SetPromptVisible_Local(false);
 	ApplyPromptText_Local();
 	StopPromptBillboard_Local();
+
+	UE_LOG(LogMosesFlag, Warning, TEXT("[FLAGSPOT][BeginPlay] Auth=%d NetMode=%d Spot=%s Loc=%s"),
+		HasAuthority() ? 1 : 0,
+		(GetWorld() ? (int32)GetWorld()->GetNetMode() : -1),
+		*GetName(),
+		*GetActorLocation().ToString());
+
+	ApplyDormancyPolicy_ServerOnly();
+}
+
+void AMosesFlagSpot::ApplyDormancyPolicy_ServerOnly()
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	// [MOD] Dormancy를 쓰고 싶다면 "BeginPlay 이후"에 적용.
+	// (초기 동기/NetGUID 확정 이후)
+	if (bUseDormancyAfterBeginPlay)
+	{
+		SetNetDormancy(DormancyAfterBeginPlay);
+
+		UE_LOG(LogMosesFlag, Warning, TEXT("[FLAGSPOT][SV][Dormancy] Applied Dormancy=%d Spot=%s"),
+			(int32)DormancyAfterBeginPlay, *GetName());
+	}
 }
 
 void AMosesFlagSpot::SetFlagSystemEnabled(bool bEnable)
