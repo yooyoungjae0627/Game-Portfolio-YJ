@@ -44,7 +44,6 @@ void UMosesMatchAnnouncementWidget::UpdateAnnouncement(const FMosesAnnouncementS
 
 	// ---------------------------------------------------------------------
 	// 3) 영어 문자 제거 (A-Z, a-z)
-	//    필요하면 숫자/특수문자도 여기서 같이 제거 가능
 	// ---------------------------------------------------------------------
 	for (int32 i = TextStr.Len() - 1; i >= 0; --i)
 	{
@@ -56,13 +55,29 @@ void UMosesMatchAnnouncementWidget::UpdateAnnouncement(const FMosesAnnouncementS
 		}
 	}
 
+	// ---------------------------------------------------------------------
+	// 4) 앞자리가 "한글"이 될 때까지 앞부분 제거
+	//    한글 유니코드 범위: 0xAC00 ~ 0xD7A3
+	// ---------------------------------------------------------------------
+	while (TextStr.Len() > 0)
+	{
+		const TCHAR C = TextStr[0];
+		if (C >= 0xAC00 && C <= 0xD7A3)
+		{
+			break; // ✅ 앞자리가 한글 → OK
+		}
+
+		// ❌ 한글 아니면 제거
+		TextStr.RemoveAt(0);
+	}
+
 	// 앞뒤 공백 정리
 	TextStr = TextStr.TrimStartAndEnd();
 
 	AnnouncementText->SetText(FText::FromString(TextStr));
 
 	// ---------------------------------------------------------------------
-	// 4) 캡쳐 성공 판별 → 빨간색
+	// 5) 캡쳐 성공 판별 → 빨간색
 	// ---------------------------------------------------------------------
 	const bool bIsCaptureSuccess =
 		TextStr.Contains(TEXT("캡쳐 성공")) ||
@@ -78,7 +93,6 @@ void UMosesMatchAnnouncementWidget::UpdateAnnouncement(const FMosesAnnouncementS
 		AnnouncementText->SetColorAndOpacity(FSlateColor(FLinearColor::White));
 	}
 }
-
 
 void UMosesMatchAnnouncementWidget::SetActive(bool bActive)
 {
