@@ -1,4 +1,11 @@
-﻿#include "UE5_Multi_Shooter/Player/MosesPlayerState.h"
+﻿// ============================================================================
+// MosesPlayerState.cpp (FULL - UPDATED)
+// - Fix: GetScore() float -> int32 변환 안정화
+// - ServerAddScore(): SSOT 누적 + OnScoreChanged(int32) Broadcast 보장
+// - Captures/ZombieKills: RepNotify + Delegate
+// ============================================================================
+
+#include "UE5_Multi_Shooter/Player/MosesPlayerState.h"
 #include "UE5_Multi_Shooter/Player/MosesSlotOwnershipComponent.h"
 
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
@@ -10,6 +17,7 @@
 #include "UE5_Multi_Shooter/GAS/Components/MosesAbilitySystemComponent.h"
 #include "UE5_Multi_Shooter/GAS/AttributeSet/MosesAttributeSet.h"
 #include "UE5_Multi_Shooter/GAS/MosesAbilitySet.h"
+
 #include "UE5_Multi_Shooter/Flag/MosesCaptureComponent.h"
 
 #include "Net/UnrealNetwork.h"
@@ -24,6 +32,7 @@ AMosesPlayerState::AMosesPlayerState(const FObjectInitializer& ObjectInitializer
 	SetNetUpdateFrequency(100.f);
 
 	CaptureComponent = CreateDefaultSubobject<UMosesCaptureComponent>(TEXT("MosesCaptureComponent"));
+
 	MosesAbilitySystemComponent = CreateDefaultSubobject<UMosesAbilitySystemComponent>(TEXT("MosesASC"));
 	MosesAbilitySystemComponent->SetIsReplicated(true);
 	MosesAbilitySystemComponent->SetReplicationMode(EGameplayEffectReplicationMode::Mixed);
@@ -463,6 +472,37 @@ void AMosesPlayerState::ServerAddDeath()
 }
 
 // ============================================================================
+// [SCORE][SV] Score SSOT
+// ============================================================================
+
+void AMosesPlayerState::ServerAddScore(int32 Delta, const TCHAR* Reason)
+{
+	MOSES_GUARD_AUTHORITY_VOID(this, "SCORE", TEXT("Client attempted ServerAddScore"));
+
+	if (Delta == 0)
+	{
+		return;
+	}
+
+	const int32 OldScore = FMath::RoundToInt(GetScore());     // ✅ float -> int 안정화
+	const int32 NewScore = OldScore + Delta;
+
+	SetScore(static_cast<float>(NewScore));                   // APlayerState Score(float) 반영
+
+	// ✅ HUD는 이 델리게이트를 구독한다. (RepNotify만 믿지 말고 서버에서도 즉시 쏴준다.)
+	OnScoreChanged.Broadcast(NewScore);
+
+	UE_LOG(LogMosesPlayer, Warning, TEXT("[SCORE][SV] %s Old=%d -> New=%d Delta=%d PS=%s"),
+		Reason ? Reason : TEXT("None"),
+		OldScore,
+		NewScore,
+		Delta,
+		*GetNameSafe(this));
+
+	ForceNetUpdate();
+}
+
+// ============================================================================
 // [MOD] Match stats (Captures / ZombieKills) — Server Authority ONLY
 // ============================================================================
 
@@ -586,7 +626,7 @@ void AMosesPlayerState::BroadcastAmmoAndGrenade()
 
 void AMosesPlayerState::BroadcastScore()
 {
-	const int32 IntScore = FMath::RoundToInt(GetScore());
+	const int32 IntScore = FMath::RoundToInt(GetScore()); // ✅ float -> int 안정화
 	OnScoreChanged.Broadcast(IntScore);
 }
 

@@ -1,9 +1,18 @@
-﻿#pragma once
+﻿// ============================================================================
+// MosesPlayerState.h (FULL - UPDATED)
+// - SSOT = PlayerState
+// - HUD update = RepNotify -> Delegate only
+// - Captures / ZombieKills (RepNotify + Delegate)
+// - Score (ServerAddScore -> Broadcast int32 + OnRep_Score -> Broadcast)
+// ============================================================================
+
+#pragma once
 
 #include "CoreMinimal.h"
 #include "GameFramework/PlayerState.h"
 #include "AbilitySystemInterface.h"
 #include "GameplayEffectTypes.h"
+
 #include "UE5_Multi_Shooter/GAS/MosesAbilitySet.h"
 
 #include "MosesPlayerState.generated.h"
@@ -76,7 +85,7 @@ public:
 	UMosesSlotOwnershipComponent* GetSlotOwnershipComponent() const { return SlotOwnershipComponent; }
 	UMosesCombatComponent* GetCombatComponent() const { return CombatComponent; }
 
-	// ✅ [FIX][MOD] HUD에서 호출하는 게터 제공 (직접 변수 접근 금지)
+	// ✅ HUD에서 호출하는 게터 제공 (직접 변수 접근 금지)
 	int32 GetDeaths() const { return Deaths; }
 	int32 GetCaptures() const { return Captures; }
 	int32 GetZombieKills() const { return ZombieKills; }
@@ -113,6 +122,13 @@ public:
 	void ServerSetRoom(const FGuid& InRoomId, bool bInIsHost);
 	void ServerSetPlayerNickName(const FString& InNickName);
 	void ServerAddDeath();
+
+public:
+	// ---------------------------------------------------------------------
+	// [SCORE][SV] Score를 서버에서 누적한다. (SSOT)
+	// - HUD는 OnScoreChanged(int32) 델리게이트만 구독한다.
+	// ---------------------------------------------------------------------
+	void ServerAddScore(int32 Delta, const TCHAR* Reason);
 
 public:
 	// ---------------------------------------------------------------------

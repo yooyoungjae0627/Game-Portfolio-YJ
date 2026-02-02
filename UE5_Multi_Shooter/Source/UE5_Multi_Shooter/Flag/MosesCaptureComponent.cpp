@@ -49,85 +49,62 @@ void UMosesCaptureComponent::ServerSetCapturing(AMosesFlagSpot* Spot, bool bNewC
 	BroadcastCaptureState();
 }
 
-void UMosesCaptureComponent::ServerOnCaptureSucceeded(AMosesFlagSpot* Spot, float CaptureTimeSeconds)
+void UMosesCaptureComponent::ServerOnCaptureSucceeded(AMosesFlagSpot* Spot, float CaptureElapsedSeconds)
 {
 	if (!GetOwner() || !GetOwner()->HasAuthority())
 	{
 		return;
 	}
 
-	// --------------------------------------------------------------------
-	// Component 내부 통계 (기존 유지)
-	// - OnCapturesChanged(Captures, BestTime)로 위젯/피드백에서 활용 가능
-	// --------------------------------------------------------------------
-	Captures++;
-
-	// BestCaptureTimeSeconds는 "최초" 또는 "더 빠른 기록"이면 갱신
-	if (BestCaptureTimeSeconds <= 0.0f || CaptureTimeSeconds < BestCaptureTimeSeconds)
+	AMosesPlayerState* PS = Cast<AMosesPlayerState>(GetOwner());
+	if (!PS)
 	{
-		BestCaptureTimeSeconds = CaptureTimeSeconds;
+		UE_LOG(LogMosesFlag, Warning, TEXT("[CAPTURE][SV] Success FAIL (NoPS) Spot=%s"), *GetNameSafe(Spot));
+		return;
 	}
 
-	// --------------------------------------------------------------------
-	// ✅ [MOD] SSOT(PlayerState) Captures++ (HUD 숫자 갱신의 핵심)
-	// - HUD CapturesAmount는 UMosesCaptureComponent::Captures가 아니라
-	//   AMosesPlayerState::Captures(RepNotify->Delegate)를 보고 갱신한다.
-	// --------------------------------------------------------------------
-	if (AMosesPlayerState* PS = Cast<AMosesPlayerState>(GetOwner()))
-	{
-		PS->ServerAddCapture(1);
+	// ---------------------------------------------------------------------
+	// 1) SSOT: Capture Count 증가 (RepNotify -> Delegate -> HUD)
+	// ---------------------------------------------------------------------
+	PS->ServerAddCapture(1);
 
-		UE_LOG(LogMosesFlag, Log, TEXT("[CAPTURE][SV] SSOT AddCapture -> PS=%s NewPSCaptures=%d"),
-			*GetNameSafe(PS),
-			PS->GetCaptures());
-	}
-	else
-	{
-		UE_LOG(LogMosesFlag, Warning, TEXT("[CAPTURE][SV] Owner is not AMosesPlayerState. HUD CapturesAmount will NOT update. Owner=%s"),
-			*GetNameSafe(GetOwner()));
-	}
+	UE_LOG(LogMosesFlag, Warning, TEXT("[CAPTURE][SV] SSOT AddCapture -> PS=%s NewPSCaptures=%d"),
+		*GetNameSafe(PS),
+		PS->GetCaptures());
 
-	// --------------------------------------------------------------------
-	// ✅ [MOD] HUD Announcement (두 클라 동일) — GameState가 복제한다.
-	// - 4초간 "캡처 완료" 배너를 띄운다.
-	// --------------------------------------------------------------------
-	UWorld* World = GetWorld();
-	AMosesMatchGameState* GS = World ? World->GetGameState<AMosesMatchGameState>() : nullptr;
-	if (GS && GS->HasAuthority())
-	{
-		// 문구는 원하는 대로 변경 가능
-		const FText AnnText = FText::FromString(TEXT("캡처 완료!"));
-		const int32 DurationSeconds = 4;
+	// ---------------------------------------------------------------------
+	// 2) SSOT: Score 증가 (HUD ScoreAmount가 이걸로 움직인다)
+	//    - 네가 원하는 정책: "캡쳐 성공하면 ScoreAmount가 쌓인다"
+	//    - 여기서는 1점씩 누적 (원하면 값만 바꾸면 됨)
+	// ---------------------------------------------------------------------
+	const int32 AddScore = 1;
+	PS->ServerAddScore(AddScore, TEXT("CaptureSuccess"));
 
-		GS->ServerStartAnnouncementText(AnnText, DurationSeconds);
-
-		UE_LOG(LogMosesFlag, Log, TEXT("[ANN][SV] FlagCapture -> Text='Capture Complete' Dur=%d GS=%s"),
-			DurationSeconds,
-			*GetNameSafe(GS));
-	}
-	else
+	// ---------------------------------------------------------------------
+	// 3) 중앙 Announcement (HUD)
+	//    - 너가 원하면 여기 텍스트를 "캡쳐 성공"으로 고정해서 보낼 수도 있음
+	// ---------------------------------------------------------------------
+	if (AMosesMatchGameState* GS = GetWorld() ? GetWorld()->GetGameState<AMosesMatchGameState>() : nullptr)
 	{
-		UE_LOG(LogMosesFlag, Warning, TEXT("[ANN][SV] GameState not found. Announcement will NOT show. World=%s"),
-			*GetNameSafe(World));
+		const FText AnnText = FText::FromString(TEXT("캡쳐 성공"));
+		GS->ServerStartAnnouncementText(AnnText, 4);
+
+		UE_LOG(LogMosesFlag, Warning, TEXT("[ANN][SV] FlagCapture -> Text='%s' Dur=%d GS=%s"),
+			*AnnText.ToString(), 4, *GetNameSafe(GS));
 	}
 
-	// --------------------------------------------------------------------
-	// 캡처 상태 종료
-	// --------------------------------------------------------------------
-	CaptureState.bCapturing = false;
-	CaptureState.ProgressAlpha = 0.0f;
-	CaptureState.Spot = Spot;
+	UE_LOG(LogMosesFlag, Warning, TEXT("[CAPTURE][SV] Success -> AddScore=%d PS=%s Spot=%s Time=%.2f"),
+		AddScore,
+		*GetNameSafe(PS),
+		*GetNameSafe(Spot),
+		CaptureElapsedSeconds);
 
-	UE_LOG(LogMosesFlag, Log, TEXT("[CAPTURE][SV] Success PS=%s Captures=%d Best=%.2f Time=%.2f Spot=%s"),
-		*GetNameSafe(GetOwner()),
-		Captures,
-		BestCaptureTimeSeconds,
-		CaptureTimeSeconds,
-		*GetNameSafe(Spot));
-
-	BroadcastCaptures();
-	BroadcastCaptureState();
+	// ---------------------------------------------------------------------
+	// 4) 캡처 상태 종료 (HUD Progress 끄기)
+	// ---------------------------------------------------------------------
+	ServerSetCapturing(Spot, false, 0.0f, 0.0f);
 }
+
 
 void UMosesCaptureComponent::OnRep_CaptureState()
 {
