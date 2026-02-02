@@ -110,12 +110,16 @@ private:
 	// [MOD] Target type resolve
 	static EMosesInteractTargetType ResolveTargetType(AActor* TargetActor);
 
+	// [ADD] Target을 잃었거나(Overlap End) 상황이 꼬였을 때 로컬 홀드 상태 강제 해제
+	void ForceReleaseInteract_Local(AActor* ExpectedTarget, const TCHAR* ReasonTag);
+
+
 private:
 	// -------------------------------------------------------------------------
 	// Server guard
 	// -------------------------------------------------------------------------
 	UPROPERTY(EditDefaultsOnly, Category = "Interaction")
-	float MaxUseDistance = 250.0f;
+	float MaxUseDistance = 350.f;
 
 	// -------------------------------------------------------------------------
 	// [MOD] Cached target set by overlap (no timer, no trace)

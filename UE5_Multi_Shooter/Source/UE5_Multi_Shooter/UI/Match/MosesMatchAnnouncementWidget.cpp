@@ -32,28 +32,35 @@ void UMosesMatchAnnouncementWidget::UpdateAnnouncement(const FMosesAnnouncementS
 	}
 
 	// 2) Text 반영
-	if (AnnouncementText)
+	if (!AnnouncementText)
 	{
-		AnnouncementText->SetText(State.Text);
+		UE_LOG(LogMosesHUD, Warning, TEXT("[HUD][CL] AnnouncementText is NULL. Check WBP child TextBlock name == 'AnnouncementText'"));
+		return;
+	}
 
-		// [MOD] Phase 기준 색상 정책
-		// - Warmup / Result : White
-		// - Combat          : Red
-		const AMosesMatchGameState* GS = GetWorld() ? GetWorld()->GetGameState<AMosesMatchGameState>() : nullptr;
-		const EMosesMatchPhase Phase = GS ? GS->GetMatchPhase() : EMosesMatchPhase::Warmup;
+	AnnouncementText->SetText(State.Text);
 
-		if (Phase == EMosesMatchPhase::Combat)
-		{
-			AnnouncementText->SetColorAndOpacity(FSlateColor(FLinearColor::Red));
-		}
-		else
-		{
-			AnnouncementText->SetColorAndOpacity(FSlateColor(FLinearColor::White));
-		}
+	// ---------------------------------------------------------------------
+	// [MOD] 캡쳐 성공은 무조건 빨간색으로 고정
+	// - 다른 알림은 기본 White
+	// - (원하면 여기서 "캡쳐 성공"만 보이고 나머지는 숨김도 가능)
+	// ---------------------------------------------------------------------
+
+	// ✅ "캡쳐 성공" / "Capture Complete" / "깃발 캡처 성공" 등 케이스 대응
+	const FString TextStr = State.Text.ToString();
+	const bool bIsCaptureSuccess =
+		TextStr.Contains(TEXT("캡쳐 성공")) ||
+		TextStr.Contains(TEXT("Capture Complete")) ||
+		TextStr.Contains(TEXT("깃발 캡처 성공")) ||
+		TextStr.Contains(TEXT("캡처 성공"));
+
+	if (bIsCaptureSuccess)
+	{
+		AnnouncementText->SetColorAndOpacity(FSlateColor(FLinearColor::Red));
 	}
 	else
 	{
-		UE_LOG(LogMosesHUD, Warning, TEXT("[HUD][CL] AnnouncementText is NULL. Check WBP child TextBlock name == 'AnnouncementText'"));
+		AnnouncementText->SetColorAndOpacity(FSlateColor(FLinearColor::White));
 	}
 }
 

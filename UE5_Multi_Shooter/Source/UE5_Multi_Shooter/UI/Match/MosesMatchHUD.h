@@ -72,6 +72,9 @@ public:
 	 */
 	void SetScopeVisible_Local(bool bVisible);
 
+	// [ADD] 캡처 성공 UI 요청(로컬 1회)
+	void TryBroadcastCaptureSuccess_Once();
+
 protected:
 	//~UUserWidget interface
 	virtual void NativeOnInitialized() override;
@@ -335,4 +338,7 @@ private:
 
 	UPROPERTY(Transient)
 	bool bCaptureInternalCached = false;
+
+
+	bool bCaptureSuccessAnnounced_Local = false;
 };

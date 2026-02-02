@@ -164,6 +164,28 @@ void UMosesMatchHUD::SetScopeVisible_Local(bool bVisible)
 	}
 }
 
+void UMosesMatchHUD::TryBroadcastCaptureSuccess_Once()
+{
+	// 로컬 중복 방지(프레임/틱/다중 델리게이트 호출 방지)
+	if (bCaptureSuccessAnnounced_Local)
+	{
+		return;
+	}
+
+	AMosesPlayerController* MosesPC = Cast<AMosesPlayerController>(GetOwningPlayer());
+	if (!MosesPC)
+	{
+		return;
+	}
+
+	// 서버에 요청(서버가 MatchGameState -> Announcement로 RepNotify)
+	bCaptureSuccessAnnounced_Local = true;
+	MosesPC->Server_RequestCaptureSuccessAnnouncement();
+
+	UE_LOG(LogMosesHUD, Warning, TEXT("[ANN][CL] Request CaptureSuccessAnnouncement -> PC=%s"), *GetNameSafe(MosesPC));
+}
+
+
 // ============================================================================
 // Bind / Retry
 // ============================================================================
@@ -991,8 +1013,11 @@ void UMosesMatchHUD::HandleCaptureStateChanged(bool bActive, float Progress01, f
 
 	if (!bActive)
 	{
-		// 캡처 종료/취소 시 숨김
+		// 캡처 종료/취소 시 숨김 + 성공 요청 플래그 리셋
 		CaptureProgress->SetVisibility(ESlateVisibility::Collapsed);
+
+		// 다음 캡처를 위해 리셋
+		bCaptureSuccessAnnounced_Local = false;
 		return;
 	}
 
@@ -1012,7 +1037,7 @@ void UMosesMatchHUD::HandleCaptureStateChanged(bool bActive, float Progress01, f
 		Capture_TextPercent->SetText(FText::FromString(FString::Printf(TEXT("%d%%"), PercentInt)));
 	}
 
-	// WarningFloat 의미가 무엇이든(알파/남은시간 등) > 0이면 경고 ON
+	// WarningFloat 의미가 무엇이든 > 0이면 경고 ON
 	const bool bWarningOn = (WarningFloat > 0.0f);
 
 	if (Capture_TextWarning)
@@ -1020,7 +1045,13 @@ void UMosesMatchHUD::HandleCaptureStateChanged(bool bActive, float Progress01, f
 		Capture_TextWarning->SetVisibility(bWarningOn ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
 	}
 
-	// Spot은 LateJoin/NetGUID 타이밍에 null 가능 → 안전 처리
+	// ✅ [CAPTURE SUCCESS] 진행률이 1.0이 되면 “캡쳐 성공” 브로드캐스트 요청(딱 1번)
+	// 서버가 실제 캡처 성공을 확정하고 MatchGameState로 Announcement를 RepNotify 한다.
+	if (Clamped >= 1.0f - KINDA_SMALL_NUMBER)
+	{
+		TryBroadcastCaptureSuccess_Once();
+	}
+
 	UE_LOG(LogMosesHUD, Verbose, TEXT("[CAPTURE][HUD][CL] StateChanged Active=1 Pct=%.2f WarnF=%.2f Spot=%s"),
 		Clamped,
 		WarningFloat,

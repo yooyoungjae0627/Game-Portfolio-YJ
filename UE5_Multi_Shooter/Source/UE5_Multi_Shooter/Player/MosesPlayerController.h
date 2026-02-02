@@ -165,6 +165,10 @@ public:
 	UPROPERTY(BlueprintAssignable, Category = "Lobby")
 	FOnJoinedRoom OnLobbyJoinedRoom;
 
+	UFUNCTION(Server, Reliable)
+	void Server_RequestCaptureSuccessAnnouncement();
+
+
 protected:
 	/*====================================================
 	= Lifecycle (Local UI / Camera)

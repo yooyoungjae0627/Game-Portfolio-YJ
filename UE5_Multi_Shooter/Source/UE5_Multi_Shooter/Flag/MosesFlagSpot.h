@@ -48,9 +48,14 @@ public:
 	bool ServerTryStartCapture(AMosesPlayerState* RequesterPS);
 	void ServerCancelCapture(AMosesPlayerState* RequesterPS, EMosesCaptureCancelReason Reason);
 	void SetFlagSystemEnabled(bool bEnable);
+	FORCEINLINE class USphereComponent* GetCaptureZone() const { return CaptureZone; }
+	FORCEINLINE bool IsCapturing() const { return CapturerPS != nullptr; }
 
 protected:
 	virtual void BeginPlay() override;
+
+protected:
+	bool IsInsideCaptureZone_Server(const AMosesPlayerState* PS) const;
 
 private:
 	// ---------------------------------------------------------------------

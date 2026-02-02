@@ -130,47 +130,114 @@ void AMosesFlagSpot::SetFlagSystemEnabled(bool bEnable)
 
 bool AMosesFlagSpot::ServerTryStartCapture(AMosesPlayerState* RequesterPS)
 {
+	// ---------------------------------------------------------------------
+	// 0) Server only
+	// ---------------------------------------------------------------------
 	if (!HasAuthority())
 	{
 		return false;
 	}
 
+	// ---------------------------------------------------------------------
+	// 1) 시스템 비활성화
+	// ---------------------------------------------------------------------
 	if (!bFlagSystemEnabled)
 	{
-		UE_LOG(LogMosesFlag, Warning, TEXT("%s CaptureStart REJECT(SystemDisabled) Spot=%s Player=%s"),
-			MOSES_TAG_FLAG_SV, *GetNameSafe(this), *GetNameSafe(RequesterPS));
+		UE_LOG(LogMosesFlag, Warning,
+			TEXT("%s CaptureStart REJECT(SystemDisabled) Spot=%s Player=%s"),
+			MOSES_TAG_FLAG_SV,
+			*GetNameSafe(this),
+			*GetNameSafe(RequesterPS));
+
 		return false;
 	}
 
+	// ---------------------------------------------------------------------
+	// 2) 기본 유효성
+	// ---------------------------------------------------------------------
+	if (!RequesterPS)
+	{
+		UE_LOG(LogMosesFlag, Warning,
+			TEXT("%s CaptureStart REJECT(NullPS) Spot=%s"),
+			MOSES_TAG_FLAG_SV,
+			*GetNameSafe(this));
+
+		return false;
+	}
+
+	// ---------------------------------------------------------------------
+	// 3) 캡처 존 안에 있는지 (서버 확정)
+	// ⭐ 핵심 보강 포인트
+	// ---------------------------------------------------------------------
+	if (!IsInsideCaptureZone_Server(RequesterPS))
+	{
+		UE_LOG(LogMosesFlag, Warning,
+			TEXT("%s CaptureStart REJECT(NotInZone) Spot=%s Player=%s"),
+			MOSES_TAG_FLAG_SV,
+			*GetNameSafe(this),
+			*GetNameSafe(RequesterPS));
+
+		return false;
+	}
+
+	// ---------------------------------------------------------------------
+	// 4) 캡처 시작 가능 조건
+	// ---------------------------------------------------------------------
 	if (!CanStartCapture_Server(RequesterPS))
 	{
-		UE_LOG(LogMosesFlag, Warning, TEXT("%s CaptureStart REJECT Guard Spot=%s Player=%s"),
-			MOSES_TAG_FLAG_SV, *GetNameSafe(this), *GetNameSafe(RequesterPS));
+		UE_LOG(LogMosesFlag, Warning,
+			TEXT("%s CaptureStart REJECT(Guard) Spot=%s Player=%s"),
+			MOSES_TAG_FLAG_SV,
+			*GetNameSafe(this),
+			*GetNameSafe(RequesterPS));
+
 		return false;
 	}
 
+	// ---------------------------------------------------------------------
+	// 5) 사망 상태
+	// ---------------------------------------------------------------------
 	if (IsDead_Server(RequesterPS))
 	{
-		UE_LOG(LogMosesFlag, Warning, TEXT("%s CaptureStart REJECT Dead Spot=%s Player=%s"),
-			MOSES_TAG_FLAG_SV, *GetNameSafe(this), *GetNameSafe(RequesterPS));
+		UE_LOG(LogMosesFlag, Warning,
+			TEXT("%s CaptureStart REJECT(Dead) Spot=%s Player=%s"),
+			MOSES_TAG_FLAG_SV,
+			*GetNameSafe(this),
+			*GetNameSafe(RequesterPS));
+
 		return false;
 	}
 
+	// ---------------------------------------------------------------------
+	// 6) 이미 다른 사람이 캡처 중
+	// ---------------------------------------------------------------------
 	if (CapturerPS && CapturerPS != RequesterPS)
 	{
-		UE_LOG(LogMosesFlag, Warning, TEXT("%s CaptureStart REJECT AlreadyCapturing Spot=%s Capturer=%s Requester=%s"),
-			MOSES_TAG_FLAG_SV, *GetNameSafe(this), *GetNameSafe(CapturerPS), *GetNameSafe(RequesterPS));
+		UE_LOG(LogMosesFlag, Warning,
+			TEXT("%s CaptureStart REJECT(AlreadyCapturing) Spot=%s Capturer=%s Requester=%s"),
+			MOSES_TAG_FLAG_SV,
+			*GetNameSafe(this),
+			*GetNameSafe(CapturerPS),
+			*GetNameSafe(RequesterPS));
+
 		return false;
 	}
 
+	// ---------------------------------------------------------------------
+	// 7) 동일 캡처자 재요청 → 허용 (idempotent)
+	// ---------------------------------------------------------------------
 	if (CapturerPS == RequesterPS)
 	{
 		return true;
 	}
 
+	// ---------------------------------------------------------------------
+	// 8) 캡처 시작
+	// ---------------------------------------------------------------------
 	StartCapture_Internal(RequesterPS);
 	return true;
 }
+
 
 void AMosesFlagSpot::ServerCancelCapture(AMosesPlayerState* RequesterPS, EMosesCaptureCancelReason Reason)
 {
@@ -294,6 +361,19 @@ void AMosesFlagSpot::TickCaptureProgress_Server()
 		return;
 	}
 
+	// ✅ [필수 안정화] 캡처 진행 중에는 "지금도 존 안"인지 계속 확인한다.
+	if (CaptureZone)
+	{
+		const APawn* Pawn = CapturerPS->GetPawn();
+		const bool bInZone = (Pawn && CaptureZone->IsOverlappingActor(Pawn));
+
+		if (!IsInsideCaptureZone_Server(CapturerPS))
+		{
+			CancelCapture_Internal(EMosesCaptureCancelReason::LeftZone);
+			return;
+		}
+	}
+
 	CaptureElapsedSeconds += CaptureTickInterval;
 
 	const float Alpha = FMath::Clamp(CaptureElapsedSeconds / CaptureHoldSeconds, 0.0f, 1.0f);
@@ -366,6 +446,9 @@ void AMosesFlagSpot::HandleZoneEndOverlap(
 		return;
 	}
 
+	// ---------------------------------------------------------------------
+	// Client: UI/Target Clear (기존 로직 유지)
+	// ---------------------------------------------------------------------
 	if (!HasAuthority())
 	{
 		if (IsLocalPawn(Pawn))
@@ -389,12 +472,20 @@ void AMosesFlagSpot::HandleZoneEndOverlap(
 		return;
 	}
 
-	AMosesPlayerState* PS = Pawn->GetPlayerState<AMosesPlayerState>();
-	if (PS && CapturerPS == PS)
-	{
-		CancelCapture_Internal(EMosesCaptureCancelReason::LeftZone);
-	}
+	// ---------------------------------------------------------------------
+	// Server: No Immediate Cancel (중요)
+	// ---------------------------------------------------------------------
+	// ✅ EndOverlap 이벤트는 순간 튈 수 있음.
+	// ✅ 캡처 유지/취소 판정은 TickCaptureProgress_Server에서 "확정"한다.
+	// 따라서 여기서 CancelCapture_Internal을 호출하지 않는다.
+
+	UE_LOG(LogMosesFlag, Verbose, TEXT("%s ZoneExit Spot=%s Pawn=%s (NoImmediateCancel) Capturer=%s"),
+		MOSES_TAG_FLAG_SV,
+		*GetNameSafe(this),
+		*GetNameSafe(Pawn),
+		*GetNameSafe(CapturerPS));
 }
+
 
 void AMosesFlagSpot::SetPromptVisible_Local(bool bVisible)
 {
@@ -520,7 +611,27 @@ void AMosesFlagSpot::ApplyBillboardRotation_Local()
 
 bool AMosesFlagSpot::CanStartCapture_Server(const AMosesPlayerState* RequesterPS) const
 {
-	return (RequesterPS != nullptr);
+	if (!RequesterPS || !CaptureZone)
+	{
+		return false;
+	}
+
+	const APawn* Pawn = RequesterPS->GetPawn();
+	if (!Pawn)
+	{
+		return false;
+	}
+
+	// ✅ 1) 가장 정확: 현재도 존 오버랩 중인지
+	if (CaptureZone->IsOverlappingActor(Pawn))
+	{
+		return true;
+	}
+
+	// ✅ 2) 오버랩 이벤트가 순간 흔들릴 때 대비한 거리 백업
+	const float Radius = CaptureZone->GetScaledSphereRadius();
+	const float DistSq = FVector::DistSquared(Pawn->GetActorLocation(), CaptureZone->GetComponentLocation());
+	return DistSq <= FMath::Square(Radius);
 }
 
 bool AMosesFlagSpot::IsCapturer_Server(const AMosesPlayerState* RequesterPS) const
@@ -555,4 +666,37 @@ float AMosesFlagSpot::ResolveBroadcastSeconds() const
 	}
 
 	return 4.0f;
+}
+
+bool AMosesFlagSpot::IsInsideCaptureZone_Server(const AMosesPlayerState* PS) const
+{
+	if (!PS || !CaptureZone)
+	{
+		return false;
+	}
+
+	const APawn* Pawn = PS->GetPawn();
+	if (!Pawn)
+	{
+		return false;
+	}
+
+	const FVector PawnLoc = Pawn->GetActorLocation();
+	const FVector ZoneLoc = CaptureZone->GetComponentLocation();
+
+	// Sphere 기준 서버 판정 (Overlap 이벤트는 힌트일 뿐)
+	const float DistSq = FVector::DistSquared(PawnLoc, ZoneLoc);
+	const float Radius = CaptureZone->GetScaledSphereRadius();
+
+	const bool bIn = (DistSq <= FMath::Square(Radius));
+
+	UE_LOG(LogMosesFlag, VeryVerbose, TEXT("%s InZone=%d Dist=%.1f Radius=%.1f Pawn=%s Spot=%s"),
+		MOSES_TAG_FLAG_SV,
+		bIn ? 1 : 0,
+		FMath::Sqrt(DistSq),
+		Radius,
+		*GetNameSafe(Pawn),
+		*GetNameSafe(this));
+
+	return bIn;
 }

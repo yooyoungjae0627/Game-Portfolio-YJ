@@ -1376,3 +1376,25 @@ void AMosesPlayerController::TickScopeBlur_Local()
 
 	Cam->SetScopeBlurStrength_Local(Blur);
 }
+
+void AMosesPlayerController::Server_RequestCaptureSuccessAnnouncement_Implementation()
+{
+	// 서버에서만
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	AMosesMatchGameState* GS = GetWorld() ? GetWorld()->GetGameState<AMosesMatchGameState>() : nullptr;
+	if (!GS)
+	{
+		UE_LOG(LogMosesPhase, Warning, TEXT("[ANN][SV] CaptureSuccess FAIL NoMatchGameState"));
+		return;
+	}
+
+	// ✅ 여기서 “캡쳐 성공”만 띄우기
+	// Duration은 원하는 만큼(예: 2초)
+	GS->ServerStartAnnouncementText(FText::FromString(TEXT("캡쳐 성공")), 2);
+
+	UE_LOG(LogMosesPhase, Warning, TEXT("[ANN][SV] CaptureSuccess -> Text='캡쳐 성공' Dur=2"));
+}
