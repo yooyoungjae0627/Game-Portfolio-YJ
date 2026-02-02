@@ -33,9 +33,8 @@ DECLARE_MULTICAST_DELEGATE_TwoParams(FMosesOnEquippedChanged, int32 /*SlotIndex*
 DECLARE_MULTICAST_DELEGATE_TwoParams(FMosesOnAmmoChangedNative, int32 /*Mag*/, int32 /*Reserve*/);
 DECLARE_MULTICAST_DELEGATE_OneParam(FMosesOnDeadChangedNative, bool /*bNewDead*/);
 DECLARE_MULTICAST_DELEGATE_OneParam(FMosesOnReloadingChangedNative, bool /*bReloading*/);
-
-/** 서버 승인 Swap 컨텍스트: Pawn 코스메틱 전용 */
 DECLARE_MULTICAST_DELEGATE_ThreeParams(FMosesOnSwapStartedNative, int32 /*FromSlot*/, int32 /*ToSlot*/, int32 /*Serial*/);
+DECLARE_MULTICAST_DELEGATE_OneParam(FMosesOnSlotsStateChangedNative, int32 /*ChangedSlotOr0ForAll*/);
 
 UENUM(BlueprintType)
 enum class EMosesFireGuardFailReason : uint8
@@ -92,6 +91,8 @@ public:
 	int32 GetLastSwapFromSlot() const { return LastSwapFromSlot; }
 	int32 GetLastSwapToSlot() const { return LastSwapToSlot; }
 	int32 GetSwapSerial() const { return SwapSerial; }
+	int32 GetMagAmmoForSlot(int32 SlotIndex) const;
+	int32 GetReserveAmmoForSlot(int32 SlotIndex) const;
 
 	// =========================================================================
 	// Equip API (Client -> Server)
@@ -137,6 +138,7 @@ public:
 	FMosesOnAmmoChangedNative OnAmmoChanged;
 	FMosesOnDeadChangedNative OnDeadChanged;
 	FMosesOnReloadingChangedNative OnReloadingChanged;
+	FMosesOnSlotsStateChangedNative OnSlotsStateChanged;
 
 	// 서버 승인 Swap 이벤트(코스메틱 트리거)
 	FMosesOnSwapStartedNative OnSwapStarted;
@@ -145,6 +147,10 @@ public:
 	// Dead Hook (서버에서만 확정)
 	// =========================================================================
 	void ServerMarkDead();
+
+	// ✅ [ADD] 슬롯 패널 갱신 브로드캐스트 (0=전체, 1~4=특정)
+	void BroadcastSlotsStateChanged(int32 ChangedSlotOr0ForAll, const TCHAR* ContextTag);
+
 
 protected:
 	virtual void BeginPlay() override;

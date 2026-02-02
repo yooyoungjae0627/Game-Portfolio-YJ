@@ -1,16 +1,4 @@
-﻿// ============================================================================
-// UE5_Multi_Shooter/UI/Match/MosesMatchHUD.cpp  (FULL - UPDATED)  [STEP3]
-// ============================================================================
-//
-// [STEP3 핵심 변경점]
-// - HUD가 PlayerState 바인딩 후, CombatComponent(SSOT) Delegate도 추가로 바인딩한다.
-// - CombatComponent -> OnAmmoChanged는 CurrentSlot 변경(OnRep_CurrentSlot)에서도 즉시 발생하므로,
-//   1~4 스왑 시 HUD 탄약이 즉시 전환된다.
-// - HUD는 "현재 무기 탄약만" 표시하므로, 전달되는 Mag/Reserve를 그대로 표시하면 된다.
-//
-// ============================================================================
-
-#include "UE5_Multi_Shooter/UI/Match/MosesMatchHUD.h"
+﻿#include "UE5_Multi_Shooter/UI/Match/MosesMatchHUD.h"
 
 #include "UE5_Multi_Shooter/Player/MosesPlayerController.h"
 #include "UE5_Multi_Shooter/Weapon/MosesWeaponRegistrySubsystem.h"
@@ -19,6 +7,7 @@
 
 #include "Components/ProgressBar.h"
 #include "Components/TextBlock.h"
+#include "Components/Image.h"
 
 #include "Engine/World.h"
 #include "TimerManager.h"
@@ -72,7 +61,7 @@ void UMosesMatchHUD::NativeDestruct()
 	StopBindRetry();
 	StopCrosshairUpdate();
 
-	// [STEP3] Combat 먼저 해제(PS 해제 전에)
+	// Combat 먼저 해제(PS 해제 전에)
 	UnbindCombatComponent();
 
 	if (AMosesPlayerState* PS = CachedPlayerState.Get())
@@ -81,6 +70,11 @@ void UMosesMatchHUD::NativeDestruct()
 		PS->OnShieldChanged.RemoveAll(this);
 		PS->OnScoreChanged.RemoveAll(this);
 		PS->OnDeathsChanged.RemoveAll(this);
+
+		// ✅ [FIX] PlayerState 전용 이름(충돌 방지)
+		PS->OnPlayerCapturesChanged.RemoveAll(this);
+		PS->OnPlayerZombieKillsChanged.RemoveAll(this);
+
 		PS->OnAmmoChanged.RemoveAll(this);
 		PS->OnGrenadeChanged.RemoveAll(this);
 
@@ -194,7 +188,7 @@ void UMosesMatchHUD::TryBindRetry()
 		BindToGameState_Match();
 	}
 
-	// [STEP3] PS 바인딩이 되면 Combat도 재시도
+	// PS 바인딩이 되면 Combat도 재시도
 	if (!IsCombatComponentBound())
 	{
 		BindToCombatComponent_FromPlayerState();
@@ -243,33 +237,57 @@ void UMosesMatchHUD::BindToPlayerState()
 		return;
 	}
 
+	// --------------------------------------------------------------------
 	// 기존 PS 바인딩 제거
+	// --------------------------------------------------------------------
 	if (AMosesPlayerState* OldPS = CachedPlayerState.Get())
 	{
 		OldPS->OnHealthChanged.RemoveAll(this);
 		OldPS->OnShieldChanged.RemoveAll(this);
 		OldPS->OnScoreChanged.RemoveAll(this);
 		OldPS->OnDeathsChanged.RemoveAll(this);
+
+		// ✅ [FIX] 충돌 방지용 PlayerState 전용 델리게이트
+		OldPS->OnPlayerCapturesChanged.RemoveAll(this);
+		OldPS->OnPlayerZombieKillsChanged.RemoveAll(this);
+
 		OldPS->OnAmmoChanged.RemoveAll(this);
 		OldPS->OnGrenadeChanged.RemoveAll(this);
 	}
 
 	CachedPlayerState = PS;
 
+	// --------------------------------------------------------------------
+	// 새 PS 바인딩
+	// --------------------------------------------------------------------
 	PS->OnHealthChanged.AddUObject(this, &ThisClass::HandleHealthChanged);
 	PS->OnShieldChanged.AddUObject(this, &ThisClass::HandleShieldChanged);
 	PS->OnScoreChanged.AddUObject(this, &ThisClass::HandleScoreChanged);
 	PS->OnDeathsChanged.AddUObject(this, &ThisClass::HandleDeathsChanged);
 
-	// [STEP3] PS의 AmmoChanged는 fallback/초기값용으로 유지하되,
-	//         "즉시 전환"은 CombatComponent 쪽을 우선시한다.
+	// ✅ [FIX] Captures / ZombieKills (PlayerState SSOT 통계)
+	PS->OnPlayerCapturesChanged.AddUObject(this, &ThisClass::HandleCapturesChanged);
+	PS->OnPlayerZombieKillsChanged.AddUObject(this, &ThisClass::HandleZombieKillsChanged);
+
+	// PS의 AmmoChanged는 fallback/초기값용으로 유지하되,
+	// "즉시 전환"은 CombatComponent 경로가 우선이다.
 	PS->OnAmmoChanged.AddUObject(this, &ThisClass::HandleAmmoChanged_FromPS);
 	PS->OnGrenadeChanged.AddUObject(this, &ThisClass::HandleGrenadeChanged);
 
 	UE_LOG(LogMosesHUD, Warning, TEXT("[HUD][CL] Bound PlayerState delegates PS=%s"), *GetNameSafe(PS));
 
-	// [STEP3] PS 바인딩 후 Combat 바인딩
+	// --------------------------------------------------------------------
+	// PS 바인딩 후 Combat 바인딩
+	// --------------------------------------------------------------------
 	BindToCombatComponent_FromPlayerState();
+
+	// --------------------------------------------------------------------
+	// ✅ [FIX] 바인딩 직후 스냅샷 강제 반영
+	// - LateJoin / BindRetry 타이밍에서도 HUD가 즉시 정상 값 표시
+	// --------------------------------------------------------------------
+	HandleDeathsChanged(PS->GetDeaths());
+	HandleCapturesChanged(PS->GetCaptures());
+	HandleZombieKillsChanged(PS->GetZombieKills());
 }
 
 void UMosesMatchHUD::BindToCombatComponent_FromPlayerState()
@@ -295,16 +313,15 @@ void UMosesMatchHUD::BindToCombatComponent_FromPlayerState()
 
 	CachedCombatComponent = Combat;
 
-	// ✅ 핵심: CurrentSlot 변화/탄약 변화가 가장 즉시/정확하게 들어오는 경로
 	Combat->OnAmmoChanged.AddUObject(this, &ThisClass::HandleAmmoChanged_FromCombat);
-
-	// 장착 변화 시에도 "현재 무기 탄약"을 다시 한 번 강제 표시(안전망)
 	Combat->OnEquippedChanged.AddUObject(this, &ThisClass::HandleEquippedChanged_FromCombat);
+	Combat->OnReloadingChanged.AddUObject(this, &ThisClass::HandleReloadingChanged_FromCombat);
+	Combat->OnSlotsStateChanged.AddUObject(this, &ThisClass::HandleSlotsStateChanged_FromCombat);
 
 	UE_LOG(LogMosesHUD, Warning, TEXT("[HUD][CL] Bound CombatComponent delegates Combat=%s PS=%s"),
 		*GetNameSafe(Combat), *GetNameSafe(PS));
 
-	// 바인딩 직후 스냅샷(현재 슬롯 탄약) 반영
+	// 바인딩 직후 스냅샷 반영
 	HandleAmmoChanged_FromCombat(Combat->GetCurrentMagAmmo(), Combat->GetCurrentReserveAmmo());
 }
 
@@ -314,6 +331,8 @@ void UMosesMatchHUD::UnbindCombatComponent()
 	{
 		Combat->OnAmmoChanged.RemoveAll(this);
 		Combat->OnEquippedChanged.RemoveAll(this);
+		Combat->OnReloadingChanged.RemoveAll(this);
+		Combat->OnSlotsStateChanged.RemoveAll(this);
 
 		UE_LOG(LogMosesHUD, Warning, TEXT("[HUD][CL] Unbound CombatComponent delegates Combat=%s"), *GetNameSafe(Combat));
 	}
@@ -370,7 +389,7 @@ void UMosesMatchHUD::ApplySnapshotFromMatchGameState()
 	HandleMatchPhaseChanged(GS->GetMatchPhase());
 	HandleAnnouncementChanged(GS->GetAnnouncementState());
 
-	// [STEP3] Combat이 바인딩되어 있으면 "현재 무기 탄약" 스냅샷도 강제 적용
+	// Combat이 바인딩되어 있으면 현재 탄약도 강제 적용
 	if (UMosesCombatComponent* Combat = CachedCombatComponent.Get())
 	{
 		HandleAmmoChanged_FromCombat(Combat->GetCurrentMagAmmo(), Combat->GetCurrentReserveAmmo());
@@ -382,6 +401,10 @@ void UMosesMatchHUD::RefreshInitial()
 	HandleScoreChanged(0);
 	HandleDeathsChanged(0);
 
+	// ✅ [FIX] 새로 추가된 통계 초기값
+	HandleCapturesChanged(0);
+	HandleZombieKillsChanged(0);
+
 	// 초기에는 0/0으로 두고, 바인딩 완료 시 Combat/PS 이벤트로 실제 값이 들어오게 한다.
 	HandleAmmoChanged_FromPS(0, 0);
 	HandleGrenadeChanged(0);
@@ -391,6 +414,7 @@ void UMosesMatchHUD::RefreshInitial()
 
 	ApplySnapshotFromMatchGameState();
 }
+
 
 // --------------------------------------------------------------------
 // [DAY7] Crosshair Update (표시 전용)
@@ -562,6 +586,28 @@ void UMosesMatchHUD::HandleDeathsChanged(int32 NewDeaths)
 	}
 }
 
+// [MOD]
+void UMosesMatchHUD::HandleCapturesChanged(int32 NewCaptures)
+{
+	if (CapturesAmount)
+	{
+		CapturesAmount->SetText(FText::AsNumber(NewCaptures));
+	}
+
+	UE_LOG(LogMosesHUD, Verbose, TEXT("[HUD][CL] PlayerCapturesChanged=%d"), NewCaptures);
+}
+
+// [MOD]
+void UMosesMatchHUD::HandleZombieKillsChanged(int32 NewZombieKills)
+{
+	if (ZombieKillsAmount)
+	{
+		ZombieKillsAmount->SetText(FText::AsNumber(NewZombieKills));
+	}
+
+	UE_LOG(LogMosesHUD, Verbose, TEXT("[HUD][CL] PlayerZombieKillsChanged=%d"), NewZombieKills);
+}
+
 void UMosesMatchHUD::HandleAmmoChanged_FromPS(int32 Mag, int32 Reserve)
 {
 	// PS 경로는 fallback/초기값용. 실제 즉시 전환은 Combat 경로가 담당한다.
@@ -580,18 +626,19 @@ void UMosesMatchHUD::HandleGrenadeChanged(int32 Grenade)
 }
 
 // --------------------------------------------------------------------
-// [STEP3] CombatComponent Handlers (즉시 전환 보장)
+// CombatComponent Handlers
 // --------------------------------------------------------------------
 
 void UMosesMatchHUD::HandleAmmoChanged_FromCombat(int32 Mag, int32 Reserve)
 {
-	// ✅ 핵심: CurrentSlot 기준 탄약만 들어오는 이벤트이므로 그대로 표시하면 된다.
 	if (WeaponAmmoAmount)
 	{
 		WeaponAmmoAmount->SetText(FText::FromString(FString::Printf(TEXT("%d / %d"), Mag, Reserve)));
 	}
 
 	UE_LOG(LogMosesHUD, Verbose, TEXT("[HUD][CL][STEP3] AmmoChanged FromCombat %d/%d"), Mag, Reserve);
+	UpdateCurrentWeaponHeader();
+	UpdateSlotPanels_All();
 }
 
 void UMosesMatchHUD::HandleEquippedChanged_FromCombat(int32 /*SlotIndex*/, FGameplayTag /*WeaponId*/)
@@ -600,6 +647,27 @@ void UMosesMatchHUD::HandleEquippedChanged_FromCombat(int32 /*SlotIndex*/, FGame
 	{
 		HandleAmmoChanged_FromCombat(Combat->GetCurrentMagAmmo(), Combat->GetCurrentReserveAmmo());
 	}
+
+	UpdateCurrentWeaponHeader();
+	UpdateSlotPanels_All();
+}
+
+void UMosesMatchHUD::HandleReloadingChanged_FromCombat(bool /*bReloading*/)
+{
+	UpdateCurrentWeaponHeader();
+	UpdateSlotPanels_All();
+
+	UE_LOG(LogMosesHUD, Verbose, TEXT("[HUD][CL] ReloadingChanged -> UpdateHeader+Slots"));
+}
+
+void UMosesMatchHUD::HandleSlotsStateChanged_FromCombat(int32 ChangedSlotOr0ForAll)
+{
+	(void)ChangedSlotOr0ForAll;
+
+	UpdateCurrentWeaponHeader();
+	UpdateSlotPanels_All();
+
+	UE_LOG(LogMosesHUD, Verbose, TEXT("[HUD][CL] SlotsStateChanged Slot=%d -> UpdateHeader+Slots"), ChangedSlotOr0ForAll);
 }
 
 // --------------------------------------------------------------------
@@ -687,4 +755,106 @@ FString UMosesMatchHUD::ToMMSS(int32 TotalSeconds)
 	const int32 MM = Clamped / 60;
 	const int32 SS = Clamped % 60;
 	return FString::Printf(TEXT("%02d:%02d"), MM, SS);
+}
+
+static void MosesHUD_SetTextIfValid(UTextBlock* TB, const FText& Text)
+{
+	if (TB)
+	{
+		TB->SetText(Text);
+	}
+}
+
+static void MosesHUD_SetVisibleIfValid(UWidget* W, bool bVisible)
+{
+	if (W)
+	{
+		W->SetVisibility(bVisible ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+	}
+}
+
+static void MosesHUD_SetImageVisibleIfValid(UImage* Img, bool bVisible)
+{
+	if (Img)
+	{
+		Img->SetVisibility(bVisible ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+	}
+}
+
+void UMosesMatchHUD::UpdateCurrentWeaponHeader()
+{
+	UMosesCombatComponent* Combat = CachedCombatComponent.Get();
+	if (!Combat)
+	{
+		MosesHUD_SetTextIfValid(Text_CurrentWeaponName, FText::FromString(TEXT("-")));
+		MosesHUD_SetTextIfValid(Text_CurrentSlot, FText::FromString(TEXT("Slot: -")));
+		MosesHUD_SetVisibleIfValid(Text_Reloading, false);
+		return;
+	}
+
+	const int32 CurSlot = Combat->GetCurrentSlot();
+	const FGameplayTag CurWeaponId = Combat->GetEquippedWeaponId();
+
+	const FString WeaponNameStr = CurWeaponId.IsValid() ? CurWeaponId.ToString() : TEXT("-");
+	MosesHUD_SetTextIfValid(Text_CurrentWeaponName, FText::FromString(WeaponNameStr));
+	MosesHUD_SetTextIfValid(Text_CurrentSlot, FText::FromString(FString::Printf(TEXT("Slot: %d"), CurSlot)));
+
+	MosesHUD_SetVisibleIfValid(Text_Reloading, Combat->IsReloading());
+}
+
+void UMosesMatchHUD::UpdateSlotPanels_All()
+{
+	UMosesCombatComponent* Combat = CachedCombatComponent.Get();
+	if (!Combat)
+	{
+		return;
+	}
+
+	const int32 EquippedSlot = Combat->GetCurrentSlot();
+	const bool bReloading = Combat->IsReloading();
+
+	auto MakeAmmoTextLocal = [](int32 Mag, int32 Reserve) -> FText
+		{
+			return FText::FromString(FString::Printf(TEXT("%d / %d"), Mag, Reserve));
+		};
+
+	auto ApplySlotUI = [&](int32 SlotIndex, UTextBlock* WeaponNameTB, UTextBlock* AmmoTB, UImage* EquippedImg, UTextBlock* ReloadingTB)
+		{
+			const FGameplayTag WeaponId = Combat->GetWeaponIdForSlot(SlotIndex);
+			const bool bHasWeapon = WeaponId.IsValid();
+			const bool bEquipped = (SlotIndex == EquippedSlot);
+
+			if (bHasWeapon)
+			{
+				MosesHUD_SetTextIfValid(WeaponNameTB, FText::FromString(WeaponId.ToString()));
+			}
+			else
+			{
+				MosesHUD_SetTextIfValid(WeaponNameTB, FText::FromString(TEXT("-")));
+			}
+
+			if (bHasWeapon)
+			{
+				const int32 Mag = Combat->GetMagAmmoForSlot(SlotIndex);
+				const int32 Res = Combat->GetReserveAmmoForSlot(SlotIndex);
+				MosesHUD_SetTextIfValid(AmmoTB, MakeAmmoTextLocal(Mag, Res));
+			}
+			else
+			{
+				MosesHUD_SetTextIfValid(AmmoTB, MakeAmmoTextLocal(0, 0));
+			}
+
+			MosesHUD_SetImageVisibleIfValid(EquippedImg, bEquipped);
+
+			if (ReloadingTB)
+			{
+				ReloadingTB->SetText(FText::FromString(TEXT("RELOAD")));
+				ReloadingTB->SetVisibility((bEquipped && bReloading) ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+			}
+		};
+
+	ApplySlotUI(1, Text_Slot1_WeaponName, Text_Slot1_Ammo, Img_Slot1_Equipped, Text_Slot1_Reloading);
+	ApplySlotUI(2, Text_Slot2_WeaponName, Text_Slot2_Ammo, Img_Slot2_Equipped, Text_Slot2_Reloading);
+	ApplySlotUI(3, Text_Slot3_WeaponName, Text_Slot3_Ammo, Img_Slot3_Equipped, Text_Slot3_Reloading);
+	ApplySlotUI(4, Text_Slot4_WeaponName, Text_Slot4_Ammo, Img_Slot4_Equipped, Text_Slot4_Reloading);
 }

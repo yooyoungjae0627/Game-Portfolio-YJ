@@ -28,6 +28,12 @@ DECLARE_MULTICAST_DELEGATE_TwoParams(FOnMosesAmmoChangedNative, int32 /*Mag*/, i
 DECLARE_MULTICAST_DELEGATE_OneParam(FOnMosesGrenadeChangedNative, int32 /*Count*/);
 DECLARE_MULTICAST_DELEGATE_OneParam(FOnMosesSelectedCharacterChangedNative, int32 /*SelectedId*/);
 
+// ✅ [FIX][MOD] 이름 충돌 방지
+// - MosesCaptureComponent.h 에 이미 "FOnMosesCapturesChangedNative (TwoParams)"가 존재하므로
+//   PlayerState/HUD 전용 델리게이트는 고유 이름으로 분리한다.
+DECLARE_MULTICAST_DELEGATE_OneParam(FOnMosesPlayerCapturesChangedNative, int32 /*Captures*/);
+DECLARE_MULTICAST_DELEGATE_OneParam(FOnMosesPlayerZombieKillsChangedNative, int32 /*ZombieKills*/);
+
 // BP delegate
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnMosesSelectedCharacterChangedBP, int32, SelectedId);
 
@@ -71,6 +77,11 @@ public:
 	UMosesSlotOwnershipComponent* GetSlotOwnershipComponent() const { return SlotOwnershipComponent; }
 	UMosesCombatComponent* GetCombatComponent() const { return CombatComponent; }
 
+	// ✅ [FIX][MOD] HUD에서 호출하는 게터 제공 (직접 변수 접근 금지)
+	int32 GetDeaths() const { return Deaths; }
+	int32 GetCaptures() const { return Captures; }
+	int32 GetZombieKills() const { return ZombieKills; }
+
 public:
 	// ---------------------------------------------------------------------
 	// GAS Init
@@ -106,6 +117,15 @@ public:
 
 public:
 	// ---------------------------------------------------------------------
+	// [MOD] Match stats (Server authority, SSOT=PlayerState)
+	// - Capture 성공 시: ServerAddCapture()
+	// - Zombie Kill 확정 시: ServerAddZombieKill()
+	// ---------------------------------------------------------------------
+	void ServerAddCapture(int32 Delta = 1);
+	void ServerAddZombieKill(int32 Delta = 1);
+
+public:
+	// ---------------------------------------------------------------------
 	// RepNotifies
 	// ---------------------------------------------------------------------
 	UFUNCTION()
@@ -129,6 +149,14 @@ public:
 	UFUNCTION()
 	void OnRep_Deaths();
 
+	// [MOD]
+	UFUNCTION()
+	void OnRep_Captures();
+
+	// [MOD]
+	UFUNCTION()
+	void OnRep_ZombieKills();
+
 public:
 	// ---------------------------------------------------------------------
 	// Native Delegates (HUD Update)
@@ -139,6 +167,10 @@ public:
 	FOnMosesDeathsChangedNative OnDeathsChanged;
 	FOnMosesAmmoChangedNative OnAmmoChanged;
 	FOnMosesGrenadeChangedNative OnGrenadeChanged;
+
+	// ✅ [FIX][MOD] 충돌 방지 리네임
+	FOnMosesPlayerCapturesChangedNative OnPlayerCapturesChanged;
+	FOnMosesPlayerZombieKillsChangedNative OnPlayerZombieKillsChanged;
 
 	FOnMosesSelectedCharacterChangedNative OnSelectedCharacterChangedNative;
 
@@ -163,6 +195,10 @@ private:
 	void BroadcastDeaths();
 	void BroadcastAmmoAndGrenade();
 	void BroadcastSelectedCharacterChanged(const TCHAR* Reason);
+
+	// ✅ [FIX][MOD]
+	void BroadcastPlayerCaptures();
+	void BroadcastPlayerZombieKills();
 
 	// GAS Attribute callbacks
 	void HandleHealthChanged_Internal(const FOnAttributeChangeData& Data);
@@ -233,6 +269,14 @@ private:
 
 	UPROPERTY(ReplicatedUsing = OnRep_Deaths)
 	int32 Deaths = 0;
+
+	// [MOD] Capture count (SSOT)
+	UPROPERTY(ReplicatedUsing = OnRep_Captures)
+	int32 Captures = 0;
+
+	// [MOD] Zombie kills (SSOT)
+	UPROPERTY(ReplicatedUsing = OnRep_ZombieKills)
+	int32 ZombieKills = 0;
 
 	// PawnData는 외부가 GetPawnData<T>()로 조회
 	UPROPERTY()

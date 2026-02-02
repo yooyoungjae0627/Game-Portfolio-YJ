@@ -254,6 +254,8 @@ void UMosesCombatComponent::ServerGrantWeaponToSlot(int32 SlotIndex, const FGame
 	{
 		BroadcastAmmoChanged(TEXT("ServerGrantWeaponToSlot(CurrentSlot)"));
 	}
+
+	BroadcastSlotsStateChanged(ClampedSlot, TEXT("ServerGrantWeaponToSlot"));
 }
 
 // ============================================================================
@@ -397,6 +399,8 @@ void UMosesCombatComponent::ServerFire_Implementation()
 
 	// 코스메틱은 서버 승인 후 전파
 	Server_PropagateFireCosmetics(ApprovedWeaponId);
+
+	BroadcastSlotsStateChanged(CurrentSlot, TEXT("ServerFire"));
 }
 
 // ============================================================================
@@ -936,24 +940,64 @@ void UMosesCombatComponent::OnRep_CurrentSlot()
 {
 	BroadcastEquippedChanged(TEXT("OnRep_CurrentSlot"));
 	BroadcastAmmoChanged(TEXT("OnRep_CurrentSlot"));
+	BroadcastSlotsStateChanged(0, TEXT("OnRep_CurrentSlot"));
 }
 
-void UMosesCombatComponent::OnRep_Slot1WeaponId() { BroadcastEquippedChanged(TEXT("OnRep_Slot1WeaponId")); }
-void UMosesCombatComponent::OnRep_Slot2WeaponId() { BroadcastEquippedChanged(TEXT("OnRep_Slot2WeaponId")); }
-void UMosesCombatComponent::OnRep_Slot3WeaponId() { BroadcastEquippedChanged(TEXT("OnRep_Slot3WeaponId")); }
-void UMosesCombatComponent::OnRep_Slot4WeaponId() { BroadcastEquippedChanged(TEXT("OnRep_Slot4WeaponId")); }
+void UMosesCombatComponent::OnRep_Slot1WeaponId()
+{
+	BroadcastEquippedChanged(TEXT("OnRep_Slot1WeaponId"));
+	BroadcastSlotsStateChanged(1, TEXT("OnRep_Slot1WeaponId"));
+}
 
-void UMosesCombatComponent::OnRep_Slot1Ammo() { BroadcastAmmoChanged(TEXT("OnRep_Slot1Ammo")); }
-void UMosesCombatComponent::OnRep_Slot2Ammo() { BroadcastAmmoChanged(TEXT("OnRep_Slot2Ammo")); }
-void UMosesCombatComponent::OnRep_Slot3Ammo() { BroadcastAmmoChanged(TEXT("OnRep_Slot3Ammo")); }
-void UMosesCombatComponent::OnRep_Slot4Ammo() { BroadcastAmmoChanged(TEXT("OnRep_Slot4Ammo")); }
+void UMosesCombatComponent::OnRep_Slot2WeaponId()
+{
+	BroadcastEquippedChanged(TEXT("OnRep_Slot2WeaponId"));
+	BroadcastSlotsStateChanged(2, TEXT("OnRep_Slot2WeaponId"));
+}
 
-void UMosesCombatComponent::OnRep_IsDead() { BroadcastDeadChanged(TEXT("OnRep_IsDead")); }
+void UMosesCombatComponent::OnRep_Slot3WeaponId()
+{
+	BroadcastEquippedChanged(TEXT("OnRep_Slot3WeaponId"));
+	BroadcastSlotsStateChanged(3, TEXT("OnRep_Slot3WeaponId"));
+}
+
+void UMosesCombatComponent::OnRep_Slot4WeaponId()
+{
+	BroadcastEquippedChanged(TEXT("OnRep_Slot4WeaponId"));
+	BroadcastSlotsStateChanged(4, TEXT("OnRep_Slot4WeaponId"));
+}
+
+void UMosesCombatComponent::OnRep_Slot1Ammo()
+{
+	BroadcastAmmoChanged(TEXT("OnRep_Slot1Ammo"));
+	BroadcastSlotsStateChanged(1, TEXT("OnRep_Slot1Ammo"));
+}
+
+void UMosesCombatComponent::OnRep_Slot2Ammo()
+{
+	BroadcastAmmoChanged(TEXT("OnRep_Slot2Ammo"));
+	BroadcastSlotsStateChanged(2, TEXT("OnRep_Slot2Ammo"));
+}
+
+void UMosesCombatComponent::OnRep_Slot3Ammo()
+{
+	BroadcastAmmoChanged(TEXT("OnRep_Slot3Ammo"));
+	BroadcastSlotsStateChanged(3, TEXT("OnRep_Slot3Ammo"));
+}
+
+void UMosesCombatComponent::OnRep_Slot4Ammo()
+{
+	BroadcastAmmoChanged(TEXT("OnRep_Slot4Ammo"));
+	BroadcastSlotsStateChanged(4, TEXT("OnRep_Slot4Ammo"));
+}
 
 void UMosesCombatComponent::OnRep_IsReloading()
 {
 	BroadcastReloadingChanged(TEXT("OnRep_IsReloading"));
+	BroadcastSlotsStateChanged(CurrentSlot, TEXT("OnRep_IsReloading"));
 }
+
+void UMosesCombatComponent::OnRep_IsDead() { BroadcastDeadChanged(TEXT("OnRep_IsDead")); }
 
 void UMosesCombatComponent::OnRep_SwapSerial()
 {
@@ -1174,4 +1218,31 @@ void UMosesCombatComponent::SetSlotAmmo_Internal(int32 SlotIndex, int32 NewMag, 
 	default:
 		break;
 	}
+}
+
+int32 UMosesCombatComponent::GetMagAmmoForSlot(int32 SlotIndex) const
+{
+	int32 Mag = 0;
+	int32 Reserve = 0;
+	GetSlotAmmo_Internal(SlotIndex, Mag, Reserve);
+	return Mag;
+}
+
+int32 UMosesCombatComponent::GetReserveAmmoForSlot(int32 SlotIndex) const
+{
+	int32 Mag = 0;
+	int32 Reserve = 0;
+	GetSlotAmmo_Internal(SlotIndex, Mag, Reserve);
+	return Reserve;
+}
+
+void UMosesCombatComponent::BroadcastSlotsStateChanged(int32 ChangedSlotOr0ForAll, const TCHAR* ContextTag)
+{
+	// 0 = 전체 갱신, 1~4 = 해당 슬롯 중심 갱신
+	OnSlotsStateChanged.Broadcast(ChangedSlotOr0ForAll);
+
+	UE_LOG(LogMosesWeapon, Verbose, TEXT("[WEAPON][HUD] SlotsStateChanged Slot=%d Ctx=%s PS=%s"),
+		ChangedSlotOr0ForAll,
+		ContextTag ? ContextTag : TEXT("None"),
+		*GetNameSafe(GetOwner()));
 }

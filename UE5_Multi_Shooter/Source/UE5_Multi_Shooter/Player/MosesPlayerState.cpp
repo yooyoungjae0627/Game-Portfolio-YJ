@@ -56,6 +56,10 @@ void AMosesPlayerState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& Ou
 	DOREPLIFETIME(AMosesPlayerState, RoomId);
 	DOREPLIFETIME(AMosesPlayerState, bIsRoomHost);
 	DOREPLIFETIME(AMosesPlayerState, Deaths);
+
+	// [MOD]
+	DOREPLIFETIME(AMosesPlayerState, Captures);
+	DOREPLIFETIME(AMosesPlayerState, ZombieKills);
 }
 
 void AMosesPlayerState::CopyProperties(APlayerState* NewPlayerState)
@@ -77,6 +81,10 @@ void AMosesPlayerState::CopyProperties(APlayerState* NewPlayerState)
 	NewPS->bIsRoomHost = bIsRoomHost;
 	NewPS->PawnData = PawnData;
 	NewPS->Deaths = Deaths;
+
+	// [MOD]
+	NewPS->Captures = Captures;
+	NewPS->ZombieKills = ZombieKills;
 }
 
 void AMosesPlayerState::OverrideWith(APlayerState* OldPlayerState)
@@ -98,6 +106,10 @@ void AMosesPlayerState::OverrideWith(APlayerState* OldPlayerState)
 	bIsRoomHost = OldPS->bIsRoomHost;
 	PawnData = OldPS->PawnData;
 	Deaths = OldPS->Deaths;
+
+	// [MOD]
+	Captures = OldPS->Captures;
+	ZombieKills = OldPS->ZombieKills;
 }
 
 void AMosesPlayerState::OnRep_Score()
@@ -154,6 +166,11 @@ void AMosesPlayerState::TryInitASC(AActor* InAvatarActor)
 	BroadcastVitals_Initial();
 	BroadcastScore();
 	BroadcastDeaths();
+
+	// ✅ [FIX][MOD] PlayerState Match Stats 초기 브로드캐스트
+	BroadcastPlayerCaptures();
+	BroadcastPlayerZombieKills();
+
 	BroadcastAmmoAndGrenade();
 }
 
@@ -445,6 +462,48 @@ void AMosesPlayerState::ServerAddDeath()
 }
 
 // ============================================================================
+// [MOD] Match stats (Captures / ZombieKills) — Server Authority ONLY
+// ============================================================================
+
+void AMosesPlayerState::ServerAddCapture(int32 Delta /*=1*/)
+{
+	MOSES_GUARD_AUTHORITY_VOID(this, "CAPTURE", TEXT("Client attempted ServerAddCapture"));
+
+	if (Delta == 0)
+	{
+		return;
+	}
+
+	const int32 Old = Captures;
+	Captures = FMath::Max(0, Captures + Delta);
+	ForceNetUpdate();
+
+	UE_LOG(LogMosesPlayer, Warning, TEXT("[CAPTURE][SV][PS] Captures %d -> %d Delta=%d PS=%s"),
+		Old, Captures, Delta, *GetNameSafe(this));
+
+	OnRep_Captures(); // 리슨서버 즉시 반영
+}
+
+void AMosesPlayerState::ServerAddZombieKill(int32 Delta /*=1*/)
+{
+	MOSES_GUARD_AUTHORITY_VOID(this, "ZOMBIE", TEXT("Client attempted ServerAddZombieKill"));
+
+	if (Delta == 0)
+	{
+		return;
+	}
+
+	const int32 Old = ZombieKills;
+	ZombieKills = FMath::Max(0, ZombieKills + Delta);
+	ForceNetUpdate();
+
+	UE_LOG(LogMosesPlayer, Warning, TEXT("[ZOMBIE][SV][PS] ZombieKills %d -> %d Delta=%d PS=%s"),
+		Old, ZombieKills, Delta, *GetNameSafe(this));
+
+	OnRep_ZombieKills(); // 리슨서버 즉시 반영
+}
+
+// ============================================================================
 // RepNotifies
 // ============================================================================
 
@@ -482,6 +541,16 @@ void AMosesPlayerState::OnRep_PlayerNickName()
 void AMosesPlayerState::OnRep_Deaths()
 {
 	BroadcastDeaths();
+}
+
+void AMosesPlayerState::OnRep_Captures()
+{
+	BroadcastPlayerCaptures();
+}
+
+void AMosesPlayerState::OnRep_ZombieKills()
+{
+	BroadcastPlayerZombieKills();
 }
 
 // ============================================================================
@@ -525,6 +594,24 @@ void AMosesPlayerState::BroadcastDeaths()
 	OnDeathsChanged.Broadcast(Deaths);
 }
 
+// ✅ [FIX][MOD]
+void AMosesPlayerState::BroadcastPlayerCaptures()
+{
+	OnPlayerCapturesChanged.Broadcast(Captures);
+
+	UE_LOG(LogMosesPlayer, Verbose, TEXT("[CAPTURE][CL][PS] BroadcastPlayerCaptures=%d PS=%s"),
+		Captures, *GetNameSafe(this));
+}
+
+// ✅ [FIX][MOD]
+void AMosesPlayerState::BroadcastPlayerZombieKills()
+{
+	OnPlayerZombieKillsChanged.Broadcast(ZombieKills);
+
+	UE_LOG(LogMosesPlayer, Verbose, TEXT("[ZOMBIE][CL][PS] BroadcastPlayerZombieKills=%d PS=%s"),
+		ZombieKills, *GetNameSafe(this));
+}
+
 // ============================================================================
 // Local notify
 // ============================================================================
@@ -566,7 +653,7 @@ void AMosesPlayerState::DOD_PS_Log(const UObject* Caller, const TCHAR* Phase) co
 	const TCHAR* PhaseStr = Phase ? Phase : TEXT("None");
 
 	UE_LOG(LogMosesPlayer, Warning,
-		TEXT("[PS][DOD][%s] PS=%s Caller=%s Nick=%s Pid=%s RoomId=%s Host=%d Ready=%d LoggedIn=%d SelChar=%d Deaths=%d Score=%d"),
+		TEXT("[PS][DOD][%s] PS=%s Caller=%s Nick=%s Pid=%s RoomId=%s Host=%d Ready=%d LoggedIn=%d SelChar=%d Deaths=%d Captures=%d ZombieKills=%d Score=%d"),
 		PhaseStr,
 		*GetNameSafe(this),
 		CallerName,
@@ -578,5 +665,7 @@ void AMosesPlayerState::DOD_PS_Log(const UObject* Caller, const TCHAR* Phase) co
 		bLoggedIn ? 1 : 0,
 		SelectedCharacterId,
 		Deaths,
+		Captures,
+		ZombieKills,
 		FMath::RoundToInt(GetScore()));
 }
