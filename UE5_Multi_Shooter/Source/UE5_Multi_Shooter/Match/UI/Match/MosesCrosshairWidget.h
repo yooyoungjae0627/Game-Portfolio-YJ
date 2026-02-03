@@ -26,11 +26,11 @@ class UE5_MULTI_SHOOTER_API UMosesCrosshairWidget : public UUserWidget
 public:
 	UMosesCrosshairWidget(const FObjectInitializer& ObjectInitializer);
 
-public:
 	/** SpreadFactor(0=수렴, 1=확산) */
 	void SetSpreadFactor(float InSpreadFactor01);
 
 protected:
+	//~UUserWidget interface
 	virtual void NativeOnInitialized() override;
 
 private:
@@ -39,19 +39,19 @@ private:
 
 private:
 	UPROPERTY(meta = (BindWidgetOptional))
-	TObjectPtr<UImage> Crosshair_Up = nullptr;
+	TObjectPtr<UImage> Img_Up = nullptr;
 
 	UPROPERTY(meta = (BindWidgetOptional))
-	TObjectPtr<UImage> Crosshair_Down = nullptr;
+	TObjectPtr<UImage> Img_Down = nullptr;
 
 	UPROPERTY(meta = (BindWidgetOptional))
-	TObjectPtr<UImage> Crosshair_Left = nullptr;
+	TObjectPtr<UImage> Img_Left = nullptr;
 
 	UPROPERTY(meta = (BindWidgetOptional))
-	TObjectPtr<UImage> Crosshair_Right = nullptr;
+	TObjectPtr<UImage> Img_Right = nullptr;
 
 	UPROPERTY(meta = (BindWidgetOptional))
-	TObjectPtr<UImage> Crosshair_CenterDot = nullptr;
+	TObjectPtr<UImage> Img_CenterDot = nullptr;
 
 private:
 	/** SpreadFactor=0일 때 추가 간격(픽셀) */

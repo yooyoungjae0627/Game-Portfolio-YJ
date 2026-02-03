@@ -29,8 +29,14 @@ private:
 	TSubclassOf<UMosesCameraMode> DetermineCameraMode() const;
 
 private:
+	void AddMappingContextOnce();
+	void BindInputActions(UInputComponent* PlayerInputComponent);
+
+private:
+	// ---- Input Handlers ----
 	void HandleMove(const FInputActionValue& Value);
-	void HandleLook(const FInputActionValue& Value);
+	void HandleLookYaw(const FInputActionValue& Value);    // IA_LookYaw (float)
+	void HandleLookPitch(const FInputActionValue& Value);  // IA_LookPitch (float)
 
 	void HandleJump(const FInputActionValue& Value);
 	void HandleSprintPressed(const FInputActionValue& Value);
@@ -46,23 +52,23 @@ private:
 	void HandleEquipSlot2(const FInputActionValue& Value);
 	void HandleEquipSlot3(const FInputActionValue& Value);
 
-	// ✅ Hold-to-fire
 	void HandleFirePressed(const FInputActionValue& Value);
 	void HandleFireReleased(const FInputActionValue& Value);
 
 private:
-	void AddMappingContextOnce();
-	void BindInputActions(UInputComponent* PlayerInputComponent);
-
-private:
+	// ---- Input Assets ----
 	UPROPERTY(EditAnywhere, Category = "Moses|Input")
 	TObjectPtr<UInputMappingContext> InputMappingContext = nullptr;
 
 	UPROPERTY(EditAnywhere, Category = "Moses|Input")
 	TObjectPtr<UInputAction> IA_Move = nullptr;
 
+	// [MOD] 신규: IA_LookYaw / IA_LookPitch (Axis1D)
 	UPROPERTY(EditAnywhere, Category = "Moses|Input")
-	TObjectPtr<UInputAction> IA_Look = nullptr;
+	TObjectPtr<UInputAction> IA_LookYaw = nullptr;
+
+	UPROPERTY(EditAnywhere, Category = "Moses|Input")
+	TObjectPtr<UInputAction> IA_LookPitch = nullptr;
 
 	UPROPERTY(EditAnywhere, Category = "Moses|Input")
 	TObjectPtr<UInputAction> IA_Jump = nullptr;
@@ -94,7 +100,18 @@ private:
 	UPROPERTY(EditAnywhere, Category = "Moses|Input")
 	int32 MappingPriority = 0;
 
+	// [MOD] 마우스 감도(코드 레벨) - 에디터 Scalar(Modifier) + 여기 Sens 둘 다 곱해진다고 생각하면 됨
+	UPROPERTY(EditAnywhere, Category = "Moses|Input|Look", meta = (ClampMin = "0.01", ClampMax = "10.0"))
+	float LookSensitivityYaw = 0.20f;
+
+	UPROPERTY(EditAnywhere, Category = "Moses|Input|Look", meta = (ClampMin = "0.01", ClampMax = "10.0"))
+	float LookSensitivityPitch = 0.20f;
+
+	UPROPERTY(EditAnywhere, Category = "Moses|Input|Look")
+	bool bInvertPitch = false;
+
 private:
+	// ---- Camera Modes ----
 	UPROPERTY(EditDefaultsOnly, Category = "Moses|Camera")
 	TSubclassOf<UMosesCameraMode> ThirdPersonModeClass;
 

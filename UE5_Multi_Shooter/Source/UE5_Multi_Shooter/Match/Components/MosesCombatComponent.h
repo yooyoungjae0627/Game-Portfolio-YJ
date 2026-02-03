@@ -338,6 +338,14 @@ private:
 	UPROPERTY(EditDefaultsOnly, Category = "Moses|GAS")
 	TSoftClassPtr<class UGameplayEffect> DamageGE_SetByCaller;
 
+	// [MOD] Evidence-First: 서버 트레이스 디버그(라인/구) 증거 출력
+	UPROPERTY(EditDefaultsOnly, Category = "Moses|Fire|Debug")
+	bool bServerTraceDebugDraw = true;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Moses|Fire|Debug")
+	float ServerTraceDebugDrawTime = 1.5f;
+
+
 private:
 	// =========================================================================
 	// Projectile class

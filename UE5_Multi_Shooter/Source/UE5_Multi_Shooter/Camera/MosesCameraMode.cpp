@@ -1,6 +1,7 @@
 #include "UE5_Multi_Shooter/Camera/MosesCameraMode.h"
 #include "UE5_Multi_Shooter/Camera/MosesCameraComponent.h"
 #include "UE5_Multi_Shooter/Camera/MosesPlayerCameraManager.h"
+#include "UE5_Multi_Shooter/MosesLogChannels.h"
 
 #include "GameFramework/Pawn.h"
 
@@ -105,17 +106,18 @@ void UMosesCameraMode::UpdateCameraMode(float DeltaTime)
 
 void UMosesCameraMode::UpdateView(float DeltaTime)
 {
-	// 기본 구현: Pivot 그대로
 	const FVector PivotLoc = GetPivotLocation();
-	FRotator PivotRot = GetPivotRotation();
+	const FRotator PivotRotRaw = GetPivotRotation();
 
-	PivotRot.Pitch = FMath::ClampAngle(PivotRot.Pitch, ViewPitchMin, ViewPitchMax);
+	// [MOD][FIX] BP/폴백 모드가 Pitch를 죽여도 최소 보장(-89~+89)로 안전 Clamp
+	const FRotator PivotRot = ClampPivotRotationPitch_Safe(PivotRotRaw);
 
 	View.Location = PivotLoc;
 	View.Rotation = PivotRot;
 	View.ControlRotation = PivotRot;
 	View.FieldOfView = FieldOfView;
 }
+
 
 void UMosesCameraMode::UpdateBlending(float DeltaTime)
 {
@@ -269,4 +271,45 @@ void UMosesCameraModeStack::EvaluateStack(float DeltaTime, FMosesCameraModeView&
 {
 	UpdateStack(DeltaTime);
 	BlendStack(OutCameraModeView);
+}
+
+void UMosesCameraMode::GetEffectivePitchLimits(float& OutMin, float& OutMax) const
+{
+	// 프로젝트 최소 보장
+	const float ProjectMin = -89.0f;
+	const float ProjectMax = 89.0f;
+
+	// 모드 값은 "더 넓게" 허용 가능하지만 "더 좁게"는 허용하지 않는다.
+	OutMin = FMath::Min(ViewPitchMin, ProjectMin);
+	OutMax = FMath::Max(ViewPitchMax, ProjectMax);
+
+	if (OutMin > OutMax)
+	{
+		OutMin = ProjectMin;
+		OutMax = ProjectMax;
+	}
+}
+
+FRotator UMosesCameraMode::ClampPivotRotationPitch_Safe(const FRotator& InPivotRot) const
+{
+	float EffectiveMin = 0.0f;
+	float EffectiveMax = 0.0f;
+	GetEffectivePitchLimits(EffectiveMin, EffectiveMax);
+
+	FRotator Out = InPivotRot;
+	const float RawPitch = Out.Pitch;
+
+	Out.Pitch = FMath::ClampAngle(Out.Pitch, EffectiveMin, EffectiveMax);
+
+	// [MOD][Evidence] Pitch가 실제로 Clamp되는지 증거 1회 출력
+	if (!bLoggedPitchClampOnce && !FMath::IsNearlyEqual(RawPitch, Out.Pitch, 0.01f))
+	{
+		bLoggedPitchClampOnce = true;
+		UE_LOG(LogMosesCamera, Warning,
+			TEXT("[PITCH][CLAMP][CAMMODE] Mode=%s Raw=%.2f Clamped=%.2f Min=%.2f Max=%.2f"),
+			*GetNameSafe(GetClass()),
+			RawPitch, Out.Pitch, EffectiveMin, EffectiveMax);
+	}
+
+	return Out;
 }

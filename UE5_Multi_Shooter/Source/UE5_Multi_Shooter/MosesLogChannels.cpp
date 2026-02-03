@@ -52,7 +52,6 @@ DEFINE_LOG_CATEGORY(LogMosesZombie);
 DEFINE_LOG_CATEGORY(LogMosesAnnounce);
 DEFINE_LOG_CATEGORY(LogMosesKillFeed);
 
-
 // ============================================================
 // MosesLog Helpers
 // ============================================================

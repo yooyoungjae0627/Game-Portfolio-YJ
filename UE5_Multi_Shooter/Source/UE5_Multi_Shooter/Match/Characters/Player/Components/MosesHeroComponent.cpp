@@ -102,9 +102,12 @@ void UMosesHeroComponent::SetupInputBindings(UInputComponent* PlayerInputCompone
 		return;
 	}
 
-	if (!InputMappingContext || !IA_Move || !IA_Sprint || !IA_Jump || !IA_Interact)
+	const bool bHasLookSplit = (IA_LookYaw != nullptr) || (IA_LookPitch != nullptr);
+
+	if (!InputMappingContext || !IA_Move || !IA_Sprint || !IA_Jump || !IA_Interact || !bHasLookSplit)
 	{
-		UE_LOG(LogMosesSpawn, Error, TEXT("[Hero][Input] Assets missing. Set IMC + IA_Move/Sprint/Jump/Interact."));
+		UE_LOG(LogMosesSpawn, Error,
+			TEXT("[Hero][Input] Assets missing. Need IMC + IA_Move/Sprint/Jump/Interact + (IA_Look OR IA_LookYaw/Pitch)."));
 		return;
 	}
 
@@ -156,9 +159,14 @@ void UMosesHeroComponent::BindInputActions(UInputComponent* PlayerInputComponent
 
 	EIC->BindAction(IA_Move.Get(), ETriggerEvent::Triggered, this, &ThisClass::HandleMove);
 
-	if (IA_Look)
+	if (IA_LookYaw)
 	{
-		EIC->BindAction(IA_Look.Get(), ETriggerEvent::Triggered, this, &ThisClass::HandleLook);
+		EIC->BindAction(IA_LookYaw.Get(), ETriggerEvent::Triggered, this, &ThisClass::HandleLookYaw);
+	}
+
+	if (IA_LookPitch)
+	{
+		EIC->BindAction(IA_LookPitch.Get(), ETriggerEvent::Triggered, this, &ThisClass::HandleLookPitch);
 	}
 
 	EIC->BindAction(IA_Jump.Get(), ETriggerEvent::Started, this, &ThisClass::HandleJump);
@@ -192,7 +200,6 @@ void UMosesHeroComponent::BindInputActions(UInputComponent* PlayerInputComponent
 		EIC->BindAction(IA_EquipSlot3.Get(), ETriggerEvent::Started, this, &ThisClass::HandleEquipSlot3);
 	}
 
-	// ✅ Hold-to-fire
 	if (IA_Fire)
 	{
 		EIC->BindAction(IA_Fire.Get(), ETriggerEvent::Started, this, &ThisClass::HandleFirePressed);
@@ -214,11 +221,32 @@ void UMosesHeroComponent::HandleMove(const FInputActionValue& Value)
 	}
 }
 
-void UMosesHeroComponent::HandleLook(const FInputActionValue& Value)
+// [MOD] IA_LookYaw(float) 지원
+void UMosesHeroComponent::HandleLookYaw(const FInputActionValue& Value)
 {
 	if (APlayerCharacter* PC = Cast<APlayerCharacter>(GetOwner()))
 	{
-		PC->Input_Look(Value.Get<FVector2D>());
+		const float RawYaw = Value.Get<float>();
+		const float Yaw = RawYaw * LookSensitivityYaw;
+
+		PC->Input_LookYaw(Yaw);
+	}
+}
+
+// [MOD] IA_LookPitch(float) 지원
+void UMosesHeroComponent::HandleLookPitch(const FInputActionValue& Value)
+{
+	if (APlayerCharacter* PC = Cast<APlayerCharacter>(GetOwner()))
+	{
+		float RawPitch = Value.Get<float>();
+		float Pitch = RawPitch * LookSensitivityPitch;
+
+		if (bInvertPitch)
+		{
+			Pitch *= -1.0f;
+		}
+
+		PC->Input_LookPitch(Pitch);
 	}
 }
 

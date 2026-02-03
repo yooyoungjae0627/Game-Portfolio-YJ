@@ -51,7 +51,8 @@ public:
 	// Input Endpoints (HeroComponent -> Pawn)
 	// =========================================================================
 	void Input_Move(const FVector2D& MoveValue);
-	void Input_Look(const FVector2D& LookValue);
+	void Input_LookYaw(float Value);
+	void Input_LookPitch(float Value);
 
 	void Input_SprintPressed();
 	void Input_SprintReleased();

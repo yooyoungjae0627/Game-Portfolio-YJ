@@ -764,13 +764,21 @@ bool AMosesPlayerController::IsStartMap_Local() const
 
 bool AMosesPlayerController::IsLobbyContext() const
 {
+	// [MOD] Match/Start 맵에서는 LobbyContext로 판정되면 안 된다.
+	// SeamlessTravel/초기 프레임에서 GameState 타입이 잠깐 Lobby일 수 있어도
+	// 입력 정책이 꼬이면 Look(Pitch) 축이 "안 들어오는 것처럼" 보인다.
+	if (IsMatchMap_Local() || IsStartMap_Local())
+	{
+		return false;
+	}
+
 	// 1순위: 맵 이름 기반
 	if (IsLobbyMap_Local())
 	{
 		return true;
 	}
 
-	// 2순위: GameState 타입 기반 보조
+	// 2순위: GameState 타입 기반 보조 (NonMatch/NonStart에서만)
 	const UWorld* World = GetWorld();
 	if (!World)
 	{
@@ -1077,17 +1085,42 @@ void AMosesPlayerController::ApplyMatchCameraPolicy_LocalOnly(const TCHAR* Reaso
 		return;
 	}
 
-	// ✅ 핵심 보호:
-	// - Lobby/Start에서는 커서/입력/카메라 정책을 건드리지 않는다.
-	// - Start는 UI 중심 화면이므로 NonLobby(커서 OFF)로 묶이면 UX가 깨진다.
+	// [MOD] MatchMap이면 "무조건" NonLobby 정책 강제
+	// - Lobby/Start 판정은 Travel 타이밍에 일시적으로 흔들릴 수 있다.
+	// - Match에서 커서/입력 정책이 스킵되면 Look(Pitch) 축이 죽은 것처럼 보인다.
+	if (IsMatchMap_Local())
+	{
+		RestoreNonLobbyDefaults_LocalOnly();
+		RestoreNonLobbyInputMode_LocalOnly();
+		SetIgnoreLookInput(false);
+		SetIgnoreMoveInput(false);
+
+		if (APawn* LocalPawn = GetPawn())
+		{
+			SetViewTarget(LocalPawn);
+			AutoManageActiveCameraTarget(LocalPawn);
+		}
+
+		UE_LOG(LogMosesSpawn, Warning,
+			TEXT("[CAM][PC][%s] ApplyMatchCameraPolicy (FORCED MATCH) ViewTarget=%s Cursor=%d"),
+			Reason ? Reason : TEXT("None"),
+			*GetNameSafe(GetViewTarget()),
+			bShowMouseCursor ? 1 : 0);
+
+		return;
+	}
+
+	// Lobby/Start에서는 건드리지 않는다(기존 정책 유지)
 	if (IsLobbyContext() || IsStartMap_Local())
 	{
 		return;
 	}
 
-	// NonLobby 기본 정책 강제
+	// 기존 NonLobby 정책
 	RestoreNonLobbyDefaults_LocalOnly();
 	RestoreNonLobbyInputMode_LocalOnly();
+	SetIgnoreLookInput(false);
+	SetIgnoreMoveInput(false);
 
 	APawn* LocalPawn = GetPawn();
 	if (IsValid(LocalPawn))
@@ -1119,6 +1152,7 @@ void AMosesPlayerController::ApplyMatchCameraPolicy_LocalOnly(const TCHAR* Reaso
 
 	RetryApplyMatchCameraPolicy_NextTick_LocalOnly();
 }
+
 
 void AMosesPlayerController::RetryApplyMatchCameraPolicy_NextTick_LocalOnly()
 {

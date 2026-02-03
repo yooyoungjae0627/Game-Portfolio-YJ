@@ -269,15 +269,14 @@ void APlayerCharacter::Input_Move(const FVector2D& MoveValue)
 	UpdateSprintRequest_Local(TEXT("Move"));
 }
 
-void APlayerCharacter::Input_Look(const FVector2D& LookValue)
+void APlayerCharacter::Input_LookYaw(float Value)
 {
-	if (CachedCombatComponent && CachedCombatComponent->IsDead())
-	{
-		return;
-	}
+	AddControllerYawInput(Value);
+}
 
-	AddControllerYawInput(LookValue.X);
-	AddControllerPitchInput(LookValue.Y);
+void APlayerCharacter::Input_LookPitch(float Value)
+{
+	AddControllerPitchInput(Value);
 }
 
 void APlayerCharacter::Input_SprintPressed()

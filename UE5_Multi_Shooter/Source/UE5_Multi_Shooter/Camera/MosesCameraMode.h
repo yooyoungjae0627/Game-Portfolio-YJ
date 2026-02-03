@@ -1,4 +1,4 @@
-#pragma once
+ï»¿#pragma once
 
 #include "CoreMinimal.h"
 #include "UObject/Object.h"
@@ -18,13 +18,8 @@ enum class EMosesCameraModeBlendFunction : uint8
 };
 
 /**
- * FMosesCameraModeView
- *
- * [±â´É]
- * - Ä«¸Ş¶ó ÃÖÁ¾ Ãâ·Â °ª ¹­À½(Location/Rotation/ControlRotation/FOV)
- *
- * [¸í¼¼]
- * - Blend()·Î ´Ù¸¥ View¿Í °¡ÁßÄ¡ ±â¹İ ÇÕ¼º °¡´É
+ * CameraMode View Bundle
+ * - Location/Rotation/ControlRotation/FOV
  */
 struct FMosesCameraModeView
 {
@@ -41,15 +36,15 @@ struct FMosesCameraModeView
 /**
  * UMosesCameraMode
  *
- * [±â´É]
- * - TPS/FPS/Sniper °°Àº "Ä«¸Ş¶ó ¸ğµå 1°³"ÀÇ °è»ê ´ÜÀ§.
+ * - Camera calculation unit (ThirdPerson / FirstPerson / Sniper2x)
+ * - Created/owned by UMosesCameraComponent (stack-managed)
  *
- * [¸í¼¼]
- * - Outer´Â UMosesCameraComponent¿©¾ß ÇÑ´Ù(½ºÅÃÀÌ NewObject·Î »ı¼º).
- * - UpdateView()¿¡¼­ View¸¦ °è»êÇÏ°í, UpdateBlending()¿¡¼­ BlendWeight¸¦ °è»ê.
- * - ÆÇÁ¤/ÀÔ·Â ¾øÀ½(Ç¥½Ã Àü¿ë).
+ * [FIX][PITCH]
+ * - ì¼ë¶€ BP(CameraMode BP)ì—ì„œ ViewPitchMin/Maxê°€ ì˜ëª» ì¢ê²Œ ì„¤ì •ë˜ë©´
+ *   "ë§ˆìš°ìŠ¤ ìœ„/ì•„ë˜ë¥¼ ì›€ì§ì—¬ë„ í™”ë©´ì´ Pitchë¡œ íšŒì „í•˜ì§€ ì•ŠëŠ”" í˜„ìƒì´ ë°œìƒí•œë‹¤.
+ * - ë”°ë¼ì„œ ëª¨ë“œ ê°’ì´ ì˜ëª»ë˜ì–´ë„ í”„ë¡œì íŠ¸ ê¸°ë³¸ Pitch ë²”ìœ„ëŠ” "ìµœì†Œ ë³´ì¥"í•œë‹¤.
  */
-UCLASS(Abstract, NotBlueprintable)
+UCLASS(Abstract, Blueprintable)
 class UE5_MULTI_SHOOTER_API UMosesCameraMode : public UObject
 {
 	GENERATED_BODY()
@@ -69,45 +64,55 @@ public:
 protected:
 	virtual void UpdateView(float DeltaTime);
 
+	// =========================================================
+	// [MOD][FIX] Pitch Safety
+	// =========================================================
+	void GetEffectivePitchLimits(float& OutMin, float& OutMax) const;
+	FRotator ClampPivotRotationPitch_Safe(const FRotator& InPivotRot) const;
+
 private:
 	void UpdateBlending(float DeltaTime);
 
 public:
 	FMosesCameraModeView View;
 
-	UPROPERTY(EditDefaultsOnly, Category = "Moses|View", meta = (UIMin = "5.0", UIMax = "170.0", ClampMin = "5.0", ClampMax = "170.0"))
+	// -------------------- View Tunables --------------------
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Moses|View", meta = (UIMin = "5.0", UIMax = "170.0", ClampMin = "5.0", ClampMax = "170.0"))
 	float FieldOfView = 80.0f;
 
-	UPROPERTY(EditDefaultsOnly, Category = "Moses|View", meta = (UIMin = "-89.9", UIMax = "89.9", ClampMin = "-89.9", ClampMax = "89.9"))
+	/**
+	 * BPì—ì„œ ì‹¤ìˆ˜ë¡œ ì¢ê²Œ ì¡í˜€ë„ ì½”ë“œê°€ ìµœì†Œ ë³´ì¥(-89~+89)ì„ ì ìš©í•œë‹¤.
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Moses|View", meta = (UIMin = "-89.9", UIMax = "89.9", ClampMin = "-89.9", ClampMax = "89.9"))
 	float ViewPitchMin = -89.0f;
 
-	UPROPERTY(EditDefaultsOnly, Category = "Moses|View", meta = (UIMin = "-89.9", UIMax = "89.9", ClampMin = "-89.9", ClampMax = "89.9"))
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Moses|View", meta = (UIMin = "-89.9", UIMax = "89.9", ClampMin = "-89.9", ClampMax = "89.9"))
 	float ViewPitchMax = 89.0f;
 
-	UPROPERTY(EditDefaultsOnly, Category = "Moses|Blending")
+	// -------------------- Blending --------------------
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Moses|Blending")
 	float BlendTime = 0.15f;
 
-	UPROPERTY(EditDefaultsOnly, Category = "Moses|Blending")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Moses|Blending")
 	float BlendExponent = 4.0f;
 
-	UPROPERTY(EditDefaultsOnly, Category = "Moses|Blending")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Moses|Blending")
 	EMosesCameraModeBlendFunction BlendFunction = EMosesCameraModeBlendFunction::EaseOut;
 
 public:
 	float BlendAlpha = 1.0f;
 	float BlendWeight = 1.0f;
+
+private:
+	// [MOD] Clamp ë°œìƒ ì‹œ 1íšŒë§Œ ë¡œê·¸(ìŠ¤íŒ¸ ë°©ì§€)
+	mutable bool bLoggedPitchClampOnce = false;
 };
 
 /**
  * UMosesCameraModeStack
- *
- * [±â´É]
- * - CameraModeµéÀ» ½ºÅÃÀ¸·Î ½×°í, BlendWeight·Î ÇÕ¼ºÇÏ¿© ÃÖÁ¾ View¸¦ ¸¸µç´Ù.
- *
- * [¸í¼¼]
- * - PushCameraMode(): ¸ğµå¸¦ Top(0)¿¡ ¿Ã¸²
- * - EvaluateStack(): Update + Blend·Î ÃÖÁ¾ View °è»ê
- * - Bottom(¸¶Áö¸·) ¸ğµå´Â Ç×»ó BlendWeight=1 À¯Áö
+ * - Push / Blend / Evaluate
  */
 UCLASS()
 class UE5_MULTI_SHOOTER_API UMosesCameraModeStack : public UObject

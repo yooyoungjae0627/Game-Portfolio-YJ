@@ -8,11 +8,11 @@ UMosesCameraMode_FirstPerson::UMosesCameraMode_FirstPerson(const FObjectInitiali
 void UMosesCameraMode_FirstPerson::UpdateView(float DeltaTime)
 {
 	const FVector PivotLoc = GetPivotLocation();
-	FRotator PivotRot = GetPivotRotation();
+	const FRotator PivotRotRaw = GetPivotRotation();
 
-	PivotRot.Pitch = FMath::ClampAngle(PivotRot.Pitch, ViewPitchMin, ViewPitchMax);
+	// [MOD][FIX] 안전 Pitch Clamp(프로젝트 최소 보장)
+	const FRotator PivotRot = ClampPivotRotationPitch_Safe(PivotRotRaw);
 
-	// Pivot + 미세 오프셋
 	View.Location = PivotLoc + PivotRot.RotateVector(DefaultEyeOffset);
 	View.Rotation = PivotRot;
 	View.ControlRotation = PivotRot;
