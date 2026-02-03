@@ -23,22 +23,24 @@ public:
 protected:
 	virtual void BeginPlay() override;
 
-protected:
+private:
 	void SpawnZombies_Server();
 	void CleanupSpawnedZombies_Server();
 
 public:
-	UFUNCTION(BlueprintCallable, Category="Zombie|Spawn")
+	UFUNCTION(BlueprintCallable, Category = "Zombie|Spawn")
 	void ServerRespawnSpotZombies();
 
 public:
-	UPROPERTY(VisibleAnywhere, Category="Components")
-	TObjectPtr<USceneComponent> Root;
+	UPROPERTY(VisibleAnywhere, Category = "Components")
+	TObjectPtr<USceneComponent> Root = nullptr;
 
-	UPROPERTY(EditInstanceOnly, Category="Zombie|Spawn")
+	/** 레벨 인스턴스에서 배치한 SpawnPoint 컴포넌트들 */
+	UPROPERTY(EditInstanceOnly, Category = "Zombie|Spawn")
 	TArray<TObjectPtr<USceneComponent>> SpawnPoints;
 
-	UPROPERTY(EditDefaultsOnly, Category="Zombie|Spawn")
+	/** 4종 좀비 BP 클래스 배열 */
+	UPROPERTY(EditDefaultsOnly, Category = "Zombie|Spawn")
 	TArray<TSubclassOf<AMosesZombieCharacter>> ZombieClasses;
 
 	UPROPERTY(Transient)

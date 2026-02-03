@@ -1,4 +1,5 @@
-#include "MosesZombieCharacter.h"
+#include "UE5_Multi_Shooter/Match/Characters/Enemy/Zombie/MosesZombieCharacter.h"
+
 #include "UE5_Multi_Shooter/Match/Characters/Enemy/Zombie/Data/MosesZombieTypeData.h"
 #include "UE5_Multi_Shooter/Match/Characters/Enemy/Zombie/AttributeSet/MosesZombieAttributeSet.h"
 
@@ -15,7 +16,6 @@
 #include "AbilitySystemGlobals.h"
 #include "GameplayEffect.h"
 #include "GameplayEffectExtension.h"
-#include "AbilitySystemBlueprintLibrary.h"
 
 AMosesZombieCharacter::AMosesZombieCharacter()
 {
@@ -54,7 +54,6 @@ void AMosesZombieCharacter::BeginPlay()
 
 	if (AbilitySystemComponent)
 	{
-		// Zombie가 ASC Owner/Avatar를 직접 가진다.
 		AbilitySystemComponent->InitAbilityActorInfo(this, this);
 	}
 
@@ -74,7 +73,6 @@ void AMosesZombieCharacter::InitializeAttributes_Server()
 
 	const float MaxHP = ZombieTypeData ? ZombieTypeData->MaxHP : 100.f;
 
-	// 기본값 세팅: MaxHealth/Health를 직접 세팅(초기화 단계)
 	AbilitySystemComponent->SetNumericAttributeBase(UMosesZombieAttributeSet::GetMaxHealthAttribute(), MaxHP);
 	AbilitySystemComponent->SetNumericAttributeBase(UMosesZombieAttributeSet::GetHealthAttribute(), MaxHP);
 
@@ -94,11 +92,12 @@ void AMosesZombieCharacter::ServerStartAttack()
 		return;
 	}
 
-	UE_LOG(LogMosesZombie, Warning, TEXT("[ZOMBIE][SV] Attack Start Zombie=%s Montage=%s"), *GetName(), *GetNameSafe(Montage));
+	UE_LOG(LogMosesZombie, Warning, TEXT("[ZOMBIE][SV] Attack Start Zombie=%s Montage=%s"),
+		*GetName(), *GetNameSafe(Montage));
 
 	Multicast_PlayAttackMontage(Montage);
 
-	// DAY10: "Overlap 타이밍 데미지"가 핵심이므로 최소 공격 윈도우를 타이머로 구현
+	// 공격 윈도우 ON (Overlap 판정은 서버만)
 	SetAttackHitEnabled_Server(true);
 
 	FTimerHandle TimerHandle;
@@ -157,14 +156,10 @@ bool AMosesZombieCharacter::ApplySetByCallerDamageGE_Server(UAbilitySystemCompon
 		return false;
 	}
 
-	// 프로젝트 표준 태그: Data.Damage
 	const FGameplayTag DamageTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Data.Damage")));
 
 	FGameplayEffectContextHandle Context = TargetASC->MakeEffectContext();
 	Context.AddSourceObject(this);
-
-	// 공격 히트의 의미를 담기 위해 HitResult를 넣고 싶다면, 여기서 AddHitResult 가능
-	// (근접은 BoneName 의미가 약하므로 생략해도 OK)
 
 	const FGameplayEffectSpecHandle SpecHandle = TargetASC->MakeOutgoingSpec(ZombieTypeData->DamageGE_SetByCaller, 1.f, Context);
 	if (!SpecHandle.IsValid())
@@ -173,18 +168,17 @@ bool AMosesZombieCharacter::ApplySetByCallerDamageGE_Server(UAbilitySystemCompon
 	}
 
 	SpecHandle.Data->SetSetByCallerMagnitude(DamageTag, DamageAmount);
-
 	TargetASC->ApplyGameplayEffectSpecToSelf(*SpecHandle.Data.Get());
 	return true;
 }
 
 void AMosesZombieCharacter::OnAttackHitOverlapBegin(
-	UPrimitiveComponent* OverlappedComp,
+	UPrimitiveComponent* /*OverlappedComp*/,
 	AActor* OtherActor,
-	UPrimitiveComponent* OtherComp,
-	int32 OtherBodyIndex,
-	bool bFromSweep,
-	const FHitResult& SweepResult)
+	UPrimitiveComponent* /*OtherComp*/,
+	int32 /*OtherBodyIndex*/,
+	bool /*bFromSweep*/,
+	const FHitResult& /*SweepResult*/)
 {
 	if (!HasAuthority() || !bAttackHitEnabled)
 	{
@@ -221,7 +215,6 @@ void AMosesZombieCharacter::HandleDamageAppliedFromGAS_Server(const FGameplayEff
 		return;
 	}
 
-	// 이 피해는 "무기/유탄"이 Target(좀비) ASC에 GE를 Apply한 결과다.
 	const FGameplayEffectContextHandle& Context = Data.EffectSpec.GetEffectContext();
 
 	LastDamageKillerPS = ResolveKillerPlayerState_FromEffectContext_Server(Context);
@@ -247,7 +240,6 @@ AMosesPlayerState* AMosesZombieCharacter::ResolveKillerPlayerState_FromEffectCon
 		return nullptr;
 	}
 
-	// Context에 담긴 Instigator를 최대한 활용
 	AActor* InstigatorActor = Context.GetOriginalInstigator();
 	if (!InstigatorActor)
 	{
@@ -256,7 +248,6 @@ AMosesPlayerState* AMosesZombieCharacter::ResolveKillerPlayerState_FromEffectCon
 
 	APawn* InstigatorPawn = Cast<APawn>(InstigatorActor);
 	AController* InstigatorController = InstigatorPawn ? InstigatorPawn->GetController() : nullptr;
-
 	if (!InstigatorController)
 	{
 		return nullptr;
@@ -272,7 +263,7 @@ bool AMosesZombieCharacter::ResolveHeadshot_FromEffectContext_Server(const FGame
 		return false;
 	}
 
-	// 무기 서버 Trace가 EffectContext에 HitResult를 넣었다면 BoneName으로 헤드샷 판정 가능
+	// 무기 서버 트레이스가 EffectContext에 HitResult를 넣어야 동작함(AddHitResult)
 	const FHitResult* HR = Context.GetHitResult();
 	if (!HR)
 	{
@@ -297,13 +288,18 @@ void AMosesZombieCharacter::HandleDeath_Server()
 		bHeadshot ? TEXT("true") : TEXT("false"),
 		*GetName());
 
-	// SSOT(PlayerState): 좀비 킬/헤샷 카운트 증가(이미 프로젝트에 있다면 그 함수/필드로 연결)
 	if (KillerPS)
 	{
 		KillerPS->ServerAddZombieKill(1);
 	}
 
 	PushKillFeed_Server(bHeadshot, KillerPS);
+
+	// [DAY10][MOD] Headshot -> 공용 Announcement 팝업
+	if (bHeadshot)
+	{
+		PushHeadshotAnnouncement_Server(KillerPS);
+	}
 
 	Destroy();
 }
@@ -327,6 +323,36 @@ void AMosesZombieCharacter::PushKillFeed_Server(bool bHeadshot, AMosesPlayerStat
 		: FString::Printf(TEXT("%s Zombie Killed"), *KillerName);
 
 	MGS->ServerPushKillFeed(Msg);
+}
+
+void AMosesZombieCharacter::PushHeadshotAnnouncement_Server(AMosesPlayerState* KillerPS) const
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	AMosesMatchGameState* MGS = GetWorld() ? GetWorld()->GetGameState<AMosesMatchGameState>() : nullptr;
+	if (!MGS)
+	{
+		return;
+	}
+
+	FText BaseText = ZombieTypeData ? ZombieTypeData->HeadshotAnnouncementText : FText::FromString(TEXT("헤드샷!"));
+	if (BaseText.IsEmpty())
+	{
+		BaseText = FText::FromString(TEXT("헤드샷!"));
+	}
+
+	const FString KillerName = KillerPS ? KillerPS->GetPlayerName() : FString(TEXT("누군가"));
+	const FString Msg = FString::Printf(TEXT("%s (%s)"), *BaseText.ToString(), *KillerName);
+
+	const float Sec = ZombieTypeData ? ZombieTypeData->HeadshotAnnouncementSeconds : 0.9f;
+
+	MGS->ServerPushAnnouncement(Msg, FMath::Max(0.2f, Sec));
+
+	UE_LOG(LogMosesAnnounce, Warning, TEXT("[ANN][SV] HeadshotPopup Msg='%s' Sec=%.2f Killer=%s"),
+		*Msg, Sec, *GetNameSafe(KillerPS));
 }
 
 void AMosesZombieCharacter::Multicast_PlayAttackMontage_Implementation(UAnimMontage* MontageToPlay)

@@ -5,18 +5,12 @@
 #include "MosesZombieTypeData.generated.h"
 
 class UAnimMontage;
-class USoundBase;
 class UGameplayEffect;
 
 /**
- * Zombie Type Data (Data-only, GF_Combat_Data 권장)
- * - 좀비 타입별 스펙을 DataAsset로 분리한다.
- * - "피해 적용"은 반드시 GAS GameplayEffect로 통일한다.
- *
- * Server Authority:
- * - Overlap/Trace 판정: 서버
- * - 피해/HP 감소: 서버가 GE Apply
- * - 죽음/Destroy: 서버
+ * Zombie Type Data (Data-only)
+ * - 좀비 타입별 스펙(DataAsset)
+ * - 피해 적용은 "SetByCaller GE"로 통일
  */
 UCLASS(BlueprintType)
 class UE5_MULTI_SHOOTER_API UMosesZombieTypeData : public UDataAsset
@@ -37,7 +31,6 @@ public:
 
 	/**
 	 * Damage GameplayEffect (SetByCaller)
-	 * - 프로젝트 표준: GE_Damage_SetByCaller
 	 * - Tag: Data.Damage
 	 */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Zombie|Combat")
@@ -50,7 +43,15 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Zombie|Combat")
 	TArray<TObjectPtr<UAnimMontage>> AttackMontages;
 
-	/** Headshot Kill Sound (로컬 연출) */
+	// --------------------------------------------------------------------
+	// [DAY10] Headshot Feedback -> 공용 Announcement 팝업(모두에게 보임)
+	// --------------------------------------------------------------------
+
+	/** 헤드샷 공용 팝업 텍스트(한글 시작 권장: 네 Announcement 위젯이 영어 제거/한글 시작 필터를 함) */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Zombie|Feedback")
-	TObjectPtr<USoundBase> HeadshotKillSound;
+	FText HeadshotAnnouncementText;
+
+	/** 헤드샷 팝업 표시 시간(초) */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Zombie|Feedback")
+	float HeadshotAnnouncementSeconds;
 };

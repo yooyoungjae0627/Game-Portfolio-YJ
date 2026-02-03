@@ -2,7 +2,6 @@
 
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
 #include "UE5_Multi_Shooter/Match/Characters/Enemy/Zombie/MosesZombieCharacter.h"
-
 #include "GameplayEffectExtension.h"
 
 UMosesZombieAttributeSet::UMosesZombieAttributeSet()
@@ -13,7 +12,6 @@ void UMosesZombieAttributeSet::PostGameplayEffectExecute(const FGameplayEffectMo
 {
 	Super::PostGameplayEffectExecute(Data);
 
-	// Damage meta -> Health 감소
 	if (Data.EvaluatedData.Attribute == GetDamageAttribute())
 	{
 		const float LocalDamage = GetDamage();
@@ -27,7 +25,6 @@ void UMosesZombieAttributeSet::PostGameplayEffectExecute(const FGameplayEffectMo
 		const float NewHealth = FMath::Clamp(GetHealth() - LocalDamage, 0.f, GetMaxHealth());
 		SetHealth(NewHealth);
 
-		// 서버에서만 죽음 처리
 		if (AMosesZombieCharacter* Zombie = Cast<AMosesZombieCharacter>(GetOwningActor()))
 		{
 			Zombie->HandleDamageAppliedFromGAS_Server(Data, LocalDamage, NewHealth);
@@ -35,7 +32,6 @@ void UMosesZombieAttributeSet::PostGameplayEffectExecute(const FGameplayEffectMo
 	}
 	else if (Data.EvaluatedData.Attribute == GetHealthAttribute())
 	{
-		// Clamp 안전
 		SetHealth(FMath::Clamp(GetHealth(), 0.f, GetMaxHealth()));
 	}
 	else if (Data.EvaluatedData.Attribute == GetMaxHealthAttribute())
@@ -61,6 +57,5 @@ void UMosesZombieAttributeSet::GetLifetimeReplicatedProps(TArray<FLifetimeProper
 
 	DOREPLIFETIME_CONDITION_NOTIFY(UMosesZombieAttributeSet, Health, COND_None, REPNOTIFY_Always);
 	DOREPLIFETIME_CONDITION_NOTIFY(UMosesZombieAttributeSet, MaxHealth, COND_None, REPNOTIFY_Always);
-
-	// Damage는 Meta Attribute라 Rep 할 필요 없음(서버에서만 사용 후 0으로 리셋)
+	// Damage(meta)는 Rep 불필요
 }

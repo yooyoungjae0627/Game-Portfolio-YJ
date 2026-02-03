@@ -1,9 +1,10 @@
 #include "UE5_Multi_Shooter/Match/Characters/Enemy/Zombie/Actor/MosesZombieSpawnSpot.h"
+
 #include "UE5_Multi_Shooter/Match/Characters/Enemy/Zombie/MosesZombieCharacter.h"
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
+
 #include "Components/SceneComponent.h"
 #include "Engine/World.h"
-
 
 AMosesZombieSpawnSpot::AMosesZombieSpawnSpot()
 {
@@ -75,7 +76,7 @@ void AMosesZombieSpawnSpot::SpawnZombies_Server()
 		}
 
 		const int32 ClassIdx = i % ZombieClasses.Num();
-		TSubclassOf<AMosesZombieCharacter> SpawnClass = ZombieClasses[ClassIdx];
+		const TSubclassOf<AMosesZombieCharacter> SpawnClass = ZombieClasses[ClassIdx];
 		if (!SpawnClass)
 		{
 			continue;

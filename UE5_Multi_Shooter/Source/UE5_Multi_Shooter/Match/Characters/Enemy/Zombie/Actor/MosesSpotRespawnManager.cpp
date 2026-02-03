@@ -1,7 +1,7 @@
-#include "MosesSpotRespawnManager.h"
+#include "UE5_Multi_Shooter/Match/Characters/Enemy/Zombie/Actor/MosesSpotRespawnManager.h"
+
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
 #include "UE5_Multi_Shooter/Match/GameState/MosesMatchGameState.h"
-#include "UE5_Multi_Shooter/Match/Characters/Enemy/Zombie/MosesZombieCharacter.h"
 #include "UE5_Multi_Shooter/Match/Characters/Enemy/Zombie/Actor/MosesZombieSpawnSpot.h"
 
 #include "EngineUtils.h"
@@ -89,10 +89,12 @@ void AMosesSpotRespawnManager::BroadcastCountdown_Server(int32 Seconds)
 		return;
 	}
 
-	const FString Msg = FString::Printf(TEXT("Respawn in %d"), Seconds);
-	MGS->ServerPushAnnouncement(Msg, 1.1f);
+	// 한글 시작 권장(네 Announcement 위젯 필터)
+	const FString Msg = FString::Printf(TEXT("리스폰 %d초 전"), Seconds);
+	MGS->ServerPushAnnouncement(Msg, 1.05f);
 
-	UE_LOG(LogMosesAnnounce, Warning, TEXT("[ANN][SV] RespawnCountdown Tick=%d Spot=%s"), Seconds, *GetNameSafe(PendingRespawnSpot));
+	UE_LOG(LogMosesAnnounce, Warning, TEXT("[ANN][SV] RespawnCountdown Tick=%d Spot=%s"),
+		Seconds, *GetNameSafe(PendingRespawnSpot));
 }
 
 void AMosesSpotRespawnManager::ExecuteRespawn_Server()
@@ -106,7 +108,7 @@ void AMosesSpotRespawnManager::ExecuteRespawn_Server()
 
 	PendingRespawnSpot->ServerRespawnSpotZombies();
 
-	// TODO(확장): Flag 리스폰이 필요하면 여기서 훅 호출
+	// TODO(DAY10 확장): Flag 리스폰이 필요하면 여기서 훅 호출
 	// PendingRespawnSpot->ServerRespawnFlag();
 
 	PendingRespawnSpot = nullptr;

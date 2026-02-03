@@ -22,26 +22,26 @@ public:
 protected:
 	virtual void BeginPlay() override;
 
-protected:
+private:
 	void TickCountdown_Server();
 	void BroadcastCountdown_Server(int32 Seconds);
 	void ExecuteRespawn_Server();
 
 public:
-	UFUNCTION(BlueprintCallable, Category="Respawn")
+	UFUNCTION(BlueprintCallable, Category = "Respawn")
 	void ServerOnSpotCaptured(AMosesZombieSpawnSpot* CapturedSpot);
 
 public:
-	UPROPERTY(EditDefaultsOnly, Category="Respawn")
-	int32 RespawnCountdownSeconds;
+	UPROPERTY(EditDefaultsOnly, Category = "Respawn")
+	int32 RespawnCountdownSeconds = 10;
 
-	UPROPERTY(EditInstanceOnly, Category="Respawn")
+	UPROPERTY(EditInstanceOnly, Category = "Respawn")
 	TArray<TObjectPtr<AMosesZombieSpawnSpot>> ManagedSpots;
 
 private:
 	UPROPERTY()
-	TObjectPtr<AMosesZombieSpawnSpot> PendingRespawnSpot;
+	TObjectPtr<AMosesZombieSpawnSpot> PendingRespawnSpot = nullptr;
 
-	int32 CurrentCountdown;
+	int32 CurrentCountdown = 0;
 	FTimerHandle CountdownTimerHandle;
 };

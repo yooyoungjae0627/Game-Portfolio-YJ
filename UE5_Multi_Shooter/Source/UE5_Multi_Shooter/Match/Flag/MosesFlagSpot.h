@@ -3,6 +3,7 @@
 // ----------------------------------------------------------------------------
 // - Overlap 기반(존 안에서 E) FlagSpot
 // - PromptWidget: 로컬 플레이어에게만 표시 + 항상 카메라를 바라봄(Billboard)
+// - [DAY10][MOD] 캡처 성공(서버 확정) -> RespawnManager(10초 방송/0초 리스폰) 트리거
 // ============================================================================
 
 #pragma once
@@ -21,6 +22,10 @@ class AMosesPlayerState;
 
 class UMosesFlagFeedbackData;
 class UMosesInteractionComponent;
+
+// [DAY10][MOD]
+class AMosesZombieSpawnSpot;
+class AMosesSpotRespawnManager;
 
 UENUM(BlueprintType)
 enum class EMosesCaptureCancelReason : uint8
@@ -71,6 +76,13 @@ private:
 	/** [MOD] 필요 시 서버에서만 Dormancy를 늦게 세팅한다 (초기 DormantAll 금지) */
 	void ApplyDormancyPolicy_ServerOnly();
 
+	// ---------------------------------------------------------------------
+	// [DAY10][MOD] Capture Success -> Respawn Manager Trigger (Server)
+	// ---------------------------------------------------------------------
+	void NotifyRespawnManager_OnCaptured_Server();
+	AMosesSpotRespawnManager* FindRespawnManager_Server() const;
+
+private:
 	// ---------------------------------------------------------------------
 	// Overlap callbacks
 	// ---------------------------------------------------------------------
@@ -155,6 +167,18 @@ private:
 	// [MOD] Billboard tick (Local only)
 	UPROPERTY(EditDefaultsOnly, Category = "Flag|Prompt")
 	float PromptBillboardInterval = 0.033f; // ~30fps
+
+private:
+	// ---------------------------------------------------------------------
+	// [DAY10][MOD] Level Link (Instance)
+	// - 캡처 성공 시, 이 스팟에 연결된 좀비 스폰 스팟을 10초 후 리스폰한다.
+	// ---------------------------------------------------------------------
+	UPROPERTY(EditInstanceOnly, Category = "DAY10|Respawn", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<AMosesZombieSpawnSpot> LinkedZombieSpawnSpot = nullptr;
+
+	/** RespawnManager를 명시하고 싶으면 지정. 비우면 월드에서 자동 탐색 */
+	UPROPERTY(EditInstanceOnly, Category = "DAY10|Respawn", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<AMosesSpotRespawnManager> RespawnManagerOverride = nullptr;
 
 private:
 	// ---------------------------------------------------------------------

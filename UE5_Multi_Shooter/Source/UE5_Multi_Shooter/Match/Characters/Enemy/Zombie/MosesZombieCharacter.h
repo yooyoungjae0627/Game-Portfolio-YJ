@@ -3,7 +3,6 @@
 #include "CoreMinimal.h"
 #include "GameFramework/Character.h"
 #include "AbilitySystemInterface.h"
-#include "Net/UnrealNetwork.h"
 
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
 
@@ -17,21 +16,16 @@ class UMosesZombieAttributeSet;
 class UMosesZombieTypeData;
 class AMosesMatchGameState;
 class AMosesPlayerState;
-class UGameplayEffect;
 
 /**
  * Zombie Character (Server Authority + GAS)
  *
- * 목표(DAY10):
+ * DAY10:
  * - 스팟에서 스폰
- * - 공격 몽타주 2패턴 랜덤 재생
- * - 공격 타이밍 Overlap -> 서버가 Victim ASC에 GE_Damage_SetByCaller 적용(10)
- * - Zombie HP=100(GAS Health), 죽으면 Destroy
- * - KillFeed 표시, Headshot이면 "Headshot" + 전용 사운드
- *
- * 핵심:
- * - "피해/HP"는 반드시 GAS(UGameplayEffect)로만 변경한다.
- * - 판정(Overlap/HitResult)은 서버에서만 한다.
+ * - 공격 몽타주 2패턴 랜덤
+ * - 공격 윈도우 동안 Overlap -> Victim ASC에 GE(SetByCaller) 적용
+ * - 좀비 HP=100 (GAS)
+ * - KillFeed + Headshot이면 공용 Announcement 팝업
  */
 UCLASS()
 class UE5_MULTI_SHOOTER_API AMosesZombieCharacter : public ACharacter, public IAbilitySystemInterface
@@ -42,30 +36,24 @@ public:
 	AMosesZombieCharacter();
 
 public:
-	//~IAbilitySystemInterface
 	virtual UAbilitySystemComponent* GetAbilitySystemComponent() const override;
 
-public:
-	/** GAS Health 초기화 (서버) */
-	void InitializeAttributes_Server();
-
-	/** AttributeSet에서 Damage 적용 후 콜백(서버) */
-	void HandleDamageAppliedFromGAS_Server(const struct FGameplayEffectModCallbackData& Data, float AppliedDamage, float NewHealth);
-
 protected:
-	//~AActor
 	virtual void BeginPlay() override;
 
-	/** 공격 시작(서버) */
+private:
+	// -------------------------
+	// Init / Attributes
+	// -------------------------
+	void InitializeAttributes_Server();
+
+	// -------------------------
+	// Attack (Server)
+	// -------------------------
 	void ServerStartAttack();
-
-	/** 공격 몽타주 선택(서버) */
 	UAnimMontage* PickAttackMontage_Server() const;
-
-	/** 공격 히트박스 토글(서버) */
 	void SetAttackHitEnabled_Server(bool bEnabled);
 
-	/** 손/무기 Overlap 히트(서버) -> Victim ASC에 GE Apply */
 	UFUNCTION()
 	void OnAttackHitOverlapBegin(
 		UPrimitiveComponent* OverlappedComp,
@@ -75,65 +63,59 @@ protected:
 		bool bFromSweep,
 		const FHitResult& SweepResult);
 
-	/** 공격 몽타주 재생(코스메틱) */
 	UFUNCTION(NetMulticast, Unreliable)
 	void Multicast_PlayAttackMontage(UAnimMontage* MontageToPlay);
 
-	/** 죽음 처리(서버) */
+	// -------------------------
+	// Damage / Death (Server)
+	// -------------------------
+public:
+	void HandleDamageAppliedFromGAS_Server(const struct FGameplayEffectModCallbackData& Data, float AppliedDamage, float NewHealth);
+
+private:
 	void HandleDeath_Server();
 
-	/** KillFeed push(서버) */
 	void PushKillFeed_Server(bool bHeadshot, AMosesPlayerState* KillerPS);
 
-	/** EffectContext에서 Killer/HitResult 추출(서버) */
+	// [DAY10][MOD] Headshot -> 공용 Announcement 팝업
+	void PushHeadshotAnnouncement_Server(AMosesPlayerState* KillerPS) const;
+
+	// -------------------------
+	// Context Helpers (Server)
+	// -------------------------
 	AMosesPlayerState* ResolveKillerPlayerState_FromEffectContext_Server(const struct FGameplayEffectContextHandle& Context) const;
 	bool ResolveHeadshot_FromEffectContext_Server(const struct FGameplayEffectContextHandle& Context) const;
 
-	/** Victim Actor -> ASC 찾기(서버) */
 	UAbilitySystemComponent* FindASCFromActor_Server(AActor* TargetActor) const;
-
-	/** Victim ASC에 Damage GE(SetByCaller) 적용(서버) */
 	bool ApplySetByCallerDamageGE_Server(UAbilitySystemComponent* TargetASC, float DamageAmount) const;
 
-protected:
-	// --------------------
-	// GAS Components
-	// --------------------
+private:
+	// -------------------------
+	// GAS
+	// -------------------------
+	UPROPERTY(VisibleAnywhere, Category = "GAS")
+	TObjectPtr<UMosesAbilitySystemComponent> AbilitySystemComponent = nullptr;
 
-	/** AbilitySystemComponent (Zombie owns ASC) */
-	UPROPERTY(VisibleAnywhere, Category="GAS")
-	TObjectPtr<UMosesAbilitySystemComponent> AbilitySystemComponent;
+	UPROPERTY(VisibleAnywhere, Category = "GAS")
+	TObjectPtr<UMosesZombieAttributeSet> AttributeSet = nullptr;
 
-	/** Zombie AttributeSet */
-	UPROPERTY(VisibleAnywhere, Category="GAS")
-	TObjectPtr<UMosesZombieAttributeSet> AttributeSet;
-
-protected:
-	// --------------------
+private:
+	// -------------------------
 	// Data / Combat
-	// --------------------
+	// -------------------------
+	UPROPERTY(EditDefaultsOnly, Category = "Zombie|Data")
+	TObjectPtr<UMosesZombieTypeData> ZombieTypeData = nullptr;
 
-	UPROPERTY(EditDefaultsOnly, Category="Zombie|Data")
-	TObjectPtr<UMosesZombieTypeData> ZombieTypeData;
-
-	/** Head bone name for headshot detection (Default "head") */
-	UPROPERTY(EditDefaultsOnly, Category="Zombie|Combat")
+	UPROPERTY(EditDefaultsOnly, Category = "Zombie|Combat")
 	FName HeadBoneName;
 
-	/** Attack hit collision */
-	UPROPERTY(VisibleAnywhere, Category="Zombie|Combat")
-	TObjectPtr<UBoxComponent> AttackHitBox;
+	UPROPERTY(VisibleAnywhere, Category = "Zombie|Combat")
+	TObjectPtr<UBoxComponent> AttackHitBox = nullptr;
 
-	/** Attack window enabled (server) */
-	bool bAttackHitEnabled;
+	bool bAttackHitEnabled = false;
 
-	/** Cached last-killer data (server) */
-	bool bLastDamageHeadshot;
+	bool bLastDamageHeadshot = false;
+
 	UPROPERTY()
-	TObjectPtr<AMosesPlayerState> LastDamageKillerPS;
-
-public:
-	// --------------------
-	// Variables order rule: public -> protected -> private
-	// --------------------
+	TObjectPtr<AMosesPlayerState> LastDamageKillerPS = nullptr;
 };

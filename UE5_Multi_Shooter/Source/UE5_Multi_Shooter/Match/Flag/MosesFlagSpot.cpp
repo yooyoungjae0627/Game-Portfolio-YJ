@@ -1,4 +1,33 @@
-﻿#include "UE5_Multi_Shooter/Match/Flag/MosesFlagSpot.h"
+﻿// ============================================================================
+// MosesFlagSpot.cpp (FULL)
+// ----------------------------------------------------------------------------
+// - Server Authority Flag Capture Spot
+// - Overlap zone + E interaction start (Request from player via InteractionComponent)
+// - Server confirms "in zone" + guards + dead check
+// - Capture tick uses timer (no Tick)
+// - On capture success: Server sets CaptureComponent state, broadcasts announcement,
+//   and triggers DAY10 RespawnManager(10s countdown -> respawn zombies at 0)
+// - PromptWidget: local only + billboard to camera (timer driven)
+// ============================================================================
+
+#include "UE5_Multi_Shooter/Match/Flag/MosesFlagSpot.h"
+
+#include "UE5_Multi_Shooter/MosesPlayerState.h"
+#include "UE5_Multi_Shooter/MosesLogChannels.h"
+
+#include "UE5_Multi_Shooter/Match/Flag/MosesCaptureComponent.h"
+#include "UE5_Multi_Shooter/Match/Flag/MosesFlagFeedbackData.h"
+
+#include "UE5_Multi_Shooter/Match/Components/MosesCombatComponent.h"
+#include "UE5_Multi_Shooter/Match/Components/MosesInteractionComponent.h"
+
+#include "UE5_Multi_Shooter/Match/GameState/MosesMatchGameState.h"
+
+// [DAY10]
+#include "UE5_Multi_Shooter/Match/Characters/Enemy/Zombie/Actor/MosesZombieSpawnSpot.h"
+#include "UE5_Multi_Shooter/Match/Characters/Enemy/Zombie/Actor/MosesSpotRespawnManager.h"
+
+#include "UE5_Multi_Shooter/Match/UI/Match/MosesPickupPromptWidget.h"
 
 #include "Components/SphereComponent.h"
 #include "Components/StaticMeshComponent.h"
@@ -9,18 +38,11 @@
 #include "GameFramework/Pawn.h"
 #include "GameFramework/PlayerController.h"
 #include "Camera/PlayerCameraManager.h"
+
 #include "Engine/World.h"
 #include "TimerManager.h"
+#include "EngineUtils.h" // TActorIterator
 
-#include "UE5_Multi_Shooter/MosesLogChannels.h"
-#include "UE5_Multi_Shooter/Match/Flag/MosesCaptureComponent.h"
-#include "UE5_Multi_Shooter/Match/Flag/MosesFlagFeedbackData.h"
-#include "UE5_Multi_Shooter/MosesPlayerState.h"
-#include "UE5_Multi_Shooter/Match/Components/MosesCombatComponent.h"
-#include "UE5_Multi_Shooter/Match/GameState/MosesMatchGameState.h"
-
-#include "UE5_Multi_Shooter/Match/Components/MosesInteractionComponent.h"
-#include "UE5_Multi_Shooter/Match/UI/Match/MosesPickupPromptWidget.h"
 
 AMosesFlagSpot::AMosesFlagSpot()
 {
@@ -61,7 +83,6 @@ AMosesFlagSpot::AMosesFlagSpot()
 	UE_LOG(LogMosesFlag, Warning, TEXT("[FLAGSPOT][CTOR] Root=CaptureZone Radius=%.1f Rep=%d Dormancy=%d"),
 		260.f, bReplicates ? 1 : 0, (int32)NetDormancy);
 }
-
 
 void AMosesFlagSpot::BeginPlay()
 {
@@ -163,7 +184,6 @@ bool AMosesFlagSpot::ServerTryStartCapture(AMosesPlayerState* RequesterPS)
 
 	// ---------------------------------------------------------------------
 	// 3) 캡처 존 안에 있는지 (서버 확정)
-	// ⭐ 핵심 보강 포인트
 	// ---------------------------------------------------------------------
 	if (!IsInsideCaptureZone_Server(RequesterPS))
 	{
@@ -233,7 +253,6 @@ bool AMosesFlagSpot::ServerTryStartCapture(AMosesPlayerState* RequesterPS)
 	StartCapture_Internal(RequesterPS);
 	return true;
 }
-
 
 void AMosesFlagSpot::ServerCancelCapture(AMosesPlayerState* RequesterPS, EMosesCaptureCancelReason Reason)
 {
@@ -317,6 +336,7 @@ void AMosesFlagSpot::FinishCapture_Internal()
 		return;
 	}
 
+	// 1) CaptureComponent 서버 확정 콜백
 	if (UMosesCaptureComponent* CC = CapturerPS->FindComponentByClass<UMosesCaptureComponent>())
 	{
 		CC->ServerOnCaptureSucceeded(this, CaptureElapsedSeconds);
@@ -325,6 +345,7 @@ void AMosesFlagSpot::FinishCapture_Internal()
 	UE_LOG(LogMosesFlag, Log, TEXT("%s CaptureOK Spot=%s Player=%s Time=%.2f"),
 		MOSES_TAG_FLAG_SV, *GetNameSafe(this), *GetNameSafe(CapturerPS), CaptureElapsedSeconds);
 
+	// 2) 공용 Announcement
 	if (AMosesMatchGameState* MGS = GetWorld() ? GetWorld()->GetGameState<AMosesMatchGameState>() : nullptr)
 	{
 		const FText Text = FText::Format(
@@ -338,6 +359,10 @@ void AMosesFlagSpot::FinishCapture_Internal()
 			*Text.ToString(), DurationSec);
 	}
 
+	// 3) [DAY10] 캡처 성공 -> RespawnManager(10초 방송 -> 0초 스팟 좀비 리스폰)
+	NotifyRespawnManager_OnCaptured_Server();
+
+	// 4) 상태 리셋
 	ResetCaptureState_Server();
 }
 
@@ -357,17 +382,11 @@ void AMosesFlagSpot::TickCaptureProgress_Server()
 		return;
 	}
 
-	// ✅ [필수 안정화] 캡처 진행 중에는 "지금도 존 안"인지 계속 확인한다.
-	if (CaptureZone)
+	// ✅ 캡처 진행 중에는 "지금도 존 안"인지 계속 확인한다.
+	if (!IsInsideCaptureZone_Server(CapturerPS))
 	{
-		const APawn* Pawn = CapturerPS->GetPawn();
-		const bool bInZone = (Pawn && CaptureZone->IsOverlappingActor(Pawn));
-
-		if (!IsInsideCaptureZone_Server(CapturerPS))
-		{
-			CancelCapture_Internal(EMosesCaptureCancelReason::LeftZone);
-			return;
-		}
+		CancelCapture_Internal(EMosesCaptureCancelReason::LeftZone);
+		return;
 	}
 
 	CaptureElapsedSeconds += CaptureTickInterval;
@@ -405,6 +424,9 @@ void AMosesFlagSpot::HandleZoneBeginOverlap(
 		return;
 	}
 
+	// ---------------------------------------------------------------------
+	// Client: Prompt + InteractTarget
+	// ---------------------------------------------------------------------
 	if (!HasAuthority())
 	{
 		if (IsLocalPawn(Pawn))
@@ -443,7 +465,7 @@ void AMosesFlagSpot::HandleZoneEndOverlap(
 	}
 
 	// ---------------------------------------------------------------------
-	// Client: UI/Target Clear (기존 로직 유지)
+	// Client: Prompt/Target Clear
 	// ---------------------------------------------------------------------
 	if (!HasAuthority())
 	{
@@ -469,19 +491,16 @@ void AMosesFlagSpot::HandleZoneEndOverlap(
 	}
 
 	// ---------------------------------------------------------------------
-	// Server: No Immediate Cancel (중요)
+	// Server: No Immediate Cancel
+	// - EndOverlap은 순간 튈 수 있음
+	// - 취소는 TickCaptureProgress_Server에서 확정
 	// ---------------------------------------------------------------------
-	// ✅ EndOverlap 이벤트는 순간 튈 수 있음.
-	// ✅ 캡처 유지/취소 판정은 TickCaptureProgress_Server에서 "확정"한다.
-	// 따라서 여기서 CancelCapture_Internal을 호출하지 않는다.
-
 	UE_LOG(LogMosesFlag, Verbose, TEXT("%s ZoneExit Spot=%s Pawn=%s (NoImmediateCancel) Capturer=%s"),
 		MOSES_TAG_FLAG_SV,
 		*GetNameSafe(this),
 		*GetNameSafe(Pawn),
 		*GetNameSafe(CapturerPS));
 }
-
 
 void AMosesFlagSpot::SetPromptVisible_Local(bool bVisible)
 {
@@ -519,7 +538,7 @@ UMosesInteractionComponent* AMosesFlagSpot::GetInteractionComponentFromPawn(APaw
 }
 
 // ============================================================================
-// [MOD] Billboard (Local only)
+// Billboard (Local only)
 // ============================================================================
 
 void AMosesFlagSpot::StartPromptBillboard_Local()
@@ -603,6 +622,8 @@ void AMosesFlagSpot::ApplyBillboardRotation_Local()
 	PromptWidgetComponent->SetWorldRotation(LookRot);
 }
 
+// ============================================================================
+// Guards
 // ============================================================================
 
 bool AMosesFlagSpot::CanStartCapture_Server(const AMosesPlayerState* RequesterPS) const
@@ -695,4 +716,66 @@ bool AMosesFlagSpot::IsInsideCaptureZone_Server(const AMosesPlayerState* PS) con
 		*GetNameSafe(this));
 
 	return bIn;
+}
+
+// ============================================================================
+// [DAY10] Respawn Manager Trigger (Server)
+// ============================================================================
+
+AMosesSpotRespawnManager* AMosesFlagSpot::FindRespawnManager_Server() const
+{
+	if (!HasAuthority())
+	{
+		return nullptr;
+	}
+
+	if (RespawnManagerOverride)
+	{
+		return RespawnManagerOverride;
+	}
+
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return nullptr;
+	}
+
+	for (TActorIterator<AMosesSpotRespawnManager> It(World); It; ++It)
+	{
+		return *It; // 첫 번째 발견
+	}
+
+	return nullptr;
+}
+
+void AMosesFlagSpot::NotifyRespawnManager_OnCaptured_Server()
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	if (!LinkedZombieSpawnSpot)
+	{
+		UE_LOG(LogMosesAnnounce, Warning,
+			TEXT("[ANN][SV] Respawn Notify Failed: LinkedZombieSpawnSpot NULL FlagSpot=%s"),
+			*GetName());
+		return;
+	}
+
+	AMosesSpotRespawnManager* RM = FindRespawnManager_Server();
+	if (!RM)
+	{
+		UE_LOG(LogMosesAnnounce, Warning,
+			TEXT("[ANN][SV] Respawn Notify Failed: RespawnManager NOT FOUND FlagSpot=%s"),
+			*GetName());
+		return;
+	}
+
+	UE_LOG(LogMosesAnnounce, Warning,
+		TEXT("[ANN][SV] Respawn Notify OK FlagSpot=%s LinkedSpot=%s"),
+		*GetName(),
+		*GetNameSafe(LinkedZombieSpawnSpot));
+
+	RM->ServerOnSpotCaptured(LinkedZombieSpawnSpot);
 }
