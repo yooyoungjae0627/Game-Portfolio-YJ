@@ -1,33 +1,26 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Engine/DataAsset.h"
-#include "GameplayAbilitySpec.h"
-#include "GameplayEffectTypes.h"
+#include "UObject/Object.h"
+
+#include "GameplayAbilitySpecHandle.h"
+#include "ActiveGameplayEffectHandle.h"
+
 #include "MosesAbilitySet.generated.h"
 
+class UAbilitySystemComponent;
 class UGameplayAbility;
 class UGameplayEffect;
-class UAbilitySystemComponent;
 
 /**
- * FMosesAbilitySet_GrantedHandles
- *
- * [역할]
- * - AbilitySet이 ASC에 부여한 “핸들들”을 추적해 나중에 제거할 수 있게 한다.
- *
- * [주의]
- * - “부여”만으로 충분하지만,
- *   확장(Experience 교체/모드 전환 등)에서는 제거가 필요할 수 있다.
+ * [MOD] GrantedHandles는 "AbilitySet을 ASC에 부여한 결과"를 기록하는 핸들 묶음이다.
+ * - 나중에 일괄 회수(RemoveFromAbilitySystem)하기 위해 필요
+ * - 반드시 UMosesAbilitySet 선언/함수 시그니처보다 "앞"에 정의되어야 한다.
  */
-USTRUCT(BlueprintType)
+USTRUCT()
 struct FMosesAbilitySet_GrantedHandles
 {
 	GENERATED_BODY()
-
-public:
-	void RemoveFromAbilitySystem(UAbilitySystemComponent& ASC);
-	void Reset();
 
 public:
 	UPROPERTY()
@@ -35,14 +28,12 @@ public:
 
 	UPROPERTY()
 	TArray<FActiveGameplayEffectHandle> GameplayEffectHandles;
+
+public:
+	void Reset();
+	void RemoveFromAbilitySystem(UAbilitySystemComponent& ASC);
 };
 
-/**
- * FMosesAbilitySet_AbilityEntry
- *
- * [역할]
- * - 부여할 GameplayAbility의 정보(레벨/입력ID 포함).
- */
 USTRUCT(BlueprintType)
 struct FMosesAbilitySet_AbilityEntry
 {
@@ -50,7 +41,7 @@ struct FMosesAbilitySet_AbilityEntry
 
 public:
 	UPROPERTY(EditDefaultsOnly)
-	TSubclassOf<UGameplayAbility> Ability;
+	TSubclassOf<UGameplayAbility> Ability = nullptr;
 
 	UPROPERTY(EditDefaultsOnly)
 	int32 AbilityLevel = 1;
@@ -59,12 +50,6 @@ public:
 	int32 InputID = 0;
 };
 
-/**
- * FMosesAbilitySet_EffectEntry
- *
- * [역할]
- * - 시작 시점에 적용할 GameplayEffect 정보(레벨 포함).
- */
 USTRUCT(BlueprintType)
 struct FMosesAbilitySet_EffectEntry
 {
@@ -72,35 +57,29 @@ struct FMosesAbilitySet_EffectEntry
 
 public:
 	UPROPERTY(EditDefaultsOnly)
-	TSubclassOf<UGameplayEffect> Effect;
+	TSubclassOf<UGameplayEffect> Effect = nullptr;
 
 	UPROPERTY(EditDefaultsOnly)
-	float Level = 1.f;
+	float Level = 1.0f;
 };
 
 /**
  * UMosesAbilitySet
- *
- * [역할]
- * - Experience(AbilitySetPath)로부터 로드되어,
- *   서버에서 ASC에 부여되는 “GAS 페이로드 묶음”
- *
- * [원칙]
- * - 데이터만 보관한다.
- * - 실제 적용은 서버에서만 수행한다.
+ * - GAS 능력/이펙트 “부여 세트”
+ * - 서버 권위로 ASC에 Abilities/StartupEffects를 지급
  */
 UCLASS(BlueprintType)
-class UE5_MULTI_SHOOTER_API UMosesAbilitySet : public UDataAsset
+class UE5_MULTI_SHOOTER_API UMosesAbilitySet : public UObject
 {
 	GENERATED_BODY()
 
 public:
-	void GiveToAbilitySystem(UAbilitySystemComponent& ASC, FMosesAbilitySet_GrantedHandles& OutGrantedHandles) const;
-
-private:
-	UPROPERTY(EditDefaultsOnly, Category = "Moses|AbilitySet")
+	UPROPERTY(EditDefaultsOnly, Category = "AbilitySet")
 	TArray<FMosesAbilitySet_AbilityEntry> Abilities;
 
-	UPROPERTY(EditDefaultsOnly, Category = "Moses|AbilitySet")
+	UPROPERTY(EditDefaultsOnly, Category = "AbilitySet")
 	TArray<FMosesAbilitySet_EffectEntry> StartupEffects;
+
+public:
+	void GiveToAbilitySystem(UAbilitySystemComponent& ASC, FMosesAbilitySet_GrantedHandles& OutGrantedHandles) const;
 };

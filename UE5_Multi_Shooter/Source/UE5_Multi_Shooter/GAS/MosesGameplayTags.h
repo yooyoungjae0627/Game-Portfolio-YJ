@@ -1,5 +1,6 @@
 ﻿#pragma once
 
+#include "CoreMinimal.h"
 #include "GameplayTagContainer.h"
 
 class UGameplayTagsManager;

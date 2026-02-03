@@ -8,7 +8,7 @@
 #include "GameFramework/PlayerState.h"
 
 #include "UE5_Multi_Shooter/GAS/MosesAbilitySet.h"
-#include "UE5_Multi_Shooter/Player/MosesPlayerState.h"
+#include "UE5_Multi_Shooter/MosesPlayerState.h"
 #include "UE5_Multi_Shooter/GAS/Components/MosesAbilitySystemComponent.h"
 
 void UGameFeatureAction_MosesCombatGAS::OnGameFeatureActivating(FGameFeatureActivatingContext& Context)

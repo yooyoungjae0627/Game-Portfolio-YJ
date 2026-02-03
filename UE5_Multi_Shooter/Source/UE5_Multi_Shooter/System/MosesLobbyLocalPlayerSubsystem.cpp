@@ -1,13 +1,13 @@
 ﻿#include "UE5_Multi_Shooter/System/MosesLobbyLocalPlayerSubsystem.h"
 #include "UE5_Multi_Shooter/System/MosesUIRegistrySubsystem.h"
 
-#include "UE5_Multi_Shooter/Player/MosesPlayerController.h"
-#include "UE5_Multi_Shooter/Player/MosesPlayerState.h"
-#include "UE5_Multi_Shooter/GameMode/GameState/MosesLobbyGameState.h"
+#include "UE5_Multi_Shooter/MosesPlayerController.h"
+#include "UE5_Multi_Shooter/MosesPlayerState.h"
+#include "UE5_Multi_Shooter/Lobby/GameState/MosesLobbyGameState.h"
 
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
-#include "UE5_Multi_Shooter/UI/Lobby/MosesLobbyWidget.h"
-#include "UE5_Multi_Shooter/Character/LobbyPreviewActor.h"
+#include "UE5_Multi_Shooter/Lobby/UI/MosesLobbyWidget.h"
+#include "UE5_Multi_Shooter/Lobby/NPC/LobbyPreviewActor.h"
 
 #include "Camera/CameraActor.h"
 #include "Engine/GameInstance.h"

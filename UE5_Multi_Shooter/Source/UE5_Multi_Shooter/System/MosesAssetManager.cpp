@@ -1,12 +1,10 @@
 ﻿#include "UE5_Multi_Shooter/System/MosesAssetManager.h"
+#include "UE5_Multi_Shooter/MosesLogChannels.h"
+#include "UE5_Multi_Shooter/GAS/MosesGameplayTags.h"
 
 #include "Engine/Engine.h"
 #include "Misc/CommandLine.h"
 #include "Misc/Parse.h"
-
-#include "UE5_Multi_Shooter/MosesLogChannels.h"
-
-#include "UE5_Multi_Shooter/GAS/MosesGameplayTags.h"
 
 UMosesAssetManager::UMosesAssetManager()
 {

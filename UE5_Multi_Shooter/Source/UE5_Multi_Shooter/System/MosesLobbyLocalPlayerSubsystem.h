@@ -1,8 +1,4 @@
-﻿// ============================================================================
-// MosesLobbyLocalPlayerSubsystem.h
-// ============================================================================
-
-#pragma once
+﻿#pragma once
 
 #include "Subsystems/LocalPlayerSubsystem.h"
 #include "MosesLobbyLocalPlayerSubsystem.generated.h"

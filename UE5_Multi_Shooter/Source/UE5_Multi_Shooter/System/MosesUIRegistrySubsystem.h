@@ -1,5 +1,6 @@
 #pragma once
 
+#include "CoreMinimal.h"
 #include "Subsystems/GameInstanceSubsystem.h"
 #include "UObject/SoftObjectPath.h"
 #include "MosesUIRegistrySubsystem.generated.h"

@@ -1,17 +1,16 @@
 #include "UE5_Multi_Shooter/System/MosesPawnSSOTGuardComponent.h"
-
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
+
 #include "UObject/Class.h"
 #include "UObject/UnrealType.h"
 
-// 코스메틱 예외 처리용 클래스들
 #include "Animation/AnimMontage.h"
 #include "Sound/SoundBase.h"
 #include "NiagaraSystem.h"
+#include "Materials/MaterialInterface.h"
 
 #include "Engine/SkeletalMesh.h"
 #include "Engine/StaticMesh.h"
-#include "Materials/MaterialInterface.h"
 #include "Engine/Texture.h"
 #include "Components/ActorComponent.h"
 

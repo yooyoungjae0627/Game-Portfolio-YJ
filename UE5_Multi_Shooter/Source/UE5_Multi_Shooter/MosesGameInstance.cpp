@@ -1,7 +1,4 @@
-﻿// Fill out your copyright notice in the Description page of Project Settings.
-
-
-#include "MosesGameInstance.h"
+﻿#include "MosesGameInstance.h"
 
 #include "Components/GameFrameworkComponentManager.h"
 #include "UE5_Multi_Shooter/GAS/MosesGameplayTags.h"
