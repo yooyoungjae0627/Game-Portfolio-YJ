@@ -6,11 +6,13 @@
 #include "UE5_Multi_Shooter/Match/GameState/MosesMatchGameState.h"
 #include "UE5_Multi_Shooter/MosesPlayerState.h"
 #include "UE5_Multi_Shooter/GAS/Components/MosesAbilitySystemComponent.h"
+#include "UE5_Multi_Shooter/GAS/MosesGameplayTags.h" // [MOD] Tag SSOT 사용
+
+#include "UE5_Multi_Shooter/MosesLogChannels.h"
 
 #include "Components/BoxComponent.h"
 #include "Animation/AnimInstance.h"
 #include "Engine/World.h"
-#include "TimerManager.h"
 
 #include "AbilitySystemComponent.h"
 #include "AbilitySystemGlobals.h"
@@ -23,7 +25,7 @@ AMosesZombieCharacter::AMosesZombieCharacter()
 	SetReplicateMovement(true);
 
 	HeadBoneName = TEXT("head");
-	bAttackHitEnabled = false;
+	LastDamageKillerPS = nullptr;
 	bLastDamageHeadshot = false;
 
 	AbilitySystemComponent = CreateDefaultSubobject<UMosesAbilitySystemComponent>(TEXT("ASC_Zombie"));
@@ -32,15 +34,27 @@ AMosesZombieCharacter::AMosesZombieCharacter()
 
 	AttributeSet = CreateDefaultSubobject<UMosesZombieAttributeSet>(TEXT("AS_Zombie"));
 
-	AttackHitBox = CreateDefaultSubobject<UBoxComponent>(TEXT("AttackHitBox"));
-	AttackHitBox->SetupAttachment(GetMesh());
-	AttackHitBox->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-	AttackHitBox->SetCollisionObjectType(ECC_WorldDynamic);
-	AttackHitBox->SetCollisionResponseToAllChannels(ECR_Ignore);
-	AttackHitBox->SetCollisionResponseToChannel(ECC_Pawn, ECR_Overlap);
-	AttackHitBox->SetGenerateOverlapEvents(true);
+	// [MOD] AttackHitBox 2개(좌/우)
+	AttackHitBox_L = CreateDefaultSubobject<UBoxComponent>(TEXT("AttackHitBox_L"));
+	AttackHitBox_L->SetupAttachment(GetMesh());
+	AttackHitBox_L->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	AttackHitBox_L->SetCollisionObjectType(ECC_WorldDynamic);
+	AttackHitBox_L->SetCollisionResponseToAllChannels(ECR_Ignore);
+	AttackHitBox_L->SetCollisionResponseToChannel(ECC_Pawn, ECR_Overlap);
+	AttackHitBox_L->SetGenerateOverlapEvents(true);
+	AttackHitBox_L->OnComponentBeginOverlap.AddDynamic(this, &AMosesZombieCharacter::OnAttackHitOverlapBegin);
 
-	AttackHitBox->OnComponentBeginOverlap.AddDynamic(this, &AMosesZombieCharacter::OnAttackHitOverlapBegin);
+	AttackHitBox_R = CreateDefaultSubobject<UBoxComponent>(TEXT("AttackHitBox_R"));
+	AttackHitBox_R->SetupAttachment(GetMesh());
+	AttackHitBox_R->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	AttackHitBox_R->SetCollisionObjectType(ECC_WorldDynamic);
+	AttackHitBox_R->SetCollisionResponseToAllChannels(ECR_Ignore);
+	AttackHitBox_R->SetCollisionResponseToChannel(ECC_Pawn, ECR_Overlap);
+	AttackHitBox_R->SetGenerateOverlapEvents(true);
+	AttackHitBox_R->OnComponentBeginOverlap.AddDynamic(this, &AMosesZombieCharacter::OnAttackHitOverlapBegin);
+
+	bAttackHitEnabled_L = false;
+	bAttackHitEnabled_R = false;
 }
 
 UAbilitySystemComponent* AMosesZombieCharacter::GetAbilitySystemComponent() const
@@ -55,6 +69,19 @@ void AMosesZombieCharacter::BeginPlay()
 	if (AbilitySystemComponent)
 	{
 		AbilitySystemComponent->InitAbilityActorInfo(this, this);
+	}
+
+	// [MOD] 클라에서는 어차피 판정 안 하므로, 비용 줄이려면 OverlapEvents를 꺼도 됨(선택)
+	if (!HasAuthority())
+	{
+		if (AttackHitBox_L)
+		{
+			AttackHitBox_L->SetGenerateOverlapEvents(false);
+		}
+		if (AttackHitBox_R)
+		{
+			AttackHitBox_R->SetGenerateOverlapEvents(false);
+		}
 	}
 
 	if (HasAuthority())
@@ -95,20 +122,11 @@ void AMosesZombieCharacter::ServerStartAttack()
 	UE_LOG(LogMosesZombie, Warning, TEXT("[ZOMBIE][SV] Attack Start Zombie=%s Montage=%s"),
 		*GetName(), *GetNameSafe(Montage));
 
+	// 애니 연출은 모든 클라 동일
 	Multicast_PlayAttackMontage(Montage);
 
-	// 공격 윈도우 ON (Overlap 판정은 서버만)
-	SetAttackHitEnabled_Server(true);
-
-	FTimerHandle TimerHandle;
-	GetWorldTimerManager().SetTimer(
-		TimerHandle,
-		[this]()
-		{
-			SetAttackHitEnabled_Server(false);
-		},
-		0.35f,
-		false);
+	// [MOD] 공격 판정 윈도우 ON/OFF는 "AnimNotifyState_MosesZombieAttackWindow"가 제어한다.
+	// 즉, 여기서 타이머로 켜고 끄지 않는다.
 }
 
 UAnimMontage* AMosesZombieCharacter::PickAttackMontage_Server() const
@@ -122,15 +140,60 @@ UAnimMontage* AMosesZombieCharacter::PickAttackMontage_Server() const
 	return ZombieTypeData->AttackMontages[Index];
 }
 
-void AMosesZombieCharacter::SetAttackHitEnabled_Server(bool bEnabled)
+void AMosesZombieCharacter::ServerSetMeleeAttackWindow(EMosesZombieAttackHand Hand, bool bEnabled, bool bResetHitActorsOnBegin) // [MOD]
 {
 	if (!HasAuthority())
 	{
 		return;
 	}
 
-	bAttackHitEnabled = bEnabled;
-	AttackHitBox->SetCollisionEnabled(bAttackHitEnabled ? ECollisionEnabled::QueryOnly : ECollisionEnabled::NoCollision);
+	if (bEnabled && bResetHitActorsOnBegin)
+	{
+		ResetHitActorsThisWindow();
+	}
+
+	SetAttackHitEnabled_Server(Hand, bEnabled);
+
+	UE_LOG(LogMosesZombie, Verbose, TEXT("[ZOMBIE][SV] AttackWindow Hand=%d Enabled=%s Zombie=%s"),
+		static_cast<int32>(Hand),
+		bEnabled ? TEXT("true") : TEXT("false"),
+		*GetName());
+}
+
+void AMosesZombieCharacter::SetAttackHitEnabled_Server(EMosesZombieAttackHand Hand, bool bEnabled) // [MOD]
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	const auto SetOne = [bEnabled](UBoxComponent* Box)
+		{
+			if (!Box)
+			{
+				return;
+			}
+			Box->SetCollisionEnabled(bEnabled ? ECollisionEnabled::QueryOnly : ECollisionEnabled::NoCollision);
+		};
+
+	switch (Hand)
+	{
+	case EMosesZombieAttackHand::Left:
+		bAttackHitEnabled_L = bEnabled;
+		SetOne(AttackHitBox_L);
+		break;
+	case EMosesZombieAttackHand::Right:
+		bAttackHitEnabled_R = bEnabled;
+		SetOne(AttackHitBox_R);
+		break;
+	case EMosesZombieAttackHand::Both:
+	default:
+		bAttackHitEnabled_L = bEnabled;
+		bAttackHitEnabled_R = bEnabled;
+		SetOne(AttackHitBox_L);
+		SetOne(AttackHitBox_R);
+		break;
+	}
 }
 
 UAbilitySystemComponent* AMosesZombieCharacter::FindASCFromActor_Server(AActor* TargetActor) const
@@ -156,7 +219,8 @@ bool AMosesZombieCharacter::ApplySetByCallerDamageGE_Server(UAbilitySystemCompon
 		return false;
 	}
 
-	const FGameplayTag DamageTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Data.Damage")));
+	// [MOD] 태그는 SSOT 싱글톤에서 가져오는 게 원칙
+	const FGameplayTag DamageTag = FMosesGameplayTags::Get().Data_Damage;
 
 	FGameplayEffectContextHandle Context = TargetASC->MakeEffectContext();
 	Context.AddSourceObject(this);
@@ -173,19 +237,44 @@ bool AMosesZombieCharacter::ApplySetByCallerDamageGE_Server(UAbilitySystemCompon
 }
 
 void AMosesZombieCharacter::OnAttackHitOverlapBegin(
-	UPrimitiveComponent* /*OverlappedComp*/,
+	UPrimitiveComponent* OverlappedComp,
 	AActor* OtherActor,
 	UPrimitiveComponent* /*OtherComp*/,
 	int32 /*OtherBodyIndex*/,
 	bool /*bFromSweep*/,
 	const FHitResult& /*SweepResult*/)
 {
-	if (!HasAuthority() || !bAttackHitEnabled)
+	// 서버만 판정
+	if (!HasAuthority())
 	{
 		return;
 	}
 
 	if (!OtherActor || OtherActor == this)
+	{
+		return;
+	}
+
+	// [MOD] 손별 윈도우 체크
+	const bool bIsLeft = (OverlappedComp == AttackHitBox_L);
+	const bool bIsRight = (OverlappedComp == AttackHitBox_R);
+
+	if (bIsLeft && !bAttackHitEnabled_L)
+	{
+		return;
+	}
+	if (bIsRight && !bAttackHitEnabled_R)
+	{
+		return;
+	}
+	if (!bIsLeft && !bIsRight)
+	{
+		// 예외: 다른 컴포넌트에서 들어온 경우 무시
+		return;
+	}
+
+	// [MOD] 중복 타격 방지(공격 윈도우 동안 1회만)
+	if (HasHitActorThisWindow(OtherActor))
 	{
 		return;
 	}
@@ -201,7 +290,12 @@ void AMosesZombieCharacter::OnAttackHitOverlapBegin(
 
 	if (bApplied)
 	{
-		UE_LOG(LogMosesZombie, Warning, TEXT("[ZOMBIE][SV] AttackHit Player=%s Damage=%.0f Zombie=%s"),
+		MarkHitActorThisWindow(OtherActor);
+
+		const TCHAR* HandText = bIsLeft ? TEXT("L") : TEXT("R");
+
+		UE_LOG(LogMosesZombie, Warning, TEXT("[ZOMBIE][SV] AttackHit Hand=%s Victim=%s Damage=%.0f Zombie=%s"),
+			HandText,
 			*GetNameSafe(OtherActor),
 			Damage,
 			*GetName());
@@ -295,7 +389,7 @@ void AMosesZombieCharacter::HandleDeath_Server()
 
 	PushKillFeed_Server(bHeadshot, KillerPS);
 
-	// [DAY10][MOD] Headshot -> 공용 Announcement 팝업
+	// Headshot -> 공용 Announcement 팝업
 	if (bHeadshot)
 	{
 		PushHeadshotAnnouncement_Server(KillerPS);
@@ -365,5 +459,27 @@ void AMosesZombieCharacter::Multicast_PlayAttackMontage_Implementation(UAnimMont
 	if (UAnimInstance* AnimInst = GetMesh() ? GetMesh()->GetAnimInstance() : nullptr)
 	{
 		AnimInst->Montage_Play(MontageToPlay, 1.f);
+	}
+}
+
+// ----------------------
+// [MOD] 중복 타격 방지
+// ----------------------
+
+void AMosesZombieCharacter::ResetHitActorsThisWindow()
+{
+	HitActorsThisWindow.Reset();
+}
+
+bool AMosesZombieCharacter::HasHitActorThisWindow(AActor* Actor) const
+{
+	return (Actor != nullptr) && HitActorsThisWindow.Contains(Actor);
+}
+
+void AMosesZombieCharacter::MarkHitActorThisWindow(AActor* Actor)
+{
+	if (Actor)
+	{
+		HitActorsThisWindow.Add(Actor);
 	}
 }
