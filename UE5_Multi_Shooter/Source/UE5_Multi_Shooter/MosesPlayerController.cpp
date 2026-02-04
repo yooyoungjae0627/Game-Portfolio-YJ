@@ -230,6 +230,10 @@ void AMosesPlayerController::BeginPlay()
 			SetViewTarget(LocalPawn);
 			AutoManageActiveCameraTarget(LocalPawn);
 		}
+
+		// [MOD][SCOPE] Match에서도 바인딩 필요 (Early return 전에!)
+		BindScopeWeaponEvents_Local(); // [MOD]
+
 		return;
 	}
 
@@ -242,6 +246,9 @@ void AMosesPlayerController::BeginPlay()
 
 		UE_LOG(LogMosesSpawn, Warning, TEXT("[Start][PC] BeginPlay -> Cursor ON Map=%s"),
 			*UGameplayStatics::GetCurrentLevelName(GetWorld(), true));
+
+		// [MOD][SCOPE] Start에서도 바인딩(안전) - 원하면 유지
+		BindScopeWeaponEvents_Local(); // [MOD]
 
 		return;
 	}
@@ -263,6 +270,9 @@ void AMosesPlayerController::BeginPlay()
 			*GetNameSafe(GetViewTarget()),
 			bAutoManageActiveCameraTarget ? 1 : 0);
 
+		// [MOD][SCOPE] NonLobby에서도 바인딩(안전)
+		BindScopeWeaponEvents_Local(); // [MOD]
+
 		return;
 	}
 
@@ -282,12 +292,17 @@ void AMosesPlayerController::BeginPlay()
 		LobbyPreviewCameraDelay,
 		false
 	);
+
+	// [MOD][SCOPE] bind weapon change events
+	BindScopeWeaponEvents_Local(); // [MOD]
 }
+
 
 void AMosesPlayerController::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
 	// [MOD][DAY8] 스코프 타이머 정리(로컬)
 	StopScopeBlurTimer_Local();
+	UnbindScopeWeaponEvents_Local();
 	bScopeActive_Local = false;
 	CachedScopeWeaponData_Local.Reset();
 	CachedMatchHUD_Local.Reset();
@@ -388,6 +403,9 @@ void AMosesPlayerController::OnRep_PlayerState()
 	UE_LOG(LogMosesSpawn, Warning, TEXT("[PC][CL] OnRep_PlayerState PS=%s"), *GetNameSafe(PS));
 
 	Subsys->NotifyPlayerStateChanged();
+
+	// [MOD][SCOPE] PlayerState가 붙는 타이밍에서 Combat 바인딩 재시도(필수 안전장치)
+	BindScopeWeaponEvents_Local(); // [MOD]
 }
 
 void AMosesPlayerController::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
@@ -1280,20 +1298,36 @@ bool AMosesPlayerController::CanUseScope_Local(const UMosesWeaponData*& OutWeapo
 
 void AMosesPlayerController::Scope_OnPressed_Local()
 {
+	UE_LOG(LogMosesHUD, Warning, TEXT("[SCOPE][CL] Press ENTER PC=%s"), *GetNameSafe(this));
+
 	const UMosesWeaponData* WeaponData = nullptr;
 	if (!CanUseScope_Local(WeaponData))
 	{
+		UE_LOG(LogMosesHUD, Warning, TEXT("[SCOPE][CL] Press REJECT CanUseScope_Local=0 PC=%s"), *GetNameSafe(this));
 		return;
 	}
+
+	UE_LOG(LogMosesHUD, Warning, TEXT("[SCOPE][CL] Press ACCEPT Weapon=%s ScopeFOV=%.1f"),
+		*GetNameSafe(WeaponData),
+		WeaponData ? WeaponData->ScopeFOV : -1.0f);
 
 	SetScopeActive_Local(true, WeaponData);
 }
 
 void AMosesPlayerController::Scope_OnReleased_Local()
 {
-	// OFF는 WeaponData 없어도 처리 가능(리셋)
+	UE_LOG(LogMosesHUD, Warning, TEXT("[SCOPE][CL] Release ENTER Active=%d PC=%s"),
+		bScopeActive_Local ? 1 : 0, *GetNameSafe(this));
+
+	// 스팸 방지: 켜져있을 때만 OFF
+	if (!bScopeActive_Local)
+	{
+		return;
+	}
+
 	SetScopeActive_Local(false, nullptr);
 }
+
 
 void AMosesPlayerController::SetScopeActive_Local(bool bActive, const UMosesWeaponData* WeaponData)
 {
@@ -1304,15 +1338,27 @@ void AMosesPlayerController::SetScopeActive_Local(bool bActive, const UMosesWeap
 
 	if (bScopeActive_Local == bActive)
 	{
+		UE_LOG(LogMosesHUD, VeryVerbose, TEXT("[SCOPE][CL] SetScopeActive SKIP (SameState=%d)"), bActive ? 1 : 0);
 		return;
 	}
 
 	bScopeActive_Local = bActive;
 
-	// HUD 표시 토글
+	UE_LOG(LogMosesHUD, Warning, TEXT("[SCOPE][CL] SetScopeActive APPLY Active=%d PC=%s"),
+		bScopeActive_Local ? 1 : 0, *GetNameSafe(this));
+
+	// HUD 찾기 + 위젯 토글
 	if (UMosesMatchHUD* HUD = FindMatchHUD_Local())
 	{
+		UE_LOG(LogMosesHUD, Warning, TEXT("[SCOPE][CL] HUD FOUND=%s -> SetScopeVisible=%d"),
+			*GetNameSafe(HUD),
+			bScopeActive_Local ? 1 : 0);
+
 		HUD->SetScopeVisible_Local(bScopeActive_Local);
+	}
+	else
+	{
+		UE_LOG(LogMosesHUD, Error, TEXT("[SCOPE][CL] HUD NOT FOUND -> ScopeWidget cannot show"));
 	}
 
 	// 카메라 오버라이드
@@ -1335,13 +1381,11 @@ void AMosesPlayerController::SetScopeActive_Local(bool bActive, const UMosesWeap
 	{
 		CachedScopeWeaponData_Local = WeaponData;
 		StartScopeBlurTimer_Local();
-		UE_LOG(LogMosesHUD, Log, TEXT("[SCOPE][CL] ScopeOn"));
 	}
 	else
 	{
 		StopScopeBlurTimer_Local();
 		CachedScopeWeaponData_Local.Reset();
-		UE_LOG(LogMosesHUD, Log, TEXT("[SCOPE][CL] ScopeOff"));
 	}
 }
 
@@ -1432,4 +1476,116 @@ void AMosesPlayerController::Server_RequestCaptureSuccessAnnouncement_Implementa
 	GS->ServerStartAnnouncementText(FText::FromString(TEXT("캡쳐 성공")), 2);
 
 	UE_LOG(LogMosesPhase, Warning, TEXT("[ANN][SV] CaptureSuccess -> Text='캡쳐 성공' Dur=2"));
+}
+
+// ============================================================================
+// [MOD][SCOPE] weapon-change safety (local only)
+// ============================================================================
+
+void AMosesPlayerController::BindScopeWeaponEvents_Local()
+{
+	if (!IsLocalController())
+	{
+		return;
+	}
+
+	UMosesCombatComponent* Combat = FindCombatComponent_Local();
+	if (!Combat)
+	{
+		UE_LOG(LogMosesHUD, VeryVerbose, TEXT("[SCOPE][CL] BindScopeWeaponEvents SKIP (NoCombat) PC=%s"), *GetNameSafe(this));
+		return;
+	}
+
+	// 이미 같은 Combat에 바인딩 되어있으면 종료
+	if (CachedCombatForScope_Local.Get() == Combat)
+	{
+		return;
+	}
+
+	// 기존 Combat에 묶여있던 델리게이트 해제
+	UnbindScopeWeaponEvents_Local();
+
+	CachedCombatForScope_Local = Combat;
+
+	// CombatComponent의 "무기 장착 변경" 이벤트를 구독한다.
+	// (로컬에서만, UI/FOV 연출 안정화 목적)
+	Combat->OnEquippedChanged.AddUObject(this, &ThisClass::HandleEquippedChanged_ScopeLocal);
+
+	UE_LOG(LogMosesHUD, Warning, TEXT("[SCOPE][CL] BindScopeWeaponEvents OK Combat=%s PC=%s"),
+		*GetNameSafe(Combat),
+		*GetNameSafe(this));
+
+	// 바인딩 직후, 현재 상태가 스나이퍼가 아니면 스코프 ON을 방지한다.
+	// (Travel/초기 프레임 꼬임 대비)
+	const FGameplayTag CurWeaponId = Combat->GetEquippedWeaponId();
+	const bool bIsSniperNow = (CurWeaponId == FMosesGameplayTags::Get().Weapon_Sniper_A);
+
+	if (!bIsSniperNow && bScopeActive_Local)
+	{
+		UE_LOG(LogMosesHUD, Warning, TEXT("[SCOPE][CL] Force ScopeOff (BindSafety) CurWeapon=%s"), *CurWeaponId.ToString());
+		SetScopeActive_Local(false, nullptr);
+	}
+}
+
+void AMosesPlayerController::UnbindScopeWeaponEvents_Local()
+{
+	if (UMosesCombatComponent* Combat = CachedCombatForScope_Local.Get())
+	{
+		// ⚠️ RemoveAll(this)는 "이 객체(this)가 Combat에 AddUObject한 모든 델리게이트"를 제거한다.
+		// - 프로젝트에서 PC가 Combat에 다른 델리게이트를 추가로 물고 있지 않다는 전제.
+		// - 만약 이후 PC가 Combat에 다른 델리게이트를 더 붙이게 되면,
+		//   RemoveAll(this) 대신 Remove(Handle) 방식으로 변경 권장.
+		Combat->OnEquippedChanged.RemoveAll(this);
+
+		UE_LOG(LogMosesHUD, Warning, TEXT("[SCOPE][CL] UnbindScopeWeaponEvents OK Combat=%s PC=%s"),
+			*GetNameSafe(Combat),
+			*GetNameSafe(this));
+	}
+
+	CachedCombatForScope_Local.Reset();
+}
+
+void AMosesPlayerController::HandleEquippedChanged_ScopeLocal(int32 SlotIndex, FGameplayTag WeaponId)
+{
+	(void)SlotIndex;
+
+	if (!IsLocalController())
+	{
+		return;
+	}
+
+	const bool bIsSniper = (WeaponId == FMosesGameplayTags::Get().Weapon_Sniper_A);
+
+	UE_LOG(LogMosesHUD, Log, TEXT("[SCOPE][CL] EquippedChanged Slot=%d Weapon=%s Sniper=%d ScopeActive=%d PC=%s"),
+		SlotIndex,
+		*WeaponId.ToString(),
+		bIsSniper ? 1 : 0,
+		bScopeActive_Local ? 1 : 0,
+		*GetNameSafe(this));
+
+	// 스나이퍼가 아닌 무기로 바뀌면: 스코프는 무조건 OFF (UI/FOV 잔상 방지)
+	if (!bIsSniper)
+	{
+		if (bScopeActive_Local)
+		{
+			UE_LOG(LogMosesHUD, Warning, TEXT("[SCOPE][CL] Force ScopeOff (WeaponChangedToNonSniper) NewWeapon=%s"), *WeaponId.ToString());
+			SetScopeActive_Local(false, nullptr);
+		}
+
+		// HUD가 남아있으면 스코프 위젯도 강제 숨김(안전)
+		if (UMosesMatchHUD* HUD = FindMatchHUD_Local())
+		{
+			HUD->SetScopeVisible_Local(false);
+		}
+
+		return;
+	}
+
+	// 스나이퍼로 바뀐 경우:
+	// - Crosshair는 HUD가 스나이퍼면 항상 숨김 정책
+	// - Scope는 RMB로만 켬 (현재 bScopeActive_Local 상태를 그대로 반영)
+	if (UMosesMatchHUD* HUD = FindMatchHUD_Local())
+	{
+		HUD->SetScopeVisible_Local(bScopeActive_Local);
+	}
 }

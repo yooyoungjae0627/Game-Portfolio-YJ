@@ -4,6 +4,7 @@
 #include "UE5_Multi_Shooter/Match/Characters/Player/PlayerCharacter.h"
 #include "UE5_Multi_Shooter/Camera/MosesCameraComponent.h"
 #include "UE5_Multi_Shooter/Camera/MosesCameraMode.h"
+#include "UE5_Multi_Shooter/MosesPlayerController.h"
 
 #include "GameFramework/Pawn.h"
 #include "GameFramework/PlayerController.h"
@@ -181,10 +182,15 @@ void UMosesHeroComponent::BindInputActions(UInputComponent* PlayerInputComponent
 		EIC->BindAction(IA_ToggleView.Get(), ETriggerEvent::Started, this, &ThisClass::HandleToggleView);
 	}
 
+	// --------------------------------------------------------------------
+	// [MOD][AIM] Aim(RMB): Started = Press / Completed,Canceled = Release
+	// - Canceled를 Release로 묶지 않으면 "Release만 튀는" 케이스가 생김
+	// --------------------------------------------------------------------
 	if (IA_Aim)
 	{
 		EIC->BindAction(IA_Aim.Get(), ETriggerEvent::Started, this, &ThisClass::HandleAimPressed);
 		EIC->BindAction(IA_Aim.Get(), ETriggerEvent::Completed, this, &ThisClass::HandleAimReleased);
+		EIC->BindAction(IA_Aim.Get(), ETriggerEvent::Canceled, this, &ThisClass::HandleAimReleased); // [MOD]
 	}
 
 	if (IA_EquipSlot1)
@@ -210,6 +216,7 @@ void UMosesHeroComponent::BindInputActions(UInputComponent* PlayerInputComponent
 	bInputBound = true;
 	UE_LOG(LogMosesSpawn, Log, TEXT("[Hero][Input] Bind OK Pawn=%s"), *GetNameSafe(GetOwner()));
 }
+
 
 // ---- Forward to Pawn ----
 
@@ -336,17 +343,72 @@ void UMosesHeroComponent::HandleToggleView(const FInputActionValue& Value)
 	UE_LOG(LogMosesCamera, Log, TEXT("[Hero][Cam] ToggleView -> FirstPerson=%d"), bWantsFirstPerson ? 1 : 0);
 }
 
-void UMosesHeroComponent::HandleAimPressed(const FInputActionValue& Value)
+void UMosesHeroComponent::HandleAimPressed(const FInputActionValue& /*Value*/)
 {
-	if (Sniper2xModeClass)
+	if (!IsLocalPlayerPawn())
 	{
-		bWantsSniper2x = true;
-		UE_LOG(LogMosesCamera, Log, TEXT("[Hero][Cam] AimPressed -> Sniper2x ON"));
+		return;
 	}
+
+	// 이미 ON이면 중복 방지
+	if (bWantsSniper2x)
+	{
+		return;
+	}
+
+	APawn* Pawn = Cast<APawn>(GetOwner());
+	APlayerController* PC = Pawn ? Cast<APlayerController>(Pawn->GetController()) : nullptr;
+	if (!PC || !PC->IsLocalController())
+	{
+		return;
+	}
+
+	AMosesPlayerController* MosesPC = Cast<AMosesPlayerController>(PC);
+	if (!MosesPC)
+	{
+		return;
+	}
+
+	// ✅ 최종 스코프 가능 여부는 PC가 판단 (스나이퍼 아니면 내부에서 거절됨)
+	MosesPC->Scope_OnPressed_Local();
+
+	// Sniper2x 카메라 모드는 “스코프가 켜질 수 있을 때만” 켜는게 안전
+	// (PC가 거절해도 여기서 켜버리면 화면만 확대되고 스코프 UI는 안 뜨는 상태가 됨)
+	if (!MosesPC->IsScopeActive_Local())
+	{
+		UE_LOG(LogMosesCamera, Warning, TEXT("[Hero][Cam] AimPressed REJECT (ScopeNotActive) Pawn=%s"), *GetNameSafe(Pawn));
+		return;
+	}
+
+	bWantsSniper2x = true;
+	UE_LOG(LogMosesCamera, Warning, TEXT("[Hero][Cam] AimPressed -> Sniper2x ON Pawn=%s"), *GetNameSafe(Pawn));
 }
 
-void UMosesHeroComponent::HandleAimReleased(const FInputActionValue& Value)
+void UMosesHeroComponent::HandleAimReleased(const FInputActionValue& /*Value*/)
 {
+	if (!IsLocalPlayerPawn())
+	{
+		return;
+	}
+
+	// ✅ 핵심: 현재 ON이 아닐 때는 스팸(Completed/Canceled 연타) 무시
+	if (!bWantsSniper2x)
+	{
+		return;
+	}
+
+	APawn* Pawn = Cast<APawn>(GetOwner());
+	APlayerController* PC = Pawn ? Cast<APlayerController>(Pawn->GetController()) : nullptr;
+	if (!PC || !PC->IsLocalController())
+	{
+		return;
+	}
+
+	if (AMosesPlayerController* MosesPC = Cast<AMosesPlayerController>(PC))
+	{
+		MosesPC->Scope_OnReleased_Local(); // PC쪽에도 bScopeActive 가드 권장
+	}
+
 	bWantsSniper2x = false;
-	UE_LOG(LogMosesCamera, Log, TEXT("[Hero][Cam] AimReleased -> Sniper2x OFF"));
+	UE_LOG(LogMosesCamera, Warning, TEXT("[Hero][Cam] AimReleased -> Sniper2x OFF Pawn=%s"), *GetNameSafe(Pawn));
 }

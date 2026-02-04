@@ -9,30 +9,6 @@
 
 #include "MosesMatchHUD.generated.h"
 
-/**
- * UMosesMatchHUD
- *
- * [역할]
- * - Dedicated Server / Server Authority 100% 구조에서 HUD는 "표시만" 담당한다.
- * - HUD 갱신 원칙:
- *   - Tick 금지
- *   - UMG Designer Binding 금지
- *   - RepNotify → Native Delegate → Widget Update ONLY
- *
- * [데이터 소스(SSOT)]
- * - PlayerState(SSOT) : HP/Shield/Score/Deaths/Captures/ZombieKills/Grenade
- * - PlayerState 소유 CombatComponent : Weapon/Ammo/Equip/Reload/Slots (서버 승인 결과)
- * - MatchGameState(복제) : Phase / RemainingSeconds / Announcement
- * - PlayerState 소유 CaptureComponent : 캡처 진행 상태(RepNotify→Delegate)
- *
- * [중요: 캡처 UI 연결]
- * - WBP_CombatHUD(Parent=UMosesMatchHUD) 안에 배치된 CaptureProgress 위젯(인스턴스 이름: "CaptureProgress")을
- *   BindWidgetOptional로 잡는다.
- * - 실제 진행률 값/경고 표시/OnOff는 UMosesCaptureComponent::OnCaptureStateChanged 델리게이트로만 갱신한다.
- * - HUD는 캡처 컴포넌트의 내부 상태를 "Getter"로 읽지 않는다(프로젝트 현재 API에 없음).
- *   → 즉, 이벤트 기반으로만 동작. (LateJoin은 CaptureComponent 쪽 RepNotify에서 1회 Broadcast 하면 100% 커버)
- */
-
 class UProgressBar;
 class UTextBlock;
 class UImage;
@@ -53,7 +29,7 @@ class UMosesWeaponData;
 // [CAPTURE] PlayerState 소유 캡처 컴포넌트(진행도 RepNotify→Delegate)
 class UMosesCaptureComponent;
 
-// [CAPTURE] WBP_CaptureProgress의 Parent(플러그인/프로젝트 구조에 따라 위치는 다를 수 있음)
+// [CAPTURE] WBP_CaptureProgress의 Parent
 class UMosesCaptureProgressWidget;
 
 UCLASS(Abstract)
@@ -76,9 +52,15 @@ public:
 	void TryBroadcastCaptureSuccess_Once();
 
 protected:
-	//~UUserWidget interface
 	virtual void NativeOnInitialized() override;
 	virtual void NativeDestruct() override;
+
+private:
+	// =========================================================================
+	// [MOD] Aim UI immediate sync (Sniper/Crosshair/Scope)
+	// =========================================================================
+	void UpdateAimWidgets_Immediate(); // [MOD]
+	bool IsSniperEquipped_Local() const; // [MOD]
 
 private:
 	// =========================================================================
@@ -90,7 +72,6 @@ private:
 	void BindToCombatComponent_FromPlayerState();
 	void UnbindCombatComponent();
 
-	// [CAPTURE] PlayerState에서 CaptureComponent를 찾아 바인딩
 	void BindToCaptureComponent_FromPlayerState();
 	void UnbindCaptureComponent();
 
@@ -101,8 +82,6 @@ private:
 	bool IsPlayerStateBound() const;
 	bool IsMatchGameStateBound() const;
 	bool IsCombatComponentBound() const;
-
-	// [CAPTURE]
 	bool IsCaptureComponentBound() const;
 
 	void ApplySnapshotFromMatchGameState();
@@ -136,21 +115,6 @@ private:
 	// =========================================================================
 	// [CAPTURE] CaptureComponent Delegate Handler
 	// =========================================================================
-	/**
-	 * HandleCaptureStateChanged
-	 *
-	 * [시그니처]
-	 * - 이 함수는 UMosesCaptureComponent::OnCaptureStateChanged 델리게이트 시그니처와 1:1로 일치해야 한다.
-	 * - 현재 빌드 로그 기준:
-	 *     void(bool bActive, float Progress01, float WarningFloat, TWeakObjectPtr<AMosesFlagSpot> Spot)
-	 *
-	 * [의미]
-	 * - bActive      : 현재 캡처 진행 중이면 true (아니면 HUD는 숨김)
-	 * - Progress01   : 0~1 진행률
-	 * - WarningFloat : 프로젝트 정책에 따라 의미가 다를 수 있음(경고 시간/알파/남은시간 등)
-	 *                 HUD에서는 "경고 ON/OFF"만 필요하므로 >0이면 Warning ON으로 처리한다.
-	 * - Spot         : 현재 캡처 대상 Spot(약포인터). LateJoin에서 null 가능(안전 처리)
-	 */
 	void HandleCaptureStateChanged(bool bActive, float Progress01, float WarningFloat, TWeakObjectPtr<AMosesFlagSpot> Spot);
 
 private:
@@ -191,21 +155,11 @@ private:
 	// =========================================================================
 	// [CAPTURE] CaptureProgress 내부 위젯 캐시
 	// =========================================================================
-	/**
-	 * CacheCaptureProgress_InternalWidgets
-	 * - WBP_CombatHUD에 배치된 CaptureProgress(UMosesCaptureProgressWidget) 내부의
-	 *   ProgressBar/TextBlock을 GetWidgetFromName으로 찾아 캐시한다.
-	 *
-	 * [전제: 내부 위젯 이름 고정]
-	 * - ProgressBar: "Progress_Capture"
-	 * - TextBlock : "Text_Percent"
-	 * - TextBlock : "Text_Warning"
-	 */
 	void CacheCaptureProgress_InternalWidgets();
 
 private:
 	// =========================================================================
-	// BindWidgetOptional (WBP 이름이 다르면 nullptr로 남음 → 로그로 검증)
+	// BindWidgetOptional
 	// =========================================================================
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UProgressBar> HealthBar = nullptr;
@@ -289,20 +243,18 @@ private:
 
 private:
 	// =========================================================================
-	// Cached pointers (바인딩 대상)
+	// Cached pointers
 	// =========================================================================
 	EMosesMatchPhase LastAppliedPhase = EMosesMatchPhase::WaitingForPlayers;
 
 	TWeakObjectPtr<AMosesPlayerState>   CachedPlayerState;
 	TWeakObjectPtr<AMosesMatchGameState> CachedMatchGameState;
 	TWeakObjectPtr<UMosesCombatComponent> CachedCombatComponent;
-
-	// [CAPTURE] PlayerState 소유 캡처 컴포넌트 캐시
 	TWeakObjectPtr<UMosesCaptureComponent> CachedCaptureComponent;
 
 private:
 	// =========================================================================
-	// Bind retry timer (Tick 금지)
+	// Bind retry timer
 	// =========================================================================
 	FTimerHandle BindRetryHandle;
 	int32 BindRetryTryCount = 0;
@@ -311,7 +263,7 @@ private:
 
 private:
 	// =========================================================================
-	// Crosshair update timer (표시 전용)
+	// Crosshair update timer
 	// =========================================================================
 	FTimerHandle CrosshairTimerHandle;
 
@@ -325,7 +277,7 @@ private:
 
 private:
 	// =========================================================================
-	// [CAPTURE] 내부 위젯 캐시 (WBP_CaptureProgress 내부)
+	// [CAPTURE] 내부 위젯 캐시
 	// =========================================================================
 	UPROPERTY(Transient)
 	TObjectPtr<UProgressBar> Capture_ProgressBar = nullptr;
@@ -338,7 +290,6 @@ private:
 
 	UPROPERTY(Transient)
 	bool bCaptureInternalCached = false;
-
 
 	bool bCaptureSuccessAnnounced_Local = false;
 };

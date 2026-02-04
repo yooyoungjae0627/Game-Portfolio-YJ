@@ -220,6 +220,16 @@ private:
 	AMosesLobbyGameState* GetLobbyGameStateChecked_Log(const TCHAR* Caller) const;
 	AMosesPlayerState* GetMosesPlayerStateChecked_Log(const TCHAR* Caller) const;
 
+
+	// [SCOPE] weapon-change safety (local only)
+private:
+	void BindScopeWeaponEvents_Local();     // [MOD]
+	void UnbindScopeWeaponEvents_Local();   // [MOD]
+
+	UFUNCTION() // Delegate 바인딩용(일반 AddUObject도 OK)
+	void HandleEquippedChanged_ScopeLocal(int32 SlotIndex, FGameplayTag WeaponId); // [MOD]
+
+
 private:
 	/*====================================================
 	= Lobby Preview Camera policy vars
@@ -316,4 +326,7 @@ private:
 	/** 마지막으로 스코프 ON에 사용한 무기 데이터(로컬) */
 	UPROPERTY(Transient)
 	TWeakObjectPtr<const UMosesWeaponData> CachedScopeWeaponData_Local;
+
+	UPROPERTY(Transient)
+	TWeakObjectPtr<class UMosesCombatComponent> CachedCombatForScope_Local;
 };

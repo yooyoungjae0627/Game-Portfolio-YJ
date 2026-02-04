@@ -4,7 +4,6 @@
 #include "UE5_Multi_Shooter/MosesPlayerState.h"
 
 #include "UE5_Multi_Shooter/Match/GameState/MosesMatchGameState.h"
-
 #include "UE5_Multi_Shooter/Match/Components/MosesCombatComponent.h"
 
 #include "UE5_Multi_Shooter/Match/Weapon/MosesWeaponRegistrySubsystem.h"
@@ -31,7 +30,7 @@
 #include "GameFramework/Pawn.h"
 
 // ============================================================================
-// Local Helpers (HUD 안전 유틸)
+// Local Helpers
 // ============================================================================
 
 static void MosesHUD_SetTextIfValid(UTextBlock* TB, const FText& Text)
@@ -68,6 +67,48 @@ UMosesMatchHUD::UMosesMatchHUD(const FObjectInitializer& ObjectInitializer)
 }
 
 // ============================================================================
+// [MOD] Aim UI immediate sync
+// ============================================================================
+
+bool UMosesMatchHUD::IsSniperEquipped_Local() const
+{
+	const UMosesCombatComponent* Combat = CachedCombatComponent.Get();
+	if (!Combat)
+	{
+		return false;
+	}
+
+	const FGameplayTag WeaponId = Combat->GetEquippedWeaponId();
+	return (WeaponId == FMosesGameplayTags::Get().Weapon_Sniper_A);
+}
+
+void UMosesMatchHUD::UpdateAimWidgets_Immediate()
+{
+	AMosesPlayerController* MosesPC = Cast<AMosesPlayerController>(GetOwningPlayer());
+	const bool bIsSniper = IsSniperEquipped_Local();
+	const bool bScopeOn = (MosesPC ? MosesPC->IsScopeActive_Local() : false);
+
+	// Crosshair: Sniper면 항상 숨김
+	if (CrosshairWidget)
+	{
+		CrosshairWidget->SetVisibility(bIsSniper ? ESlateVisibility::Collapsed : ESlateVisibility::Visible);
+	}
+
+	// Scope: (Sniper + ScopeOn)일 때만 표시
+	if (ScopeWidget)
+	{
+		const bool bShowScope = (bIsSniper && bScopeOn);
+		ScopeWidget->SetScopeVisible(bShowScope);
+	}
+
+	UE_LOG(LogMosesHUD, VeryVerbose, TEXT("[HUD][CL][AIM] UpdateAimWidgets Sniper=%d ScopeOn=%d Crosshair=%s Scope=%s"),
+		bIsSniper ? 1 : 0,
+		bScopeOn ? 1 : 0,
+		*GetNameSafe(CrosshairWidget),
+		*GetNameSafe(ScopeWidget));
+}
+
+// ============================================================================
 // UUserWidget Lifecycle
 // ============================================================================
 
@@ -82,39 +123,28 @@ void UMosesMatchHUD::NativeOnInitialized()
 	UE_LOG(LogMosesHUD, Warning, TEXT("[HUD][CL] PhaseText Bind=%s (Check WBP name == PhaseText)"),
 		*GetNameSafe(PhaseText));
 
-	// [CAPTURE] 내부 위젯 캐시(한 번만). CaptureProgress는 WBP_CombatHUD에 배치돼 있어야 한다.
 	CacheCaptureProgress_InternalWidgets();
 
-	// 1) 즉시 바인딩 시도
 	BindToPlayerState();
 	BindToGameState_Match();
 
-	// 2) 초기값 세팅
 	RefreshInitial();
-
-	// 3) 바인딩이 늦게 되는 케이스 재시도 (Tick 금지 → Timer)
 	StartBindRetry();
-
-	// 4) Crosshair Update Loop (표시 전용)
 	StartCrosshairUpdate();
 
 	// 5) ScopeWidget 초기 숨김
 	SetScopeVisible_Local(false);
 
-	// [CAPTURE] PS가 이미 바인딩 되어 있으면 즉시 캡처도 바인딩 시도
 	BindToCaptureComponent_FromPlayerState();
+
+	// [MOD] 초기 Aim UI 즉시 동기화
+	UpdateAimWidgets_Immediate(); // [MOD]
 }
 
 void UMosesMatchHUD::NativeDestruct()
 {
-	// --------------------------------------------------------------------
-	// [CAPTURE] 먼저 해제 (PS가 사라지기 전에 안전하게)
-	// --------------------------------------------------------------------
 	UnbindCaptureComponent();
 
-	// --------------------------------------------------------------------
-	// Combat 먼저 해제(PS 해제 전에)
-	// --------------------------------------------------------------------
 	StopBindRetry();
 	StopCrosshairUpdate();
 
@@ -157,6 +187,10 @@ void UMosesMatchHUD::NativeDestruct()
 
 void UMosesMatchHUD::SetScopeVisible_Local(bool bVisible)
 {
+	UE_LOG(LogMosesHUD, Warning, TEXT("[HUD][CL][SCOPE] SetScopeVisible bVisible=%d ScopeWidget=%s"),
+		bVisible ? 1 : 0,
+		*GetNameSafe(ScopeWidget));
+
 	if (ScopeWidget)
 	{
 		ScopeWidget->SetScopeVisible(bVisible);
@@ -165,7 +199,6 @@ void UMosesMatchHUD::SetScopeVisible_Local(bool bVisible)
 
 void UMosesMatchHUD::TryBroadcastCaptureSuccess_Once()
 {
-	// 로컬 중복 방지(프레임/틱/다중 델리게이트 호출 방지)
 	if (bCaptureSuccessAnnounced_Local)
 	{
 		return;
@@ -177,41 +210,23 @@ void UMosesMatchHUD::TryBroadcastCaptureSuccess_Once()
 		return;
 	}
 
-	// 서버에 요청(서버가 MatchGameState -> Announcement로 RepNotify)
 	bCaptureSuccessAnnounced_Local = true;
 	MosesPC->Server_RequestCaptureSuccessAnnouncement();
 
 	UE_LOG(LogMosesHUD, Warning, TEXT("[ANN][CL] Request CaptureSuccessAnnouncement -> PC=%s"), *GetNameSafe(MosesPC));
 }
 
-
 // ============================================================================
 // Bind / Retry
 // ============================================================================
 
-bool UMosesMatchHUD::IsPlayerStateBound() const
-{
-	return CachedPlayerState.IsValid();
-}
-
-bool UMosesMatchHUD::IsMatchGameStateBound() const
-{
-	return CachedMatchGameState.IsValid();
-}
-
-bool UMosesMatchHUD::IsCombatComponentBound() const
-{
-	return CachedCombatComponent.IsValid();
-}
-
-bool UMosesMatchHUD::IsCaptureComponentBound() const
-{
-	return CachedCaptureComponent.IsValid();
-}
+bool UMosesMatchHUD::IsPlayerStateBound() const { return CachedPlayerState.IsValid(); }
+bool UMosesMatchHUD::IsMatchGameStateBound() const { return CachedMatchGameState.IsValid(); }
+bool UMosesMatchHUD::IsCombatComponentBound() const { return CachedCombatComponent.IsValid(); }
+bool UMosesMatchHUD::IsCaptureComponentBound() const { return CachedCaptureComponent.IsValid(); }
 
 void UMosesMatchHUD::StartBindRetry()
 {
-	// PS / GS / Combat / Capture가 모두 바인딩이면 재시도 필요 없음
 	if (IsPlayerStateBound() && IsMatchGameStateBound() && IsCombatComponentBound() && IsCaptureComponentBound())
 	{
 		ApplySnapshotFromMatchGameState();
@@ -270,19 +285,20 @@ void UMosesMatchHUD::TryBindRetry()
 		BindToGameState_Match();
 	}
 
-	// PS 바인딩이 되면 Combat도 재시도
 	if (!IsCombatComponentBound())
 	{
 		BindToCombatComponent_FromPlayerState();
 	}
 
-	// [CAPTURE] PS 바인딩이 되면 Capture도 재시도
 	if (!IsCaptureComponentBound())
 	{
 		BindToCaptureComponent_FromPlayerState();
 	}
 
 	ApplySnapshotFromMatchGameState();
+
+	// [MOD] 바인딩 재시도 중에도 Aim UI 동기화
+	UpdateAimWidgets_Immediate(); // [MOD]
 
 	const bool bDone = IsPlayerStateBound() && IsMatchGameStateBound() && IsCombatComponentBound() && IsCaptureComponentBound();
 	if (bDone)
@@ -321,15 +337,11 @@ void UMosesMatchHUD::BindToPlayerState()
 
 	if (CachedPlayerState.Get() == PS)
 	{
-		// PS는 동일하더라도 Combat/Capture가 바뀌는 경우가 있어 보강한다.
 		BindToCombatComponent_FromPlayerState();
 		BindToCaptureComponent_FromPlayerState();
 		return;
 	}
 
-	// --------------------------------------------------------------------
-	// 기존 PS 바인딩 제거
-	// --------------------------------------------------------------------
 	if (AMosesPlayerState* OldPS = CachedPlayerState.Get())
 	{
 		OldPS->OnHealthChanged.RemoveAll(this);
@@ -346,9 +358,6 @@ void UMosesMatchHUD::BindToPlayerState()
 
 	CachedPlayerState = PS;
 
-	// --------------------------------------------------------------------
-	// 새 PS 바인딩
-	// --------------------------------------------------------------------
 	PS->OnHealthChanged.AddUObject(this, &ThisClass::HandleHealthChanged);
 	PS->OnShieldChanged.AddUObject(this, &ThisClass::HandleShieldChanged);
 	PS->OnScoreChanged.AddUObject(this, &ThisClass::HandleScoreChanged);
@@ -357,22 +366,14 @@ void UMosesMatchHUD::BindToPlayerState()
 	PS->OnPlayerCapturesChanged.AddUObject(this, &ThisClass::HandleCapturesChanged);
 	PS->OnPlayerZombieKillsChanged.AddUObject(this, &ThisClass::HandleZombieKillsChanged);
 
-	// PS의 AmmoChanged는 fallback/초기값용으로 유지하되,
-	// "즉시 전환"은 CombatComponent 경로가 우선이다.
 	PS->OnAmmoChanged.AddUObject(this, &ThisClass::HandleAmmoChanged_FromPS);
 	PS->OnGrenadeChanged.AddUObject(this, &ThisClass::HandleGrenadeChanged);
 
 	UE_LOG(LogMosesHUD, Warning, TEXT("[HUD][CL] Bound PlayerState delegates PS=%s"), *GetNameSafe(PS));
 
-	// --------------------------------------------------------------------
-	// PS 바인딩 후 Combat / Capture 바인딩
-	// --------------------------------------------------------------------
 	BindToCombatComponent_FromPlayerState();
 	BindToCaptureComponent_FromPlayerState();
 
-	// --------------------------------------------------------------------
-	// 바인딩 직후 스냅샷 강제 반영 (LateJoin / Retry 타이밍 안정화)
-	// --------------------------------------------------------------------
 	HandleDeathsChanged(PS->GetDeaths());
 	HandleCapturesChanged(PS->GetCaptures());
 	HandleZombieKillsChanged(PS->GetZombieKills());
@@ -409,8 +410,10 @@ void UMosesMatchHUD::BindToCombatComponent_FromPlayerState()
 	UE_LOG(LogMosesHUD, Warning, TEXT("[HUD][CL] Bound CombatComponent delegates Combat=%s PS=%s"),
 		*GetNameSafe(Combat), *GetNameSafe(PS));
 
-	// 바인딩 직후 스냅샷 반영
 	HandleAmmoChanged_FromCombat(Combat->GetCurrentMagAmmo(), Combat->GetCurrentReserveAmmo());
+
+	// [MOD] Combat 바인딩 직후 즉시 Aim UI 동기화
+	UpdateAimWidgets_Immediate(); // [MOD]
 }
 
 void UMosesMatchHUD::UnbindCombatComponent()
@@ -477,11 +480,13 @@ void UMosesMatchHUD::ApplySnapshotFromMatchGameState()
 	HandleMatchPhaseChanged(GS->GetMatchPhase());
 	HandleAnnouncementChanged(GS->GetAnnouncementState());
 
-	// Combat이 바인딩되어 있으면 현재 탄약도 강제 적용
 	if (UMosesCombatComponent* Combat = CachedCombatComponent.Get())
 	{
 		HandleAmmoChanged_FromCombat(Combat->GetCurrentMagAmmo(), Combat->GetCurrentReserveAmmo());
 	}
+
+	// [MOD] 스냅샷 적용 뒤 Aim UI 동기화
+	UpdateAimWidgets_Immediate(); // [MOD]
 }
 
 void UMosesMatchHUD::RefreshInitial()
@@ -500,15 +505,17 @@ void UMosesMatchHUD::RefreshInitial()
 
 	ApplySnapshotFromMatchGameState();
 
-	// [CAPTURE] 초기에는 숨김이 정답
 	if (CaptureProgress)
 	{
 		CaptureProgress->SetVisibility(ESlateVisibility::Collapsed);
 	}
+
+	// [MOD] 초기에도 Aim UI는 규칙대로 고정
+	UpdateAimWidgets_Immediate(); // [MOD]
 }
 
 // ============================================================================
-// [DAY7] Crosshair Update (표시 전용)
+// Crosshair Update (표시 전용)
 // ============================================================================
 
 void UMosesMatchHUD::StartCrosshairUpdate()
@@ -566,50 +573,19 @@ float UMosesMatchHUD::CalculateCrosshairSpreadFactor_Local() const
 
 void UMosesMatchHUD::TickCrosshairUpdate()
 {
+	// [MOD] 20Hz에서도 “최종 규칙”을 계속 강제 (스코프/무기 교체 타이밍 안정)
+	UpdateAimWidgets_Immediate(); // [MOD]
+
 	if (!CrosshairWidget)
 	{
 		return;
 	}
 
-	APlayerController* PC = GetOwningPlayer();
-	if (!PC)
+	// 스나이퍼면 Spread 계산 자체가 의미 없으니 여기서 종료
+	if (IsSniperEquipped_Local()) // [MOD]
 	{
 		return;
 	}
-
-	AMosesPlayerController* MosesPC = Cast<AMosesPlayerController>(PC);
-
-	AMosesPlayerState* PS = PC->GetPlayerState<AMosesPlayerState>();
-	if (!PS)
-	{
-		return;
-	}
-
-	UMosesCombatComponent* Combat = PS->FindComponentByClass<UMosesCombatComponent>();
-	if (!Combat)
-	{
-		return;
-	}
-
-	const FGameplayTag WeaponId = Combat->GetEquippedWeaponId();
-
-	const UWorld* World = GetWorld();
-	const UGameInstance* GI = World ? World->GetGameInstance() : nullptr;
-	UMosesWeaponRegistrySubsystem* Registry = GI ? GI->GetSubsystem<UMosesWeaponRegistrySubsystem>() : nullptr;
-
-	const UMosesWeaponData* WeaponData = Registry ? Registry->ResolveWeaponData(WeaponId) : nullptr;
-
-	const bool bIsSniper = (WeaponData && WeaponData->WeaponId == FMosesGameplayTags::Get().Weapon_Sniper_A);
-	const bool bScopeOn = (MosesPC ? MosesPC->IsScopeActive_Local() : false);
-
-	// 스나이퍼는 스코프 ON/OFF 모두 크로스헤어 숨김(정책)
-	if (bIsSniper)
-	{
-		CrosshairWidget->SetVisibility(ESlateVisibility::Collapsed);
-		return;
-	}
-
-	CrosshairWidget->SetVisibility(ESlateVisibility::Visible);
 
 	const float SpreadFactor = CalculateCrosshairSpreadFactor_Local();
 	CrosshairWidget->SetSpreadFactor(SpreadFactor);
@@ -617,6 +593,13 @@ void UMosesMatchHUD::TickCrosshairUpdate()
 	if (LastLoggedCrosshairSpread < 0.0f || FMath::Abs(SpreadFactor - LastLoggedCrosshairSpread) >= CrosshairLogThreshold)
 	{
 		LastLoggedCrosshairSpread = SpreadFactor;
+
+		UMosesCombatComponent* Combat = CachedCombatComponent.Get();
+		const FGameplayTag WeaponId = Combat ? Combat->GetEquippedWeaponId() : FGameplayTag();
+
+		AMosesPlayerController* MosesPC = Cast<AMosesPlayerController>(GetOwningPlayer());
+		const bool bScopeOn = (MosesPC ? MosesPC->IsScopeActive_Local() : false);
+
 		UE_LOG(LogMosesHUD, Log, TEXT("[HUD][CL] Crosshair Spread=%.2f Weapon=%s Scope=%d"),
 			SpreadFactor,
 			*WeaponId.ToString(),
@@ -625,7 +608,7 @@ void UMosesMatchHUD::TickCrosshairUpdate()
 }
 
 // ============================================================================
-// PlayerState Handlers (SSOT)
+// PlayerState Handlers
 // ============================================================================
 
 void UMosesMatchHUD::HandleHealthChanged(float Current, float Max)
@@ -694,7 +677,6 @@ void UMosesMatchHUD::HandleZombieKillsChanged(int32 NewZombieKills)
 
 void UMosesMatchHUD::HandleAmmoChanged_FromPS(int32 Mag, int32 Reserve)
 {
-	// PS 경로는 fallback/초기값용. 실제 즉시 전환은 Combat 경로가 담당한다.
 	if (WeaponAmmoAmount)
 	{
 		WeaponAmmoAmount->SetText(FText::FromString(FString::Printf(TEXT("%d / %d"), Mag, Reserve)));
@@ -721,6 +703,7 @@ void UMosesMatchHUD::HandleAmmoChanged_FromCombat(int32 Mag, int32 Reserve)
 	}
 
 	UE_LOG(LogMosesHUD, Verbose, TEXT("[HUD][CL][STEP3] AmmoChanged FromCombat %d/%d"), Mag, Reserve);
+
 	UpdateCurrentWeaponHeader();
 	UpdateSlotPanels_All();
 }
@@ -734,6 +717,9 @@ void UMosesMatchHUD::HandleEquippedChanged_FromCombat(int32 /*SlotIndex*/, FGame
 
 	UpdateCurrentWeaponHeader();
 	UpdateSlotPanels_All();
+
+	// [MOD] 무기 교체 순간에도 Aim UI 즉시 규칙 적용
+	UpdateAimWidgets_Immediate(); // [MOD]
 }
 
 void UMosesMatchHUD::HandleReloadingChanged_FromCombat(bool /*bReloading*/)
@@ -884,14 +870,7 @@ void UMosesMatchHUD::UpdateSlotPanels_All()
 			const bool bHasWeapon = WeaponId.IsValid();
 			const bool bEquipped = (SlotIndex == EquippedSlot);
 
-			if (bHasWeapon)
-			{
-				MosesHUD_SetTextIfValid(WeaponNameTB, FText::FromString(WeaponId.ToString()));
-			}
-			else
-			{
-				MosesHUD_SetTextIfValid(WeaponNameTB, FText::FromString(TEXT("-")));
-			}
+			MosesHUD_SetTextIfValid(WeaponNameTB, bHasWeapon ? FText::FromString(WeaponId.ToString()) : FText::FromString(TEXT("-")));
 
 			if (bHasWeapon)
 			{
@@ -937,7 +916,6 @@ void UMosesMatchHUD::CacheCaptureProgress_InternalWidgets()
 		return;
 	}
 
-	// WBP_CaptureProgress 내부 위젯 이름(필수)
 	Capture_ProgressBar = Cast<UProgressBar>(CaptureProgress->GetWidgetFromName(TEXT("Progress_Capture")));
 	Capture_TextPercent = Cast<UTextBlock>(CaptureProgress->GetWidgetFromName(TEXT("Text_Percent")));
 	Capture_TextWarning = Cast<UTextBlock>(CaptureProgress->GetWidgetFromName(TEXT("Text_Warning")));
@@ -947,7 +925,6 @@ void UMosesMatchHUD::CacheCaptureProgress_InternalWidgets()
 		*GetNameSafe(Capture_TextPercent),
 		*GetNameSafe(Capture_TextWarning));
 
-	// 기본은 숨김
 	CaptureProgress->SetVisibility(ESlateVisibility::Collapsed);
 }
 
@@ -978,7 +955,6 @@ void UMosesMatchHUD::BindToCaptureComponent_FromPlayerState()
 
 	CachedCaptureComponent = CaptureComp;
 
-	// ✅ 시그니처가 정확히 일치하는 핸들러로 바인딩
 	CaptureComp->OnCaptureStateChanged.AddUObject(this, &ThisClass::HandleCaptureStateChanged);
 
 	UE_LOG(LogMosesHUD, Warning, TEXT("[CAPTURE][HUD][CL] Bound CaptureComponent=%s PS=%s"),
@@ -1012,15 +988,11 @@ void UMosesMatchHUD::HandleCaptureStateChanged(bool bActive, float Progress01, f
 
 	if (!bActive)
 	{
-		// 캡처 종료/취소 시 숨김 + 성공 요청 플래그 리셋
 		CaptureProgress->SetVisibility(ESlateVisibility::Collapsed);
-
-		// 다음 캡처를 위해 리셋
 		bCaptureSuccessAnnounced_Local = false;
 		return;
 	}
 
-	// 캡처 진행 중: 표시 + 값 갱신
 	CaptureProgress->SetVisibility(ESlateVisibility::Visible);
 
 	const float Clamped = FMath::Clamp(Progress01, 0.0f, 1.0f);
@@ -1036,7 +1008,6 @@ void UMosesMatchHUD::HandleCaptureStateChanged(bool bActive, float Progress01, f
 		Capture_TextPercent->SetText(FText::FromString(FString::Printf(TEXT("%d%%"), PercentInt)));
 	}
 
-	// WarningFloat 의미가 무엇이든 > 0이면 경고 ON
 	const bool bWarningOn = (WarningFloat > 0.0f);
 
 	if (Capture_TextWarning)
@@ -1044,8 +1015,6 @@ void UMosesMatchHUD::HandleCaptureStateChanged(bool bActive, float Progress01, f
 		Capture_TextWarning->SetVisibility(bWarningOn ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
 	}
 
-	// ✅ [CAPTURE SUCCESS] 진행률이 1.0이 되면 “캡쳐 성공” 브로드캐스트 요청(딱 1번)
-	// 서버가 실제 캡처 성공을 확정하고 MatchGameState로 Announcement를 RepNotify 한다.
 	if (Clamped >= 1.0f - KINDA_SMALL_NUMBER)
 	{
 		TryBroadcastCaptureSuccess_Once();
