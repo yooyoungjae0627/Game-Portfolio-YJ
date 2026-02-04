@@ -102,10 +102,10 @@ private:
 
 	// [MOD] 마우스 감도(코드 레벨) - 에디터 Scalar(Modifier) + 여기 Sens 둘 다 곱해진다고 생각하면 됨
 	UPROPERTY(EditAnywhere, Category = "Moses|Input|Look", meta = (ClampMin = "0.01", ClampMax = "10.0"))
-	float LookSensitivityYaw = 0.20f;
+	float LookSensitivityYaw = 1.0f;
 
 	UPROPERTY(EditAnywhere, Category = "Moses|Input|Look", meta = (ClampMin = "0.01", ClampMax = "10.0"))
-	float LookSensitivityPitch = 0.20f;
+	float LookSensitivityPitch = 1.0f; // 기존 1.0 -> 1.15 [MOD]
 
 	UPROPERTY(EditAnywhere, Category = "Moses|Input|Look")
 	bool bInvertPitch = false;
