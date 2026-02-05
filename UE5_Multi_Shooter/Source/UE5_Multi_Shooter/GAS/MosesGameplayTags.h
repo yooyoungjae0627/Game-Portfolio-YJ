@@ -5,14 +5,29 @@
 
 class UGameplayTagsManager;
 
+/**
+ * Native GameplayTags Singleton
+ * - 프로젝트 전역 GameplayTag를 "엔진 초기화 초반"에 1회 등록한다.
+ * - 어디서든 FMosesGameplayTags::Get().Data_Damage 형태로 사용한다.
+ *
+ * 주의:
+ * - InitializeNativeTags()는 반드시 프로젝트 시작 초기에 1회 호출되어야 한다.
+ *   (권장: GameModule StartupModule 또는 GameInstance Init)
+ */
 struct FMosesGameplayTags
 {
 public:
+	/** 싱글톤 접근자 */
 	static const FMosesGameplayTags& Get() { return GameplayTags; }
+
+	/** 엔진/게임 시작 초기에 1회 호출되어 네이티브 태그 등록 */
 	static void InitializeNativeTags();
 
 private:
+	/** 단일 태그 등록 헬퍼 (Manager 기반) */
 	static void AddTag(UGameplayTagsManager& Manager, FGameplayTag& OutTag, const ANSICHAR* TagName, const ANSICHAR* TagComment);
+
+	/** 프로젝트에서 사용할 모든 GameplayTag 정의 */
 	static void AddAllTags(UGameplayTagsManager& Manager);
 
 public:
@@ -44,7 +59,7 @@ public:
 
 	/* ---------- GAS SetByCaller Tags ---------- */
 	FGameplayTag Data_Damage; // Data.Damage
-	FGameplayTag Data_Heal;   // Data.Heal  ✅ [MOD]
+	FGameplayTag Data_Heal;   // Data.Heal
 
 	/* ---------- Zombie Tags ---------- */
 	FGameplayTag Zombie_Attack_A;

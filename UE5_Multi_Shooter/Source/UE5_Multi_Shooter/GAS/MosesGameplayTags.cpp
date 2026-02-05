@@ -1,4 +1,6 @@
 ﻿#include "UE5_Multi_Shooter/GAS/MosesGameplayTags.h"
+#include "UE5_Multi_Shooter/MosesLogChannels.h"
+
 #include "GameplayTagsManager.h"
 
 FMosesGameplayTags FMosesGameplayTags::GameplayTags;
@@ -15,6 +17,8 @@ void FMosesGameplayTags::InitializeNativeTags()
 
 	UGameplayTagsManager& Manager = UGameplayTagsManager::Get();
 	AddAllTags(Manager);
+
+	UE_LOG(LogMosesGAS, Warning, TEXT("[TAGS][INIT] Native GameplayTags Initialized"));
 }
 
 void FMosesGameplayTags::AddTag(UGameplayTagsManager& Manager, FGameplayTag& OutTag, const ANSICHAR* TagName, const ANSICHAR* TagComment)
@@ -23,6 +27,14 @@ void FMosesGameplayTags::AddTag(UGameplayTagsManager& Manager, FGameplayTag& Out
 		FName(TagName),
 		FString(TEXT("(Native) ")) + FString(TagComment)
 	);
+
+#if !UE_BUILD_SHIPPING
+	if (!OutTag.IsValid())
+	{
+		UE_LOG(LogMosesGAS, Error, TEXT("[TAGS][INIT] AddNativeGameplayTag FAILED Tag=%s Comment=%s"),
+			UTF8_TO_TCHAR(TagName), UTF8_TO_TCHAR(TagComment));
+	}
+#endif
 }
 
 void FMosesGameplayTags::AddAllTags(UGameplayTagsManager& Manager)
@@ -55,7 +67,7 @@ void FMosesGameplayTags::AddAllTags(UGameplayTagsManager& Manager)
 
 	// GAS SetByCaller
 	AddTag(Manager, GameplayTags.Data_Damage, "Data.Damage", "SetByCaller damage");
-	AddTag(Manager, GameplayTags.Data_Heal, "Data.Heal", "SetByCaller Heal Amount"); // ✅ [FIX]
+	AddTag(Manager, GameplayTags.Data_Heal, "Data.Heal", "SetByCaller heal amount"); // ✅ 핵심
 
 	// Zombie
 	AddTag(Manager, GameplayTags.Zombie_Attack_A, "Zombie.Attack.A", "Zombie attack type A");
