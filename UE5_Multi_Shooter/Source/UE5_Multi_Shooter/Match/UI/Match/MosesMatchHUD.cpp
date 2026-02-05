@@ -159,7 +159,7 @@ void UMosesMatchHUD::NativeDestruct()
 
 		PS->OnPlayerCapturesChanged.RemoveAll(this);
 		PS->OnPlayerZombieKillsChanged.RemoveAll(this);
-
+		PS->OnPlayerPvPKillsChanged.RemoveAll(this);
 		PS->OnAmmoChanged.RemoveAll(this);
 		PS->OnGrenadeChanged.RemoveAll(this);
 
@@ -351,7 +351,7 @@ void UMosesMatchHUD::BindToPlayerState()
 
 		OldPS->OnPlayerCapturesChanged.RemoveAll(this);
 		OldPS->OnPlayerZombieKillsChanged.RemoveAll(this);
-
+		OldPS->OnPlayerPvPKillsChanged.RemoveAll(this);
 		OldPS->OnAmmoChanged.RemoveAll(this);
 		OldPS->OnGrenadeChanged.RemoveAll(this);
 	}
@@ -361,11 +361,10 @@ void UMosesMatchHUD::BindToPlayerState()
 	PS->OnHealthChanged.AddUObject(this, &ThisClass::HandleHealthChanged);
 	PS->OnShieldChanged.AddUObject(this, &ThisClass::HandleShieldChanged);
 	PS->OnScoreChanged.AddUObject(this, &ThisClass::HandleScoreChanged);
-	PS->OnDeathsChanged.AddUObject(this, &ThisClass::HandleDeathsChanged);
 
 	PS->OnPlayerCapturesChanged.AddUObject(this, &ThisClass::HandleCapturesChanged);
 	PS->OnPlayerZombieKillsChanged.AddUObject(this, &ThisClass::HandleZombieKillsChanged);
-
+	PS->OnPlayerPvPKillsChanged.AddUObject(this, &ThisClass::HandlePvPKillsChanged);
 	PS->OnAmmoChanged.AddUObject(this, &ThisClass::HandleAmmoChanged_FromPS);
 	PS->OnGrenadeChanged.AddUObject(this, &ThisClass::HandleGrenadeChanged);
 
@@ -373,10 +372,9 @@ void UMosesMatchHUD::BindToPlayerState()
 
 	BindToCombatComponent_FromPlayerState();
 	BindToCaptureComponent_FromPlayerState();
-
-	HandleDeathsChanged(PS->GetDeaths());
 	HandleCapturesChanged(PS->GetCaptures());
 	HandleZombieKillsChanged(PS->GetZombieKills());
+	HandlePvPKillsChanged(PS->GetPvPKills());
 }
 
 void UMosesMatchHUD::BindToCombatComponent_FromPlayerState()
@@ -492,8 +490,7 @@ void UMosesMatchHUD::ApplySnapshotFromMatchGameState()
 void UMosesMatchHUD::RefreshInitial()
 {
 	HandleScoreChanged(0);
-	HandleDeathsChanged(0);
-
+	HandlePvPKillsChanged(0);
 	HandleCapturesChanged(0);
 	HandleZombieKillsChanged(0);
 
@@ -644,14 +641,6 @@ void UMosesMatchHUD::HandleScoreChanged(int32 NewScore)
 	if (ScoreAmount)
 	{
 		ScoreAmount->SetText(FText::AsNumber(NewScore));
-	}
-}
-
-void UMosesMatchHUD::HandleDeathsChanged(int32 NewDeaths)
-{
-	if (DefeatsAmount)
-	{
-		DefeatsAmount->SetText(FText::AsNumber(NewDeaths));
 	}
 }
 
@@ -1043,4 +1032,15 @@ void UMosesMatchHUD::HandleCaptureStateChanged(bool bActive, float Progress01, f
 		Clamped,
 		WarningFloat,
 		*GetNameSafe(Spot.Get()));
+}
+
+void UMosesMatchHUD::HandlePvPKillsChanged(int32 NewPvPKills)
+{
+	// DefeatsAmount를 "내가 죽인 수(PvP Kills)"로 사용
+	if (DefeatsAmount)
+	{
+		DefeatsAmount->SetText(FText::AsNumber(NewPvPKills));
+	}
+
+	UE_LOG(LogMosesHUD, Verbose, TEXT("[HUD][CL] PvPKillsChanged=%d -> DefeatsAmount Updated"), NewPvPKills);
 }

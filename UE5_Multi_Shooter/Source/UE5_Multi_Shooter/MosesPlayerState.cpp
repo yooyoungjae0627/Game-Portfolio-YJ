@@ -172,13 +172,20 @@ void AMosesPlayerState::TryInitASC(AActor* InAvatarActor)
 	}
 
 	BindASCAttributeDelegates();
+
+	// ---- Initial Push (HUD Tick 금지, 첫 프레임 정합성) ----
 	BroadcastVitals_Initial();
 	BroadcastScore();
 	BroadcastDeaths();
 
-	// ✅ [FIX][MOD] PlayerState Match Stats 초기 브로드캐스트
 	BroadcastPlayerCaptures();
 	BroadcastPlayerZombieKills();
+
+	// ✅ [ADD] PvP 킬 "단독" 초기 브로드캐스트
+	BroadcastPlayerPvPKills();
+
+	// (원하면 헤드샷도 같이)
+	// BroadcastPlayerHeadshots();
 
 	BroadcastAmmoAndGrenade();
 }
@@ -753,14 +760,21 @@ void AMosesPlayerState::ServerAddPvPKill(int32 Delta /*=1*/)
 {
 	MOSES_GUARD_AUTHORITY_VOID(this, "PVP", TEXT("Client attempted ServerAddPvPKill"));
 
+	if (Delta == 0)
+	{
+		return;
+	}
+
 	const int32 Old = PvPKills;
 	PvPKills = FMath::Max(0, PvPKills + Delta);
+
 	ForceNetUpdate();
 
 	UE_LOG(LogMosesPlayer, Warning, TEXT("[PVP][SV][PS] PvPKills %d -> %d Delta=%d PS=%s"),
 		Old, PvPKills, Delta, *GetNameSafe(this));
 
-	OnRep_PvPKills(); // ListenServer 즉시
+	// 리슨서버 즉시 반영(너 코드 스타일)
+	OnRep_PvPKills();
 }
 
 void AMosesPlayerState::ServerAddHeadshot(int32 Delta /*=1*/)

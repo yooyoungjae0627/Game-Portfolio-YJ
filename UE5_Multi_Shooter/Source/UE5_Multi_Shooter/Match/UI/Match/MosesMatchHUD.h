@@ -94,11 +94,11 @@ private:
 	void HandleHealthChanged(float Current, float Max);
 	void HandleShieldChanged(float Current, float Max);
 	void HandleScoreChanged(int32 NewScore);
-	void HandleDeathsChanged(int32 NewDeaths);
 
 	void HandleCapturesChanged(int32 NewCaptures);
 	void HandleZombieKillsChanged(int32 NewZombieKills);
-
+	// [ADD] PvP Kills(내가 플레이어 죽인 수) -> DefeatsAmount 갱신용
+	void HandlePvPKillsChanged(int32 NewPvPKills);
 	void HandleAmmoChanged_FromPS(int32 Mag, int32 Reserve);
 	void HandleGrenadeChanged(int32 Grenade);
 

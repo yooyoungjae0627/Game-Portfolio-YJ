@@ -35,6 +35,8 @@ DECLARE_MULTICAST_DELEGATE_OneParam(FOnMosesPlayerPvPKillsChangedNative, int32 /
 DECLARE_MULTICAST_DELEGATE_OneParam(FOnMosesPlayerHeadshotsChangedNative, int32 /*Headshots*/);
 DECLARE_MULTICAST_DELEGATE_TwoParams(FOnMosesDeathStateChangedNative, bool /*bIsDead*/, float /*RespawnEndServerTime*/);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnMosesSelectedCharacterChangedBP, int32, SelectedId);
+DECLARE_MULTICAST_DELEGATE_OneParam(FOnTotalKillsChangedNative, int32 /*TotalKills*/);
+
 
 UCLASS()
 class UE5_MULTI_SHOOTER_API AMosesPlayerState : public APlayerState, public IAbilitySystemInterface
@@ -83,6 +85,7 @@ public:
 	int32 GetHeadshots() const { return Headshots; }
 	bool IsDead() const { return bIsDead; }
 	float GetRespawnEndServerTime() const { return RespawnEndServerTime; }
+	int32 GetTotalKills() const { return PvPKills + ZombieKills; }
 
 public:
 	// ---------------------------------------------------------------------
@@ -201,6 +204,7 @@ public:
 	FOnMosesPlayerHeadshotsChangedNative OnPlayerHeadshotsChanged;
 	FOnMosesDeathStateChangedNative OnDeathStateChanged;
 	FOnMosesSelectedCharacterChangedNative OnSelectedCharacterChangedNative;
+	FOnTotalKillsChangedNative OnTotalKillsChanged;
 
 	UPROPERTY(BlueprintAssignable)
 	FOnMosesSelectedCharacterChangedBP OnSelectedCharacterChangedBP;
@@ -223,12 +227,15 @@ private:
 	void BroadcastPlayerPvPKills();
 	void BroadcastPlayerHeadshots();
 	void BroadcastDeathState();
+	void BroadcastTotalKills();
 
 	// GAS Attribute callbacks
 	void HandleHealthChanged_Internal(const FOnAttributeChangeData& Data);
 	void HandleMaxHealthChanged_Internal(const FOnAttributeChangeData& Data);
 	void HandleShieldChanged_Internal(const FOnAttributeChangeData& Data);
 	void HandleMaxShieldChanged_Internal(const FOnAttributeChangeData& Data);
+
+
 
 private:
 	// Components (SSOT)
