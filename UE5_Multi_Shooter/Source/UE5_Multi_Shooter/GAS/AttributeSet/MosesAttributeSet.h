@@ -1,21 +1,93 @@
 ﻿#pragma once
 
 #include "CoreMinimal.h"
-#include "AttributeSet.h"              // ✅ GAMEPLAYATTRIBUTE_* 매크로 정의
-#include "AbilitySystemComponent.h"    // ✅ Attribute getter/setter 매크로 의존
+#include "AttributeSet.h"
+#include "AbilitySystemComponent.h"
+#include "Net/UnrealNetwork.h"
+
+#include "UE5_Multi_Shooter/GAS/AttributeSet/MosesAttributeSetBase.h"
+#include "MosesAttributeSet.generated.h"
+
+class AMosesPlayerState;
 
 /**
- * Moses GAS Shared Helpers
- * - 모든 AttributeSet에서 공통으로 쓰는 매크로/헬퍼를 제공한다.
- * - Lyra 스타일: AttributeSet마다 반복되는 Getter/Setter/Attribute Getter 매크로를 통일한다.
+ * UMosesAttributeSet (Player Core Attributes)
  *
- * [MOD] ATTRIBUTE_ACCESSORS 매크로를 여기서 제공하여,
- *       개별 AttributeSet에서 "식별자 없음" 연쇄를 막는다.
+ * DAY11:
+ * - Health/MaxHealth
+ * - Shield/MaxShield (== Armor 역할)
+ * - IncomingDamage (Meta)
+ * - IncomingHeal   (Meta)
+ *
+ * 서버 권위:
+ * - IncomingDamage를 Shield(80%) / Health(20%)로 분배해서 실제 값을 확정한다.
+ * - Heal은 Health에 Add 한다.
+ * - Health <= 0 되면 서버에서 PlayerState에 "Death"를 통지한다(중복 방지).
  */
-#ifndef ATTRIBUTE_ACCESSORS
-#define ATTRIBUTE_ACCESSORS(ClassName, PropertyName) \
-	GAMEPLAYATTRIBUTE_PROPERTY_GETTER(ClassName, PropertyName) \
-	GAMEPLAYATTRIBUTE_VALUE_GETTER(PropertyName) \
-	GAMEPLAYATTRIBUTE_VALUE_SETTER(PropertyName) \
-	GAMEPLAYATTRIBUTE_VALUE_INITTER(PropertyName)
-#endif
+UCLASS()
+class UE5_MULTI_SHOOTER_API UMosesAttributeSet : public UAttributeSet
+{
+	GENERATED_BODY()
+
+public:
+	UMosesAttributeSet();
+
+	//~UAttributeSet
+	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
+	virtual void PostGameplayEffectExecute(const FGameplayEffectModCallbackData& Data) override; // [MOD]
+
+public:
+	// -------------------------------------------------------------------------
+	// Attributes
+	// -------------------------------------------------------------------------
+	UPROPERTY(BlueprintReadOnly, Category = "Attr|Health", ReplicatedUsing = OnRep_Health)
+	FGameplayAttributeData Health;
+	ATTRIBUTE_ACCESSORS(UMosesAttributeSet, Health)
+
+	UPROPERTY(BlueprintReadOnly, Category = "Attr|Health", ReplicatedUsing = OnRep_MaxHealth)
+	FGameplayAttributeData MaxHealth;
+	ATTRIBUTE_ACCESSORS(UMosesAttributeSet, MaxHealth)
+
+	UPROPERTY(BlueprintReadOnly, Category = "Attr|Shield", ReplicatedUsing = OnRep_Shield)
+	FGameplayAttributeData Shield;
+	ATTRIBUTE_ACCESSORS(UMosesAttributeSet, Shield)
+
+	UPROPERTY(BlueprintReadOnly, Category = "Attr|Shield", ReplicatedUsing = OnRep_MaxShield)
+	FGameplayAttributeData MaxShield;
+	ATTRIBUTE_ACCESSORS(UMosesAttributeSet, MaxShield)
+
+	// -------------------------------------------------------------------------
+	// Meta Attributes (Not replicated)
+	// - GE_Damage_SetByCaller -> IncomingDamage (Data.Damage)
+	// - GE_Heal_SetByCaller   -> IncomingHeal   (Data.Heal)
+	// -------------------------------------------------------------------------
+	UPROPERTY(BlueprintReadOnly, Category="Attr|Meta")
+	FGameplayAttributeData IncomingDamage;
+	ATTRIBUTE_ACCESSORS(UMosesAttributeSet, IncomingDamage)
+
+	UPROPERTY(BlueprintReadOnly, Category="Attr|Meta")
+	FGameplayAttributeData IncomingHeal;
+	ATTRIBUTE_ACCESSORS(UMosesAttributeSet, IncomingHeal)
+
+protected:
+	UFUNCTION()
+	void OnRep_Health(const FGameplayAttributeData& OldValue);
+
+	UFUNCTION()
+	void OnRep_MaxHealth(const FGameplayAttributeData& OldValue);
+
+	UFUNCTION()
+	void OnRep_Shield(const FGameplayAttributeData& OldValue);
+
+	UFUNCTION()
+	void OnRep_MaxShield(const FGameplayAttributeData& OldValue);
+
+private:
+	// [MOD] 서버 권위 분배 로직
+	void ApplySplitDamage_Server(UAbilitySystemComponent* ASC, float DamageAmount);
+	void ApplyHeal_Server(UAbilitySystemComponent* ASC, float HealAmount);
+	void ClampVitals();
+
+	// [MOD] Death 라우팅 (서버 전용)
+	void NotifyDeathIfNeeded_Server(UAbilitySystemComponent* ASC);
+};

@@ -2,7 +2,9 @@
 
 #include "CoreMinimal.h"
 #include "UE5_Multi_Shooter/MosesGameModeBase.h"
-#include "UE5_Multi_Shooter/Match/MosesMatchPhase.h" 
+#include "UE5_Multi_Shooter/Match/MosesMatchPhase.h"
+#include "UE5_Multi_Shooter/Match/GameState/MosesMatchGameState.h"
+
 #include "MosesMatchGameMode.generated.h"
 
 class APlayerStart;
@@ -13,20 +15,21 @@ class UMSCharacterCatalog;
 class UMosesExperienceManagerComponent;
 class UMosesExperienceDefinition;
 class AMosesMatchGameState;
+class AMosesPlayerState;
 
 /**
  * AMosesMatchGameMode
  *
  * 역할:
  * - 서버 권위 Phase 머신(WaitingForPlayers → Warmup → Combat → Result)
- * - Phase에 맞춰 Experience 전환(네 구조 유지)
- * - MatchGameState에 Phase/RemainingSeconds/Announcement를 확정한다.
+ * - Phase에 맞춰 Experience 전환
+ * - MatchGameState에 Phase/RemainingSeconds/Announcement 확정
+ * - DAY11: Respawn 스케줄 + Result 승패 판정 확정(Combat→Result 진입 시)
  *
  * 정책:
  * - Server Authority 100%
- * - GameMode=결정(Phase/Experience/ServerTravel)
- * - GameState=복제(클라 HUD 갱신용 데이터)
- * - RemainingSeconds는 "MatchGameState의 서버 타이머"가 단일 진실로 관리한다.
+ * - GameMode=결정(Phase/Experience/ServerTravel/Respawn/Result)
+ * - GameState=복제(HUD 갱신용 데이터)
  */
 UCLASS()
 class UE5_MULTI_SHOOTER_API AMosesMatchGameMode : public AMosesGameModeBase
@@ -36,6 +39,7 @@ class UE5_MULTI_SHOOTER_API AMosesMatchGameMode : public AMosesGameModeBase
 public:
 	AMosesMatchGameMode();
 
+	/** 디버그용: 서버에서 즉시 로비로 */
 	UFUNCTION(Exec)
 	void TravelToLobby();
 
@@ -93,11 +97,33 @@ private:
 
 private:
 	// -------------------------------------------------------------------------
-	// [MOD] Match default loadout (Server only)
-	// - MatchLevel 진입 시 "기본 Rifle + 30/90"를 SSOT(PlayerState)에서 보장한다.
-	// - PostLogin / SeamlessTravel / READY(Restart) 경로 모두 커버한다.
+	// Match default loadout (Server only)
 	// -------------------------------------------------------------------------
-	void Server_EnsureDefaultMatchLoadout(APlayerController* PC, const TCHAR* FromWhere); // ✅ [MOD]
+	void Server_EnsureDefaultMatchLoadout(APlayerController* PC, const TCHAR* FromWhere);
+
+private:
+	// -------------------------------------------------------------------------
+	// DAY11 [MOD] Respawn schedule (Server only)
+	// - PlayerState(GAS Death 확정) -> GameMode가 RestartPlayer를 확정한다.
+	// -------------------------------------------------------------------------
+public:
+	void ServerScheduleRespawn(AController* Controller, float DelaySeconds);
+
+private:
+	void HandleRespawnTimerExpired(AController* Controller);
+
+private:
+	// -------------------------------------------------------------------------
+	// DAY11 [MOD] Result decide (Server only)
+	// - Combat -> Result 진입 시 서버가 승패 확정
+	// - Captures -> PvPKills -> ZombieKills -> Headshots -> Draw
+	// -------------------------------------------------------------------------
+	void ServerDecideResult_OnEnterResultPhase();
+
+	bool TryChooseWinnerByReason_Server(
+		const TArray<AMosesPlayerState*>& Players,
+		FString& OutWinnerId,
+		EMosesResultReason& OutReason) const;
 
 private:
 	// -------------------------------------------------------------------------
@@ -127,8 +153,10 @@ private:
 	// -------------------------------------------------------------------------
 	UClass* ResolvePawnClassFromSelectedId(int32 SelectedId) const;
 
-	// [MOD] Experience Ready 폴링(틱 금지)로 Warmup 시작 보장
 private:
+	// -------------------------------------------------------------------------
+	// Experience Ready Poll (Tick 금지)
+	// -------------------------------------------------------------------------
 	void StartWarmup_WhenExperienceReady();
 	void PollExperienceReady_AndStartWarmup();
 

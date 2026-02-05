@@ -18,6 +18,34 @@
 #include "GameFramework/GameStateBase.h"
 #include "GameFramework/PlayerController.h"
 #include "GameFramework/PlayerStart.h"
+#include "Misc/Guid.h"
+
+namespace
+{
+	static int32 FindMaxAndCount(
+		const TArray<AMosesPlayerState*>& Players,
+		TFunctionRef<int32(const AMosesPlayerState*)> Getter,
+		int32& OutMax)
+	{
+		OutMax = INT32_MIN;
+
+		for (const AMosesPlayerState* PS : Players)
+		{
+			OutMax = FMath::Max(OutMax, Getter(PS));
+		}
+
+		int32 Count = 0;
+		for (const AMosesPlayerState* PS : Players)
+		{
+			if (Getter(PS) == OutMax)
+			{
+				++Count;
+			}
+		}
+
+		return Count;
+	}
+}
 
 AMosesMatchGameMode::AMosesMatchGameMode()
 {
@@ -32,7 +60,7 @@ AMosesMatchGameMode::AMosesMatchGameMode()
 	// [중요] 매치 레벨에서는 MatchGameState를 사용한다.
 	GameStateClass = AMosesMatchGameState::StaticClass();
 
-	// [MOD] Warmup 30초 요구사항 강제 기본값(단, BP/ini가 덮어쓸 수 있으므로 BeginPlay에서도 한번 더 강제한다)
+	// [MOD] Warmup 30초 요구사항 기본값 (BeginPlay에서도 서버에서 강제)
 	WarmupSeconds = 30.0f;
 
 	UE_LOG(LogMosesSpawn, Warning, TEXT("%s [MatchGM] Ctor OK (GameStateClass=MatchGameState) WarmupSeconds=%.2f"),
@@ -59,8 +87,7 @@ void AMosesMatchGameMode::BeginPlay()
 {
 	Super::BeginPlay();
 
-	// [MOD] BP/ini가 WarmupSeconds를 120으로 덮어썼을 가능성이 높다.
-	//       요구사항은 "워밍업 30초"이므로 서버에서 강제 고정한다.
+	// [MOD] BP/ini가 WarmupSeconds를 덮어썼을 수 있으므로 서버에서 30초로 고정
 	if (HasAuthority())
 	{
 		const float Before = WarmupSeconds;
@@ -70,12 +97,6 @@ void AMosesMatchGameMode::BeginPlay()
 			TEXT("[PHASE][SV] WarmupSeconds FORCE 30 (Before=%.2f After=%.2f) GM=%s"),
 			Before, WarmupSeconds, *GetNameSafe(this));
 	}
-
-	UE_LOG(LogMosesExp, Warning, TEXT("%s [DOD][Travel] MatchGM Seamless=%d"),
-		MOSES_TAG_COMBAT_SV, bUseSeamlessTravel ? 1 : 0);
-
-	UE_LOG(LogMosesSpawn, Warning, TEXT("%s [MatchGM] BeginPlay Catalog=%s Fallback=%s"),
-		MOSES_TAG_COMBAT_SV, *GetNameSafe(CharacterCatalog), *GetNameSafe(FallbackPawnClass));
 
 	DumpAllDODPlayerStates(TEXT("MatchGM:BeginPlay"));
 	DumpPlayerStates(TEXT("[MatchGM][BeginPlay]"));
@@ -111,12 +132,7 @@ void AMosesMatchGameMode::PostLogin(APlayerController* NewPlayer)
 		PS ? PS->GetPlayerId() : -1,
 		PS ? *PS->GetPlayerName() : TEXT("None"));
 
-	// ---------------------------------------------------------------------
-	// [MOD] MatchLevel 진입 기본 로드아웃 보장: Rifle + 30/90
-	// - PostLogin에서 한 번 보장
-	// - 실제 Spawn/Restart 경로에서도 다시 보장하지만,
-	//   SSOT에서 idempotent 이므로 중복 호출은 안전하다.
-	// ---------------------------------------------------------------------
+	// Match 기본 로드아웃 보장
 	Server_EnsureDefaultMatchLoadout(NewPlayer, TEXT("PostLogin"));
 }
 
@@ -142,7 +158,7 @@ void AMosesMatchGameMode::StartMatchFlow_AfterExperienceReady()
 {
 	MOSES_GUARD_AUTHORITY_VOID(this, "Respawn", TEXT("Client attempted StartMatchFlow_AfterExperienceReady"));
 
-	// Experience Ready 시점에 Pawn이 없는 플레이어는 서버가 Spawn 확정
+	// Experience Ready 시점: Pawn 없는 플레이어는 서버가 Spawn 확정
 	for (FConstPlayerControllerIterator It = GetWorld()->GetPlayerControllerIterator(); It; ++It)
 	{
 		APlayerController* PC = It->Get();
@@ -151,17 +167,15 @@ void AMosesMatchGameMode::StartMatchFlow_AfterExperienceReady()
 			continue;
 		}
 
-		// [MOD] MatchLevel 기본 로드아웃은 "Pawn 유무와 무관"하게 SSOT에 먼저 보장해도 된다.
-		// (Pawn은 코스메틱이며, PS/CombatComponent가 단일 진실)
 		Server_EnsureDefaultMatchLoadout(PC, TEXT("READY:BeforeRestart"));
 
 		if (!IsValid(PC->GetPawn()))
 		{
 			UE_LOG(LogMosesSpawn, Warning, TEXT("%s [MatchGM][READY] RestartPlayer (NoPawn) PC=%s"),
 				MOSES_TAG_RESPAWN_SV, *GetNameSafe(PC));
+
 			RestartPlayer(PC);
 
-			// [MOD] Restart 이후에도 한 번 더 보장(Spawn 이후 OnRep 순서/타이밍 이슈 차단)
 			Server_EnsureDefaultMatchLoadout(PC, TEXT("READY:AfterRestart"));
 		}
 	}
@@ -211,9 +225,7 @@ float AMosesMatchGameMode::GetPhaseDurationSeconds(EMosesMatchPhase Phase) const
 {
 	switch (Phase)
 	{
-		// [MOD] 요구사항: Warmup은 무조건 30초 (BP/ini/실수로 120이 들어와도 여기서 차단)
-	case EMosesMatchPhase::Warmup: return 30.0f;
-
+	case EMosesMatchPhase::Warmup: return 30.0f;        // 요구사항 강제
 	case EMosesMatchPhase::Combat: return CombatSeconds;
 	case EMosesMatchPhase::Result: return ResultSeconds;
 	default: break;
@@ -275,11 +287,6 @@ void AMosesMatchGameMode::SetMatchPhase(EMosesMatchPhase NewPhase)
 {
 	MOSES_GUARD_AUTHORITY_VOID(this, "Phase", TEXT("Client attempted SetMatchPhase"));
 
-	UE_LOG(LogMosesPhase, Warning, TEXT("[PHASE][SV] SetMatchPhase CALLED New=%s World=%s GM=%s"),
-		*UEnum::GetValueAsString(NewPhase),
-		*GetNameSafe(GetWorld()),
-		*GetNameSafe(this));
-
 	if (CurrentPhase == NewPhase)
 	{
 		return;
@@ -295,13 +302,9 @@ void AMosesMatchGameMode::SetMatchPhase(EMosesMatchPhase NewPhase)
 
 	// 3) Duration 계산
 	const float Duration = GetPhaseDurationSeconds(CurrentPhase);
-	PhaseEndTimeSeconds = (Duration > 0.f) ? (GetWorld()->GetTimeSeconds() + Duration) : 0.0;
 
-	UE_LOG(LogMosesExp, Warning, TEXT("%s [MatchGM][PHASE] -> %s (Duration=%.2f EndTime=%.2f)"),
-		MOSES_TAG_COMBAT_SV,
-		*UEnum::GetValueAsString(CurrentPhase),
-		Duration,
-		PhaseEndTimeSeconds);
+	UE_LOG(LogMosesPhase, Warning, TEXT("[PHASE][SV] -> %s Duration=%.2f GM=%s"),
+		*UEnum::GetValueAsString(CurrentPhase), Duration, *GetNameSafe(this));
 
 	// 4) MatchGameState에 Phase/Timer/Announcement 확정
 	if (AMosesMatchGameState* GS = GetMatchGameState())
@@ -309,14 +312,8 @@ void AMosesMatchGameMode::SetMatchPhase(EMosesMatchPhase NewPhase)
 		GS->ServerSetMatchPhase(CurrentPhase);
 
 		const int32 DurationInt = (Duration > 0.f) ? FMath::CeilToInt(Duration) : 0;
-
-		UE_LOG(LogMosesPhase, Warning, TEXT("[PHASE][SV] ApplyTimer Phase=%s DurationInt=%d (Warmup must be 30)"),
-			*UEnum::GetValueAsString(CurrentPhase), DurationInt);
-
-		// ✅ RemainingSeconds 감소는 MatchGameState의 서버 타이머가 담당한다(단일 진실).
 		GS->ServerStartMatchTimer(DurationInt);
 
-		// 방송(증거/데모) - [MOD] 한글/색상 정책은 HUD에서 처리, 여기선 "텍스트"만
 		if (CurrentPhase == EMosesMatchPhase::Warmup)
 		{
 			GS->ServerStartAnnouncementText(FText::FromString(TEXT("워밍업 시작")), 3);
@@ -328,6 +325,9 @@ void AMosesMatchGameMode::SetMatchPhase(EMosesMatchPhase NewPhase)
 		else if (CurrentPhase == EMosesMatchPhase::Result)
 		{
 			GS->ServerStartAnnouncementCountdown(FText::FromString(TEXT("로비 복귀까지")), FMath::Max(1, DurationInt));
+
+			// [MOD] Result 진입 즉시 서버 승패 확정
+			ServerDecideResult_OnEnterResultPhase();
 		}
 	}
 
@@ -342,6 +342,10 @@ void AMosesMatchGameMode::SetMatchPhase(EMosesMatchPhase NewPhase)
 			false);
 	}
 }
+
+// ============================================================================
+// PlayerStart
+// ============================================================================
 
 AActor* AMosesMatchGameMode::ChoosePlayerStart_Implementation(AController* Player)
 {
@@ -375,6 +379,10 @@ AActor* AMosesMatchGameMode::ChoosePlayerStart_Implementation(AController* Playe
 	ReserveStartForController(Player, Chosen);
 	return Chosen;
 }
+
+// ============================================================================
+// Travel
+// ============================================================================
 
 void AMosesMatchGameMode::TravelToLobby()
 {
@@ -417,11 +425,6 @@ FString AMosesMatchGameMode::GetLobbyMapURL() const
 	return TEXT("/Game/Map/L_Lobby?Experience=Exp_Lobby");
 }
 
-void AMosesMatchGameMode::GetSeamlessTravelActorList(bool bToTransition, TArray<AActor*>& ActorList)
-{
-	Super::GetSeamlessTravelActorList(bToTransition, ActorList);
-}
-
 void AMosesMatchGameMode::HandleSeamlessTravelPlayer(AController*& C)
 {
 	Super::HandleSeamlessTravelPlayer(C);
@@ -432,22 +435,18 @@ void AMosesMatchGameMode::HandleSeamlessTravelPlayer(AController*& C)
 		return;
 	}
 
-	// ---------------------------------------------------------------------
-	// [MOD] SeamlessTravel로 넘어온 플레이어도 기본 로드아웃 보장
-	// ---------------------------------------------------------------------
 	Server_EnsureDefaultMatchLoadout(PC, TEXT("HandleSeamlessTravelPlayer"));
 
 	if (!IsValid(PC->GetPawn()))
 	{
 		RestartPlayer(PC);
-		// Restart 이후에도 보장
 		Server_EnsureDefaultMatchLoadout(PC, TEXT("HandleSeamlessTravelPlayer:AfterRestart"));
 	}
+}
 
-	if (AMosesPlayerState* PS = PC->GetPlayerState<AMosesPlayerState>())
-	{
-		PS->DOD_PS_Log(this, TEXT("GM:HandleSeamlessTravelPlayer"));
-	}
+void AMosesMatchGameMode::GetSeamlessTravelActorList(bool bToTransition, TArray<AActor*>& ActorList)
+{
+	Super::GetSeamlessTravelActorList(bToTransition, ActorList);
 }
 
 APawn* AMosesMatchGameMode::SpawnDefaultPawnFor_Implementation(AController* NewPlayer, AActor* StartSpot)
@@ -505,6 +504,197 @@ UClass* AMosesMatchGameMode::ResolvePawnClassFromSelectedId(int32 SelectedId) co
 
 	return Entry.PawnClass.LoadSynchronous();
 }
+
+// ============================================================================
+// Default Loadout (SSOT=PlayerState)
+// ============================================================================
+
+void AMosesMatchGameMode::Server_EnsureDefaultMatchLoadout(APlayerController* PC, const TCHAR* FromWhere)
+{
+	if (!HasAuthority() || !PC)
+	{
+		return;
+	}
+
+	AMosesPlayerState* PS = PC->GetPlayerState<AMosesPlayerState>();
+	if (!PS)
+	{
+		UE_LOG(LogMosesWeapon, Warning, TEXT("[WEAPON][SV][MatchGM] EnsureDefaultLoadout FAIL (NoPS) From=%s PC=%s"),
+			FromWhere ? FromWhere : TEXT("None"),
+			*GetNameSafe(PC));
+		return;
+	}
+
+	PS->ServerEnsureMatchDefaultLoadout();
+
+	UE_LOG(LogMosesWeapon, Warning, TEXT("[WEAPON][SV][MatchGM] EnsureDefaultLoadout OK From=%s PC=%s PS=%s"),
+		FromWhere ? FromWhere : TEXT("None"),
+		*GetNameSafe(PC),
+		*GetNameSafe(PS));
+}
+
+// ============================================================================
+// Respawn (DAY11)
+// ============================================================================
+
+void AMosesMatchGameMode::ServerScheduleRespawn(AController* Controller, float DelaySeconds)
+{
+	if (!HasAuthority() || !Controller)
+	{
+		return;
+	}
+
+	FTimerHandle Tmp;
+	GetWorldTimerManager().SetTimer(
+		Tmp,
+		FTimerDelegate::CreateUObject(this, &ThisClass::HandleRespawnTimerExpired, Controller),
+		FMath::Max(0.1f, DelaySeconds),
+		false);
+
+	UE_LOG(LogMosesSpawn, Warning, TEXT("[RESPAWN][SV] Scheduled Delay=%.2f Controller=%s"),
+		DelaySeconds, *GetNameSafe(Controller));
+}
+
+void AMosesMatchGameMode::HandleRespawnTimerExpired(AController* Controller)
+{
+	if (!HasAuthority() || !Controller)
+	{
+		return;
+	}
+
+	RestartPlayer(Controller);
+
+	AMosesPlayerState* PS = Controller->GetPlayerState<AMosesPlayerState>();
+	if (PS)
+	{
+		// NOTE:
+		// PS에 “bIsDead/RespawnEndServerTime”이 private이면 반드시 PS 함수로 클리어해야 한다.
+		// DAY11에서 PS에 아래 같은 함수를 하나 두는게 정답:
+		//   void ServerClearDeadAfterRespawn();
+		PS->ServerClearDeadAfterRespawn(); // [MOD] (PS에 구현 필요)
+
+		UE_LOG(LogMosesSpawn, Warning, TEXT("[RESPAWN][SV] Restart OK PS=%s"), *GetNameSafe(PS));
+	}
+}
+
+// ============================================================================
+// Result Decide (DAY11)
+// ============================================================================
+
+void AMosesMatchGameMode::ServerDecideResult_OnEnterResultPhase()
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	AMosesMatchGameState* MGS = GetMatchGameState();
+	if (!MGS)
+	{
+		return;
+	}
+
+	TArray<AMosesPlayerState*> Players;
+	if (GameState)
+	{
+		for (APlayerState* Raw : GameState->PlayerArray)
+		{
+			if (AMosesPlayerState* PS = Cast<AMosesPlayerState>(Raw))
+			{
+				Players.Add(PS);
+			}
+		}
+	}
+
+	FString WinnerId;
+	EMosesResultReason Reason = EMosesResultReason::None;
+
+	const bool bHasWinner = TryChooseWinnerByReason_Server(Players, WinnerId, Reason);
+
+	FMosesMatchResultState RS;
+	RS.bIsResult = true;
+
+	if (!bHasWinner)
+	{
+		RS.bIsDraw = true;
+		RS.WinnerPlayerId = FString();
+		RS.Reason = EMosesResultReason::Draw;
+
+		UE_LOG(LogMosesPhase, Warning, TEXT("[RESULT][SV] DRAW (All tied)"));
+	}
+	else
+	{
+		RS.bIsDraw = false;
+		RS.WinnerPlayerId = WinnerId;
+		RS.Reason = Reason;
+
+		UE_LOG(LogMosesPhase, Warning, TEXT("[RESULT][SV] Winner=%s Reason=%d"), *WinnerId, (int32)Reason);
+	}
+
+	MGS->ServerSetResultState(RS);
+
+	// 중앙 방송(데모)
+	if (RS.bIsDraw)
+	{
+		MGS->ServerPushAnnouncement(TEXT("DRAW"), 4.0f);
+	}
+	else
+	{
+		MGS->ServerPushAnnouncement(TEXT("RESULT"), 4.0f);
+	}
+}
+
+bool AMosesMatchGameMode::TryChooseWinnerByReason_Server(
+	const TArray<AMosesPlayerState*>& Players,
+	FString& OutWinnerId,
+	EMosesResultReason& OutReason) const
+{
+	struct FRule
+	{
+		EMosesResultReason Reason;
+		TFunction<int32(const AMosesPlayerState*)> Getter;
+	};
+
+	const TArray<FRule> Rules =
+	{
+		{ EMosesResultReason::Captures,    [](const AMosesPlayerState* PS) { return PS->GetCaptures(); } },
+		{ EMosesResultReason::PvPKills,    [](const AMosesPlayerState* PS) { return PS->GetPvPKills(); } },
+		{ EMosesResultReason::ZombieKills, [](const AMosesPlayerState* PS) { return PS->GetZombieKills(); } },
+		{ EMosesResultReason::Headshots,   [](const AMosesPlayerState* PS) { return PS->GetHeadshots(); } },
+	};
+
+	for (const FRule& Rule : Rules)
+	{
+		int32 MaxValue = 0;
+		const int32 Count = FindMaxAndCount(Players, Rule.Getter, MaxValue);
+
+		if (Players.Num() > 0 && Count == 1)
+		{
+			for (const AMosesPlayerState* PS : Players)
+			{
+				if (Rule.Getter(PS) == MaxValue)
+				{
+					// ✅ [FIX] OnlineSubsystem 심볼(FUniqueNetIdWrapper) 제거
+					OutWinnerId = PS->GetPersistentId().ToString(EGuidFormats::DigitsWithHyphens);
+					OutReason = Rule.Reason;
+
+					UE_LOG(LogMosesPhase, Warning, TEXT("[RESULT][SV] Decide WinnerPid=%s Reason=%d Value=%d"),
+						*OutWinnerId, (int32)OutReason, MaxValue);
+					return true;
+				}
+			}
+		}
+
+		UE_LOG(LogMosesPhase, Warning, TEXT("[RESULT][SV] Tie Reason=%d Max=%d Count=%d"),
+			(int32)Rule.Reason, MaxValue, Count);
+	}
+
+	return false;
+}
+
+// ============================================================================
+// Debug helpers
+// ============================================================================
 
 void AMosesMatchGameMode::DumpPlayerStates(const TCHAR* Prefix) const
 {
@@ -610,11 +800,14 @@ void AMosesMatchGameMode::DumpReservedStarts(const TCHAR* Where) const
 		AssignedStartByController.Num());
 }
 
+// ============================================================================
+// Experience Ready Poll (Tick 금지)
+// ============================================================================
+
 void AMosesMatchGameMode::StartWarmup_WhenExperienceReady()
 {
 	MOSES_GUARD_AUTHORITY_VOID(this, "Phase", TEXT("Client attempted StartWarmup_WhenExperienceReady"));
 
-	// 중복 방지
 	if (ExperienceReadyPollHandle.IsValid())
 	{
 		return;
@@ -629,7 +822,7 @@ void AMosesMatchGameMode::StartWarmup_WhenExperienceReady()
 		ExperienceReadyPollInterval,
 		true);
 
-	UE_LOG(LogMosesExp, Warning, TEXT("%s [MatchGM][MOD] StartWarmup_WhenExperienceReady -> Poll START Interval=%.2f"),
+	UE_LOG(LogMosesExp, Warning, TEXT("%s [MatchGM] Experience READY Poll START Interval=%.2f"),
 		MOSES_TAG_COMBAT_SV,
 		ExperienceReadyPollInterval);
 }
@@ -646,7 +839,7 @@ void AMosesMatchGameMode::PollExperienceReady_AndStartWarmup()
 		if (ExperienceReadyPollCount >= ExperienceReadyPollMaxCount)
 		{
 			GetWorldTimerManager().ClearTimer(ExperienceReadyPollHandle);
-			UE_LOG(LogMosesExp, Warning, TEXT("%s [MatchGM][MOD] Poll GIVEUP (No ExpMgr)"),
+			UE_LOG(LogMosesExp, Warning, TEXT("%s [MatchGM] Poll GIVEUP (No ExpMgr)"),
 				MOSES_TAG_COMBAT_SV);
 		}
 		return;
@@ -658,49 +851,17 @@ void AMosesMatchGameMode::PollExperienceReady_AndStartWarmup()
 		if (ExperienceReadyPollCount >= ExperienceReadyPollMaxCount)
 		{
 			GetWorldTimerManager().ClearTimer(ExperienceReadyPollHandle);
-			UE_LOG(LogMosesExp, Warning, TEXT("%s [MatchGM][MOD] Poll GIVEUP (Experience not ready)"),
+			UE_LOG(LogMosesExp, Warning, TEXT("%s [MatchGM] Poll GIVEUP (Experience not ready)"),
 				MOSES_TAG_COMBAT_SV);
 		}
 		return;
 	}
 
-	// Ready 확인됨 → 폴링 종료
 	GetWorldTimerManager().ClearTimer(ExperienceReadyPollHandle);
 
-	UE_LOG(LogMosesExp, Warning, TEXT("%s [MatchGM][MOD] Experience READY -> StartMatchFlow Exp=%s"),
+	UE_LOG(LogMosesExp, Warning, TEXT("%s [MatchGM] Experience READY -> StartMatchFlow Exp=%s"),
 		MOSES_TAG_COMBAT_SV,
 		*GetNameSafe(CurrentExp));
 
 	StartMatchFlow_AfterExperienceReady();
-}
-
-// ============================================================================
-// [MOD] Match default loadout (Server only)
-// - MatchLevel 진입 시점(여러 경로)에서 "Rifle + 30/90" 보장
-// - 실제 지급은 SSOT(PlayerState)로 위임
-// ============================================================================
-
-void AMosesMatchGameMode::Server_EnsureDefaultMatchLoadout(APlayerController* PC, const TCHAR* FromWhere)
-{
-	if (!HasAuthority() || !PC)
-	{
-		return;
-	}
-
-	AMosesPlayerState* PS = PC->GetPlayerState<AMosesPlayerState>();
-	if (!PS)
-	{
-		UE_LOG(LogMosesWeapon, Warning, TEXT("[WEAPON][SV][MatchGM] EnsureDefaultLoadout FAIL (NoPS) From=%s PC=%s"),
-			FromWhere ? FromWhere : TEXT("None"),
-			*GetNameSafe(PC));
-		return;
-	}
-
-	// ✅ 핵심: PS(SSOT)에서 “한 번만” 보장 (중복 호출 안전)
-	PS->ServerEnsureMatchDefaultLoadout();
-
-	UE_LOG(LogMosesWeapon, Warning, TEXT("[WEAPON][SV][MatchGM] EnsureDefaultLoadout OK From=%s PC=%s PS=%s"),
-		FromWhere ? FromWhere : TEXT("None"),
-		*GetNameSafe(PC),
-		*GetNameSafe(PS));
 }

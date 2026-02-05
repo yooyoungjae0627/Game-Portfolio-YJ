@@ -35,15 +35,16 @@ public:
 	FGameplayTag Weapon_Rifle_B;
 	FGameplayTag Weapon_Rifle_C;
 
-	FGameplayTag Weapon_Shotgun_A;          // ✅ ADD
-	FGameplayTag Weapon_Sniper_A;           // ✅ ADD
-	FGameplayTag Weapon_GrenadeLauncher_A;  // ✅ ADD
+	FGameplayTag Weapon_Shotgun_A;
+	FGameplayTag Weapon_Sniper_A;
+	FGameplayTag Weapon_GrenadeLauncher_A;
 
 	FGameplayTag Weapon_Pistol;
 	FGameplayTag Weapon_Grenade;
 
 	/* ---------- GAS SetByCaller Tags ---------- */
-	FGameplayTag Data_Damage;               // ✅ ADD (Data.Damage)
+	FGameplayTag Data_Damage; // Data.Damage
+	FGameplayTag Data_Heal;   // Data.Heal  ✅ [MOD]
 
 	/* ---------- Zombie Tags ---------- */
 	FGameplayTag Zombie_Attack_A;

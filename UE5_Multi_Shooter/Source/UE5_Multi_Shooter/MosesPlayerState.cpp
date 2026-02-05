@@ -3,6 +3,7 @@
 #include "UE5_Multi_Shooter/System/MosesAuthorityGuards.h"
 #include "UE5_Multi_Shooter/System/MosesLobbyLocalPlayerSubsystem.h"
 
+#include "UE5_Multi_Shooter/Match/GameMode/MosesMatchGameMode.h"
 #include "UE5_Multi_Shooter/Match/Components/MosesCombatComponent.h"
 #include "UE5_Multi_Shooter/Match/Components/MosesSlotOwnershipComponent.h"
 #include "UE5_Multi_Shooter/Match/Flag/MosesCaptureComponent.h"
@@ -13,6 +14,7 @@
 
 #include "Net/UnrealNetwork.h"
 #include "GameFramework/PlayerController.h"
+#include "GameFramework/GameStateBase.h"
 #include "Engine/LocalPlayer.h"
 #include "GameplayTagContainer.h"
 
@@ -57,10 +59,12 @@ void AMosesPlayerState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& Ou
 	DOREPLIFETIME(AMosesPlayerState, RoomId);
 	DOREPLIFETIME(AMosesPlayerState, bIsRoomHost);
 	DOREPLIFETIME(AMosesPlayerState, Deaths);
-
-	// [MOD]
 	DOREPLIFETIME(AMosesPlayerState, Captures);
 	DOREPLIFETIME(AMosesPlayerState, ZombieKills);
+	DOREPLIFETIME(AMosesPlayerState, PvPKills);
+	DOREPLIFETIME(AMosesPlayerState, Headshots);
+	DOREPLIFETIME(AMosesPlayerState, bIsDead);
+	DOREPLIFETIME(AMosesPlayerState, RespawnEndServerTime);
 }
 
 void AMosesPlayerState::CopyProperties(APlayerState* NewPlayerState)
@@ -82,10 +86,12 @@ void AMosesPlayerState::CopyProperties(APlayerState* NewPlayerState)
 	NewPS->bIsRoomHost = bIsRoomHost;
 	NewPS->PawnData = PawnData;
 	NewPS->Deaths = Deaths;
-
-	// [MOD]
 	NewPS->Captures = Captures;
 	NewPS->ZombieKills = ZombieKills;
+	NewPS->PvPKills = PvPKills;
+	NewPS->Headshots = Headshots;
+	NewPS->bIsDead = bIsDead;
+	NewPS->RespawnEndServerTime = RespawnEndServerTime;
 }
 
 void AMosesPlayerState::OverrideWith(APlayerState* OldPlayerState)
@@ -107,10 +113,12 @@ void AMosesPlayerState::OverrideWith(APlayerState* OldPlayerState)
 	bIsRoomHost = OldPS->bIsRoomHost;
 	PawnData = OldPS->PawnData;
 	Deaths = OldPS->Deaths;
-
-	// [MOD]
 	Captures = OldPS->Captures;
 	ZombieKills = OldPS->ZombieKills;
+	PvPKills = OldPS->PvPKills;
+	Headshots = OldPS->Headshots;
+	bIsDead = OldPS->bIsDead;
+	RespawnEndServerTime = OldPS->RespawnEndServerTime;
 }
 
 void AMosesPlayerState::OnRep_Score()
@@ -700,4 +708,190 @@ void AMosesPlayerState::DOD_PS_Log(const UObject* Caller, const TCHAR* Phase) co
 		Captures,
 		ZombieKills,
 		FMath::RoundToInt(GetScore()));
+}
+
+void AMosesPlayerState::OnRep_PvPKills()
+{
+	BroadcastPlayerPvPKills();
+}
+
+void AMosesPlayerState::OnRep_Headshots()
+{
+	BroadcastPlayerHeadshots();
+}
+
+void AMosesPlayerState::OnRep_DeathState()
+{
+	BroadcastDeathState();
+}
+
+void AMosesPlayerState::BroadcastPlayerPvPKills()
+{
+	OnPlayerPvPKillsChanged.Broadcast(PvPKills);
+
+	UE_LOG(LogMosesPlayer, Verbose, TEXT("[PVP][CL][PS] Broadcast PvPKills=%d PS=%s"),
+		PvPKills, *GetNameSafe(this));
+}
+
+void AMosesPlayerState::BroadcastPlayerHeadshots()
+{
+	OnPlayerHeadshotsChanged.Broadcast(Headshots);
+
+	UE_LOG(LogMosesPlayer, Verbose, TEXT("[HEADSHOT][CL][PS] Broadcast Headshots=%d PS=%s"),
+		Headshots, *GetNameSafe(this));
+}
+
+void AMosesPlayerState::BroadcastDeathState()
+{
+	OnDeathStateChanged.Broadcast(bIsDead, RespawnEndServerTime);
+
+	UE_LOG(LogMosesSpawn, Warning, TEXT("[DEATH][CL] bIsDead=%d RespawnEndServerTime=%.2f PS=%s"),
+		bIsDead ? 1 : 0, RespawnEndServerTime, *GetNameSafe(this));
+}
+
+void AMosesPlayerState::ServerAddPvPKill(int32 Delta /*=1*/)
+{
+	MOSES_GUARD_AUTHORITY_VOID(this, "PVP", TEXT("Client attempted ServerAddPvPKill"));
+
+	const int32 Old = PvPKills;
+	PvPKills = FMath::Max(0, PvPKills + Delta);
+	ForceNetUpdate();
+
+	UE_LOG(LogMosesPlayer, Warning, TEXT("[PVP][SV][PS] PvPKills %d -> %d Delta=%d PS=%s"),
+		Old, PvPKills, Delta, *GetNameSafe(this));
+
+	OnRep_PvPKills(); // ListenServer 즉시
+}
+
+void AMosesPlayerState::ServerAddHeadshot(int32 Delta /*=1*/)
+{
+	MOSES_GUARD_AUTHORITY_VOID(this, "HEADSHOT", TEXT("Client attempted ServerAddHeadshot"));
+
+	const int32 Old = Headshots;
+	Headshots = FMath::Max(0, Headshots + Delta);
+	ForceNetUpdate();
+
+	UE_LOG(LogMosesPlayer, Warning, TEXT("[HEADSHOT][SV][PS] Headshots %d -> %d Delta=%d PS=%s"),
+		Old, Headshots, Delta, *GetNameSafe(this));
+
+	OnRep_Headshots(); // ListenServer 즉시
+}
+
+void AMosesPlayerState::ServerClearDeadAfterRespawn()
+{
+	MOSES_GUARD_AUTHORITY_VOID(this, "RESPAWN", TEXT("Client attempted ServerClearDeadAfterRespawn"));
+
+	bIsDead = false;
+	RespawnEndServerTime = 0.f;
+
+	ForceNetUpdate();
+	OnRep_DeathState();
+
+	UE_LOG(LogMosesSpawn, Warning, TEXT("[RESPAWN][SV][PS] ClearDeadAfterRespawn OK PS=%s"), *GetNameSafe(this));
+}
+
+void AMosesPlayerState::ServerStartShieldRegen()
+{
+	MOSES_GUARD_AUTHORITY_VOID(this, "ARMOR", TEXT("Client attempted ServerStartShieldRegen"));
+
+	if (TimerHandle_ShieldRegen.IsValid())
+	{
+		return;
+	}
+
+	GetWorldTimerManager().SetTimer(
+		TimerHandle_ShieldRegen,
+		[this]()
+		{
+			if (!HasAuthority() || !MosesAbilitySystemComponent)
+			{
+				return;
+			}
+
+			if (bIsDead)
+			{
+				return;
+			}
+
+			if (!GE_ShieldRegen_One)
+			{
+				UE_LOG(LogMosesCombat, Warning, TEXT("[ARMOR][SV] Regen SKIP (GE_ShieldRegen_One NULL) PS=%s"), *GetNameSafe(this));
+				return;
+			}
+
+			const float Cur = MosesAbilitySystemComponent->GetNumericAttribute(UMosesAttributeSet::GetShieldAttribute());
+			const float Max = MosesAbilitySystemComponent->GetNumericAttribute(UMosesAttributeSet::GetMaxShieldAttribute());
+
+			if (Cur >= Max)
+			{
+				return;
+			}
+
+			FGameplayEffectContextHandle Ctx = MosesAbilitySystemComponent->MakeEffectContext();
+			Ctx.AddSourceObject(this);
+
+			FGameplayEffectSpecHandle Spec = MosesAbilitySystemComponent->MakeOutgoingSpec(GE_ShieldRegen_One, 1.0f, Ctx);
+			if (Spec.IsValid())
+			{
+				MosesAbilitySystemComponent->ApplyGameplayEffectSpecToSelf(*Spec.Data.Get());
+
+				UE_LOG(LogMosesCombat, Warning, TEXT("[ARMOR][SV] Regen +1 Shield=%.0f/%.0f PS=%s"),
+					MosesAbilitySystemComponent->GetNumericAttribute(UMosesAttributeSet::GetShieldAttribute()),
+					Max,
+					*GetNameSafe(this));
+			}
+		},
+		15.0f,
+		true);
+
+	UE_LOG(LogMosesCombat, Warning, TEXT("[ARMOR][SV] RegenTimer START PS=%s"), *GetNameSafe(this));
+}
+
+void AMosesPlayerState::ServerStopShieldRegen()
+{
+	MOSES_GUARD_AUTHORITY_VOID(this, "ARMOR", TEXT("Client attempted ServerStopShieldRegen"));
+
+	if (TimerHandle_ShieldRegen.IsValid())
+	{
+		GetWorldTimerManager().ClearTimer(TimerHandle_ShieldRegen);
+		UE_LOG(LogMosesCombat, Warning, TEXT("[ARMOR][SV] RegenTimer STOP PS=%s"), *GetNameSafe(this));
+	}
+}
+
+void AMosesPlayerState::ServerNotifyDeathFromGAS()
+{
+	MOSES_GUARD_AUTHORITY_VOID(this, "DEATH", TEXT("Client attempted ServerNotifyDeathFromGAS"));
+
+	// 중복 방지
+	if (bIsDead)
+	{
+		return;
+	}
+
+	bIsDead = true;
+
+	const AGameStateBase* GS = GetWorld() ? GetWorld()->GetGameState() : nullptr;
+	const float NowServerTime = GS ? GS->GetServerWorldTimeSeconds() : GetWorld()->GetTimeSeconds();
+
+	// DAY11 요구사항: 5초 리스폰 카운트다운
+	constexpr float RespawnDelay = 5.0f;
+	RespawnEndServerTime = NowServerTime + RespawnDelay;
+
+	ForceNetUpdate();
+	OnRep_DeathState();
+
+	// Death 카운트 증가(SSOT)
+	ServerAddDeath();
+
+	UE_LOG(LogMosesSpawn, Warning, TEXT("[DEATH][SV] MarkDead OK RespawnEnd=%.2f PS=%s"),
+		RespawnEndServerTime, *GetNameSafe(this));
+
+	// 실제 리스폰은 GameMode가 확정
+	AMosesMatchGameMode* GM = GetWorld() ? GetWorld()->GetAuthGameMode<AMosesMatchGameMode>() : nullptr;
+	AController* OwnerController = Cast<AController>(GetOwner());
+
+	if (GM && OwnerController)
+	{
+		GM->ServerScheduleRespawn(OwnerController, RespawnDelay); // [MOD] 아래 GameMode에 추가
+	}
 }

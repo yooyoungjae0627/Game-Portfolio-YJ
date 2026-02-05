@@ -1,4 +1,5 @@
 ﻿#include "UE5_Multi_Shooter/Match/GameState/MosesMatchGameState.h"
+
 #include "UE5_Multi_Shooter/Experience/MosesExperienceManagerComponent.h"
 #include "TimerManager.h"
 
@@ -28,11 +29,18 @@ void AMosesMatchGameState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>&
 	DOREPLIFETIME(AMosesMatchGameState, RemainingSeconds);
 	DOREPLIFETIME(AMosesMatchGameState, MatchPhase);
 	DOREPLIFETIME(AMosesMatchGameState, AnnouncementState);
+
+	// [MOD]
+	DOREPLIFETIME(AMosesMatchGameState, ResultState);
 }
+
+// ============================================================================
+// Match Timer
+// ============================================================================
 
 void AMosesMatchGameState::ServerStartMatchTimer(int32 TotalSeconds)
 {
-	// [MOD] “진짜 호출되는지”부터 강제 로그
+	// “진짜 호출되는지”부터 강제 로그
 	UE_LOG(LogMosesPhase, Warning, TEXT("[MatchTime][SV] ServerStartMatchTimer CALLED Total=%d HasAuth=%d World=%s"),
 		TotalSeconds,
 		HasAuthority() ? 1 : 0,
@@ -73,7 +81,7 @@ void AMosesMatchGameState::ServerTick_1s()
 	// ---------------------------------------------------------------------
 	RemainingSeconds = FMath::Max(0, RemainingSeconds - 1);
 
-	// [MOD] PushModel: Replicated 변경 Dirty 마킹 필수
+	// PushModel: Replicated 변경 Dirty 마킹 필수
 	MARK_PROPERTY_DIRTY_FROM_NAME(AMosesMatchGameState, RemainingSeconds, this);
 	ForceNetUpdate();
 
@@ -95,7 +103,7 @@ void AMosesMatchGameState::ServerTick_1s()
 				FText::AsNumber(AnnouncementState.RemainingSeconds));
 		}
 
-		// [MOD] PushModel: struct도 Dirty 마킹
+		// PushModel: struct도 Dirty 마킹
 		MARK_PROPERTY_DIRTY_FROM_NAME(AMosesMatchGameState, AnnouncementState, this);
 		ForceNetUpdate();
 
@@ -133,7 +141,7 @@ void AMosesMatchGameState::ServerSetRemainingSeconds(int32 NewSeconds)
 
 	RemainingSeconds = NewSeconds;
 
-	// [MOD] PushModel dirty
+	// PushModel dirty
 	MARK_PROPERTY_DIRTY_FROM_NAME(AMosesMatchGameState, RemainingSeconds, this);
 	ForceNetUpdate();
 
@@ -154,7 +162,7 @@ void AMosesMatchGameState::ServerSetMatchPhase(EMosesMatchPhase NewPhase)
 
 	MatchPhase = NewPhase;
 
-	// [MOD] PushModel dirty
+	// PushModel dirty
 	MARK_PROPERTY_DIRTY_FROM_NAME(AMosesMatchGameState, MatchPhase, this);
 	ForceNetUpdate();
 
@@ -162,6 +170,10 @@ void AMosesMatchGameState::ServerSetMatchPhase(EMosesMatchPhase NewPhase)
 
 	UE_LOG(LogMosesPhase, Log, TEXT("[PHASE][SV] MatchPhase=%s"), *UEnum::GetValueAsString(MatchPhase));
 }
+
+// ============================================================================
+// Announcement
+// ============================================================================
 
 void AMosesMatchGameState::ServerStartAnnouncementText(const FText& InText, int32 DurationSeconds)
 {
@@ -177,7 +189,7 @@ void AMosesMatchGameState::ServerStartAnnouncementText(const FText& InText, int3
 	AnnouncementState.Text = InText;
 	AnnouncementState.RemainingSeconds = DurationSeconds;
 
-	// [MOD] PushModel dirty
+	// PushModel dirty
 	MARK_PROPERTY_DIRTY_FROM_NAME(AMosesMatchGameState, AnnouncementState, this);
 	ForceNetUpdate();
 
@@ -205,7 +217,7 @@ void AMosesMatchGameState::ServerStartAnnouncementCountdown(const FText& PrefixT
 		ServerAnnouncePrefixText,
 		FText::AsNumber(AnnouncementState.RemainingSeconds));
 
-	// [MOD] PushModel dirty
+	// PushModel dirty
 	MARK_PROPERTY_DIRTY_FROM_NAME(AMosesMatchGameState, AnnouncementState, this);
 	ForceNetUpdate();
 
@@ -228,7 +240,7 @@ void AMosesMatchGameState::ServerStopAnnouncement()
 
 	AnnouncementState = FMosesAnnouncementState();
 
-	// [MOD] PushModel dirty
+	// PushModel dirty
 	MARK_PROPERTY_DIRTY_FROM_NAME(AMosesMatchGameState, AnnouncementState, this);
 	ForceNetUpdate();
 
@@ -236,6 +248,36 @@ void AMosesMatchGameState::ServerStopAnnouncement()
 
 	OnRep_AnnouncementState();
 }
+
+// ============================================================================
+// [MOD] Result
+// ============================================================================
+
+void AMosesMatchGameState::ServerSetResultState(const FMosesMatchResultState& NewState)
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	ResultState = NewState;
+
+	// PushModel dirty
+	MARK_PROPERTY_DIRTY_FROM_NAME(AMosesMatchGameState, ResultState, this);
+	ForceNetUpdate();
+
+	UE_LOG(LogMosesPhase, Warning, TEXT("[RESULT][SV] bIsResult=%d bDraw=%d WinnerId=%s Reason=%d"),
+		ResultState.bIsResult ? 1 : 0,
+		ResultState.bIsDraw ? 1 : 0,
+		*ResultState.WinnerPlayerId,
+		(int32)ResultState.Reason);
+
+	OnRep_ResultState();
+}
+
+// ============================================================================
+// RepNotifies -> Delegates
+// ============================================================================
 
 void AMosesMatchGameState::OnRep_RemainingSeconds()
 {
@@ -251,6 +293,15 @@ void AMosesMatchGameState::OnRep_AnnouncementState()
 {
 	OnAnnouncementChanged.Broadcast(AnnouncementState);
 }
+
+void AMosesMatchGameState::OnRep_ResultState()
+{
+	OnResultStateChanged.Broadcast(ResultState);
+}
+
+// ============================================================================
+// Compatibility Wrappers
+// ============================================================================
 
 void AMosesMatchGameState::ServerPushAnnouncement(const FText& Msg, float DurationSeconds)
 {

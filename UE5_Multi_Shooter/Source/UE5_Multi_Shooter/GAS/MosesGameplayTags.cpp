@@ -1,4 +1,4 @@
-﻿#include "MosesGameplayTags.h"
+﻿#include "UE5_Multi_Shooter/GAS/MosesGameplayTags.h"
 #include "GameplayTagsManager.h"
 
 FMosesGameplayTags FMosesGameplayTags::GameplayTags;
@@ -46,15 +46,16 @@ void FMosesGameplayTags::AddAllTags(UGameplayTagsManager& Manager)
 	AddTag(Manager, GameplayTags.Weapon_Rifle_B, "Weapon.Rifle.B", "Rifle B (DataAsset key)");
 	AddTag(Manager, GameplayTags.Weapon_Rifle_C, "Weapon.Rifle.C", "Rifle C (DataAsset key)");
 
-	AddTag(Manager, GameplayTags.Weapon_Shotgun_A, "Weapon.Shotgun.A", "Shotgun A (DataAsset key)");                 // ✅ ADD
-	AddTag(Manager, GameplayTags.Weapon_Sniper_A, "Weapon.Sniper.A", "Sniper A (DataAsset key)");                    // ✅ ADD
-	AddTag(Manager, GameplayTags.Weapon_GrenadeLauncher_A, "Weapon.GrenadeLauncher.A", "GrenadeLauncher A (DataAsset key)"); // ✅ ADD
+	AddTag(Manager, GameplayTags.Weapon_Shotgun_A, "Weapon.Shotgun.A", "Shotgun A (DataAsset key)");
+	AddTag(Manager, GameplayTags.Weapon_Sniper_A, "Weapon.Sniper.A", "Sniper A (DataAsset key)");
+	AddTag(Manager, GameplayTags.Weapon_GrenadeLauncher_A, "Weapon.GrenadeLauncher.A", "GrenadeLauncher A (DataAsset key)");
 
 	AddTag(Manager, GameplayTags.Weapon_Pistol, "Weapon.Pistol", "Pistol (DataAsset key)");
 	AddTag(Manager, GameplayTags.Weapon_Grenade, "Weapon.Grenade", "Grenade (DataAsset key)");
 
 	// GAS SetByCaller
-	AddTag(Manager, GameplayTags.Data_Damage, "Data.Damage", "SetByCaller damage");                                  // ✅ ADD
+	AddTag(Manager, GameplayTags.Data_Damage, "Data.Damage", "SetByCaller damage");
+	AddTag(Manager, GameplayTags.Data_Heal, "Data.Heal", "SetByCaller Heal Amount"); // ✅ [FIX]
 
 	// Zombie
 	AddTag(Manager, GameplayTags.Zombie_Attack_A, "Zombie.Attack.A", "Zombie attack type A");
