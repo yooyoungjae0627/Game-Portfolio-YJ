@@ -31,11 +31,11 @@ protected:
 private:
 	void HandleOverlap_Server(AActor* OtherActor);
 
-private:
-	UPROPERTY(VisibleAnywhere)
+protected:
+	UPROPERTY(EditAnywhere)
 	TObjectPtr<USphereComponent> Sphere;
 
-	UPROPERTY(VisibleAnywhere)
+	UPROPERTY(EditAnywhere)
 	TObjectPtr<UStaticMeshComponent> Mesh;
 
 public:

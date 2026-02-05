@@ -833,7 +833,7 @@ void UMosesMatchHUD::UpdateCurrentWeaponHeader()
 	if (!Combat)
 	{
 		MosesHUD_SetTextIfValid(Text_CurrentWeaponName, FText::FromString(TEXT("-")));
-		MosesHUD_SetTextIfValid(Text_CurrentSlot, FText::FromString(TEXT("Slot: -")));
+		MosesHUD_SetTextIfValid(Text_CurrentSlot, FText::FromString(TEXT("슬롯: -")));
 		MosesHUD_SetVisibleIfValid(Text_Reloading, false);
 		return;
 	}
@@ -841,10 +841,29 @@ void UMosesMatchHUD::UpdateCurrentWeaponHeader()
 	const int32 CurSlot = Combat->GetCurrentSlot();
 	const FGameplayTag CurWeaponId = Combat->GetEquippedWeaponId();
 
-	const FString WeaponNameStr = CurWeaponId.IsValid() ? CurWeaponId.ToString() : TEXT("-");
-	MosesHUD_SetTextIfValid(Text_CurrentWeaponName, FText::FromString(WeaponNameStr));
-	MosesHUD_SetTextIfValid(Text_CurrentSlot, FText::FromString(FString::Printf(TEXT("Slot: %d"), CurSlot)));
+	// 한글 표시용 이름 매핑 (최소 안전: Slot 기준)
+	FText WeaponDisplayName = FText::FromString(TEXT("-"));
+	switch (CurSlot)
+	{
+	case 1: WeaponDisplayName = FText::FromString(TEXT("라이플")); break;
+	case 2: WeaponDisplayName = FText::FromString(TEXT("샷건")); break;
+	case 3: WeaponDisplayName = FText::FromString(TEXT("스나이퍼")); break;
+	case 4: WeaponDisplayName = FText::FromString(TEXT("수류탄 런처")); break;
+	default: break;
+	}
 
+	// (선택) 혹시 Slot이 0/미장착인데 태그는 유효한 경우 대비해 태그 기반 보조 매핑
+	if (WeaponDisplayName.EqualTo(FText::FromString(TEXT("-"))) && CurWeaponId.IsValid())
+	{
+		const FString TagStr = CurWeaponId.ToString();
+		if (TagStr.Contains(TEXT("Rifle"), ESearchCase::IgnoreCase)) { WeaponDisplayName = FText::FromString(TEXT("라이플")); }
+		else if (TagStr.Contains(TEXT("Shotgun"), ESearchCase::IgnoreCase)) { WeaponDisplayName = FText::FromString(TEXT("샷건")); }
+		else if (TagStr.Contains(TEXT("Sniper"), ESearchCase::IgnoreCase)) { WeaponDisplayName = FText::FromString(TEXT("스나이퍼")); }
+		else if (TagStr.Contains(TEXT("Grenade"), ESearchCase::IgnoreCase)) { WeaponDisplayName = FText::FromString(TEXT("수류탄 런처")); }
+	}
+
+	MosesHUD_SetTextIfValid(Text_CurrentWeaponName, WeaponDisplayName);
+	MosesHUD_SetTextIfValid(Text_CurrentSlot, FText::FromString(FString::Printf(TEXT("슬롯: %d"), CurSlot)));
 	MosesHUD_SetVisibleIfValid(Text_Reloading, Combat->IsReloading());
 }
 
