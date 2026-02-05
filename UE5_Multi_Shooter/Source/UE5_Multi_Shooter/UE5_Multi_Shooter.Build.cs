@@ -42,6 +42,8 @@ public class UE5_Multi_Shooter : ModuleRules
         {
             "Slate",
             "SlateCore",
+            "Json",
+            "JsonUtilities",
         });
 
         // ============================

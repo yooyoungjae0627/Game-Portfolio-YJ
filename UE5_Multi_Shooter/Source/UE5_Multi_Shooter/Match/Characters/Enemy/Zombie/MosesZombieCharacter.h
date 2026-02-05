@@ -36,6 +36,7 @@ public:
 
 protected:
 	virtual void BeginPlay() override;
+	virtual void OnConstruction(const FTransform& Transform) override;
 
 public:
 	UFUNCTION(BlueprintCallable, Category = "Moses|Zombie")
@@ -70,6 +71,9 @@ protected:
 	void HandleDeath_Server();
 	void PushKillFeed_Server(bool bHeadshot, AMosesPlayerState* KillerPS);
 	void PushHeadshotAnnouncement_Server(AMosesPlayerState* KillerPS) const;
+
+	/** 손 소켓에 공격 히트박스를 부착한다. (소켓 없으면 부착하지 않음, BP 상대 트랜스폼 유지) */
+	void AttachAttackHitBoxesToHandSockets();
 
 protected:
 	UFUNCTION(NetMulticast, Reliable)

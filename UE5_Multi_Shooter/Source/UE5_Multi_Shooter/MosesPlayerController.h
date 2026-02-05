@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "GameFramework/PlayerController.h"
 #include "Net/UnrealNetwork.h"
+#include "UE5_Multi_Shooter/Persist/MosesMatchRecordTypes.h"
 
 #include "MosesPlayerController.generated.h"
 
@@ -22,6 +23,7 @@ enum class EMosesRoomJoinResult : uint8;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnLobbyNicknameChanged, const FString&, NewNick);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnJoinedRoom, EMosesRoomJoinResult, Result, const FGuid&, RoomId);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnMatchRecordsReceivedBP, const TArray<FMosesMatchRecordSummary>&, Records);
 
 /**
  * AMosesPlayerController
@@ -123,7 +125,6 @@ public:
 	UFUNCTION(Server, Reliable)
 	void Server_TravelToLobby();
 
-public:
 	/*====================================================
 	= Enter Lobby / Character Select
 	====================================================*/
@@ -132,6 +133,18 @@ public:
 
 	UFUNCTION(Server, Reliable)
 	void Server_SetSelectedCharacterId(int32 SelectedId);
+
+	// =========================================================
+	// [PERSIST] Lobby Records Request/Receive
+	// =========================================================
+	UFUNCTION(BlueprintCallable, Category = "Persist")
+	void RequestMatchRecords_Local(const FString& NicknameFilter, int32 MaxCount = 50);
+
+	UFUNCTION(Server, Reliable)
+	void Server_RequestMatchRecords(const FString& NicknameFilter, int32 MaxCount);
+
+	UFUNCTION(Client, Reliable)
+	void Client_ReceiveMatchRecords(const TArray<FMosesMatchRecordSummary>& Records);
 
 public:
 	/*====================================================
@@ -329,4 +342,7 @@ private:
 
 	UPROPERTY(Transient)
 	TWeakObjectPtr<class UMosesCombatComponent> CachedCombatForScope_Local;
+
+	UPROPERTY(BlueprintAssignable, Category = "Persist")
+	FOnMatchRecordsReceivedBP OnMatchRecordsReceivedBP;
 };

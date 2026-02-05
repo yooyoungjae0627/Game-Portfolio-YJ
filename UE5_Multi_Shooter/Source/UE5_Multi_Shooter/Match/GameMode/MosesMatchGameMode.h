@@ -112,7 +112,6 @@ public:
 private:
 	void HandleRespawnTimerExpired(AController* Controller);
 
-private:
 	// -------------------------------------------------------------------------
 	// DAY11 [MOD] Result decide (Server only)
 	// - Combat -> Result 진입 시 서버가 승패 확정
@@ -125,7 +124,6 @@ private:
 		FString& OutWinnerId,
 		EMosesResultReason& OutReason) const;
 
-private:
 	// -------------------------------------------------------------------------
 	// Travel / Debug
 	// -------------------------------------------------------------------------
@@ -137,7 +135,6 @@ private:
 
 	bool CanDoServerTravel() const;
 
-private:
 	// -------------------------------------------------------------------------
 	// PlayerStart helpers
 	// -------------------------------------------------------------------------
@@ -147,18 +144,18 @@ private:
 	void ReleaseReservedStart(AController* Player);
 	void DumpReservedStarts(const TCHAR* Where) const;
 
-private:
 	// -------------------------------------------------------------------------
 	// PawnClass Resolve
 	// -------------------------------------------------------------------------
 	UClass* ResolvePawnClassFromSelectedId(int32 SelectedId) const;
 
-private:
 	// -------------------------------------------------------------------------
 	// Experience Ready Poll (Tick 금지)
 	// -------------------------------------------------------------------------
 	void StartWarmup_WhenExperienceReady();
 	void PollExperienceReady_AndStartWarmup();
+
+	void ServerSaveRecord_Once_OnEnterResult();
 
 private:
 	FTimerHandle ExperienceReadyPollHandle;
@@ -167,7 +164,6 @@ private:
 	static constexpr float ExperienceReadyPollInterval = 0.2f;
 	static constexpr int32  ExperienceReadyPollMaxCount = 50; // 10초
 
-private:
 	// -------------------------------------------------------------------------
 	// Phase config
 	// -------------------------------------------------------------------------
@@ -180,7 +176,6 @@ private:
 	UPROPERTY(EditDefaultsOnly, Category = "Match|Phase")
 	float ResultSeconds = 30.0f;
 
-private:
 	// -------------------------------------------------------------------------
 	// Phase runtime (Server only)
 	// -------------------------------------------------------------------------
@@ -189,13 +184,11 @@ private:
 	FTimerHandle PhaseTimerHandle;
 	double PhaseEndTimeSeconds = 0.0;
 
-private:
 	// -------------------------------------------------------------------------
 	// Misc timers
 	// -------------------------------------------------------------------------
 	FTimerHandle AutoReturnTimerHandle;
 
-private:
 	// -------------------------------------------------------------------------
 	// PlayerStart reservation
 	// -------------------------------------------------------------------------
@@ -205,7 +198,6 @@ private:
 	UPROPERTY()
 	TMap<TWeakObjectPtr<AController>, TWeakObjectPtr<APlayerStart>> AssignedStartByController;
 
-private:
 	// -------------------------------------------------------------------------
 	// Assets
 	// -------------------------------------------------------------------------
@@ -217,4 +209,6 @@ private:
 
 	UPROPERTY(EditDefaultsOnly, Category = "Moses|CharacterSelect")
 	TSubclassOf<APawn> FallbackPawnClass;
+
+	bool bRecordSavedThisMatch = false;
 };

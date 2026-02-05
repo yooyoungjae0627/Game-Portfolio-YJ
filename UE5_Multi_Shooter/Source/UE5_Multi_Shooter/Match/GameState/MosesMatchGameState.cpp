@@ -266,14 +266,16 @@ void AMosesMatchGameState::ServerSetResultState(const FMosesMatchResultState& Ne
 	MARK_PROPERTY_DIRTY_FROM_NAME(AMosesMatchGameState, ResultState, this);
 	ForceNetUpdate();
 
-	UE_LOG(LogMosesPhase, Warning, TEXT("[RESULT][SV] bIsResult=%d bDraw=%d WinnerId=%s Reason=%d"),
+	UE_LOG(LogMosesPhase, Warning, TEXT("[RESULT][SV] bIsResult=%d bDraw=%d WinnerPid=%s Nick=%s Reason=%s"),
 		ResultState.bIsResult ? 1 : 0,
 		ResultState.bIsDraw ? 1 : 0,
-		*ResultState.WinnerPlayerId,
-		(int32)ResultState.Reason);
+		*ResultState.WinnerPersistentId,
+		*ResultState.WinnerNickname,
+		*ResultState.ResultReason);
 
 	OnRep_ResultState();
 }
+
 
 // ============================================================================
 // RepNotifies -> Delegates

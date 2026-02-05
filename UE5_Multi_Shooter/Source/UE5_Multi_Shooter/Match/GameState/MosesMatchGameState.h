@@ -50,12 +50,17 @@ struct FMosesMatchResultState
 	UPROPERTY(BlueprintReadOnly)
 	bool bIsDraw = false;
 
-	/** Winner UniqueId.ToString() */
+	// ✅ Winner PersistentId (FGuid string)
 	UPROPERTY(BlueprintReadOnly)
-	FString WinnerPlayerId;
+	FString WinnerPersistentId;
 
+	// ✅ Winner Nickname (for UI)
 	UPROPERTY(BlueprintReadOnly)
-	EMosesResultReason Reason = EMosesResultReason::None;
+	FString WinnerNickname;
+
+	// ✅ Reason string (Captures / PvPKills / ZombieKills / Headshots / Draw)
+	UPROPERTY(BlueprintReadOnly)
+	FString ResultReason;
 };
 
 DECLARE_MULTICAST_DELEGATE_OneParam(FOnMosesResultStateChangedNative, const FMosesMatchResultState& /*State*/); // [MOD]

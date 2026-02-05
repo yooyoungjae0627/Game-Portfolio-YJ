@@ -16,6 +16,7 @@
 
 #include "UE5_Multi_Shooter/System/MosesLobbyLocalPlayerSubsystem.h"
 #include "UE5_Multi_Shooter/GAS/MosesGameplayTags.h"
+#include "UE5_Multi_Shooter/Persist/MosesMatchRecordStorageSubsystem.h" 
 
 #include "Blueprint/WidgetBlueprintLibrary.h"
 
@@ -1588,4 +1589,65 @@ void AMosesPlayerController::HandleEquippedChanged_ScopeLocal(int32 SlotIndex, F
 	{
 		HUD->SetScopeVisible_Local(bScopeActive_Local);
 	}
+}
+
+void AMosesPlayerController::RequestMatchRecords_Local(const FString& NicknameFilter, int32 MaxCount)
+{
+	if (!IsLocalController())
+	{
+		return;
+	}
+
+	MaxCount = FMath::Clamp(MaxCount, 1, 200);
+	Server_RequestMatchRecords(NicknameFilter, MaxCount);
+
+	UE_LOG(LogMosesPhase, Warning, TEXT("[PERSIST][CL] RequestMatchRecords Sent Filter='%s' Max=%d"),
+		*NicknameFilter, MaxCount);
+}
+
+void AMosesPlayerController::Server_RequestMatchRecords_Implementation(const FString& NicknameFilter, int32 MaxCount)
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	AMosesPlayerState* PS = GetPlayerState<AMosesPlayerState>();
+	if (!PS)
+	{
+		return;
+	}
+
+	UGameInstance* GI = GetGameInstance();
+	if (!GI)
+	{
+		return;
+	}
+
+	UMosesMatchRecordStorageSubsystem* Storage = GI->GetSubsystem<UMosesMatchRecordStorageSubsystem>();
+	if (!Storage)
+	{
+		UE_LOG(LogMosesPhase, Warning, TEXT("[PERSIST][SV] Load FAIL (NoStorageSubsystem)"));
+		return;
+	}
+
+	const FString MyPid = PS->GetPersistentId().ToString(EGuidFormats::DigitsWithHyphens);
+	const FString MyNick = PS->GetPlayerNickName();
+
+	TArray<FMosesMatchRecordSummary> Records;
+	Storage->LoadRecordSummaries_Server(MyPid, MyNick, NicknameFilter, MaxCount, Records);
+
+	Client_ReceiveMatchRecords(Records);
+
+	UE_LOG(LogMosesPhase, Warning, TEXT("[PERSIST][SV] Sent Records=%d ToPC=%s"),
+		Records.Num(), *GetNameSafe(this));
+}
+
+void AMosesPlayerController::Client_ReceiveMatchRecords_Implementation(const TArray<FMosesMatchRecordSummary>& Records)
+{
+	UE_LOG(LogMosesPhase, Warning, TEXT("[PERSIST][CL] Records Received Count=%d PC=%s"),
+		Records.Num(), *GetNameSafe(this));
+
+	// BP UI에서 바로 받게
+	OnMatchRecordsReceivedBP.Broadcast(Records);
 }

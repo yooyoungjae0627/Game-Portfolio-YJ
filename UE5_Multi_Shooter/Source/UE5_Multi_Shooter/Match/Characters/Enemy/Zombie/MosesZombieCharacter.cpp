@@ -6,11 +6,12 @@
 #include "UE5_Multi_Shooter/Match/GameState/MosesMatchGameState.h"
 #include "UE5_Multi_Shooter/MosesPlayerState.h"
 #include "UE5_Multi_Shooter/GAS/Components/MosesAbilitySystemComponent.h"
-#include "UE5_Multi_Shooter/GAS/MosesGameplayTags.h" // [MOD] Tag SSOT 사용
+#include "UE5_Multi_Shooter/GAS/MosesGameplayTags.h" 
 
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
 
 #include "Components/BoxComponent.h"
+#include "Components/SkeletalMeshComponent.h"
 #include "Animation/AnimInstance.h"
 #include "Engine/World.h"
 
@@ -34,7 +35,6 @@ AMosesZombieCharacter::AMosesZombieCharacter()
 
 	AttributeSet = CreateDefaultSubobject<UMosesZombieAttributeSet>(TEXT("AS_Zombie"));
 
-	// [MOD] AttackHitBox 2개(좌/우)
 	AttackHitBox_L = CreateDefaultSubobject<UBoxComponent>(TEXT("AttackHitBox_L"));
 	AttackHitBox_L->SetupAttachment(GetMesh());
 	AttackHitBox_L->SetCollisionEnabled(ECollisionEnabled::NoCollision);
@@ -55,6 +55,49 @@ AMosesZombieCharacter::AMosesZombieCharacter()
 
 	bAttackHitEnabled_L = false;
 	bAttackHitEnabled_R = false;
+}
+
+void AMosesZombieCharacter::AttachAttackHitBoxesToHandSockets()
+{
+	USkeletalMeshComponent* MeshComp = GetMesh();
+	if (!MeshComp)
+	{
+		UE_LOG(LogMosesZombie, Warning, TEXT("[ZOMBIE][HITBOX] Attach FAIL - Mesh=null Zombie=%s"), *GetName());
+		return;
+	}
+
+	static const FName LeftSocketName(TEXT("LeftHandSocket"));
+	static const FName RightSocketName(TEXT("RightHandSocket"));
+
+	auto AttachIfSocketExists = [this, MeshComp](UBoxComponent* HitBox, const FName SocketName, const TCHAR* SideLabel)
+		{
+			if (!HitBox)
+			{
+				UE_LOG(LogMosesZombie, Warning, TEXT("[ZOMBIE][HITBOX] %s FAIL - HitBox=null Zombie=%s"), SideLabel, *GetName());
+				return;
+			}
+
+			// 요구사항: 소켓 없으면 생성 X, 부착 X
+			if (!MeshComp->DoesSocketExist(SocketName))
+			{
+				UE_LOG(LogMosesZombie, Warning, TEXT("[ZOMBIE][HITBOX] %s Skip - SocketMissing=%s Zombie=%s"),
+					SideLabel, *SocketName.ToString(), *GetName());
+				return;
+			}
+
+			// ★중요: BP에서 조절한 RelativeLocation/Rotation/Scale 값을 유지해야 하므로 KeepRelativeTransform
+			HitBox->AttachToComponent(MeshComp, FAttachmentTransformRules::KeepRelativeTransform, SocketName);
+
+			UE_LOG(LogMosesZombie, Log, TEXT("[ZOMBIE][HITBOX] %s Attached (KeepRelative) Socket=%s RelLoc=%s RelRot=%s Zombie=%s"),
+				SideLabel,
+				*SocketName.ToString(),
+				*HitBox->GetRelativeLocation().ToString(),
+				*HitBox->GetRelativeRotation().ToString(),
+				*GetName());
+		};
+
+	AttachIfSocketExists(AttackHitBox_L, LeftSocketName, TEXT("L"));
+	AttachIfSocketExists(AttackHitBox_R, RightSocketName, TEXT("R"));
 }
 
 UAbilitySystemComponent* AMosesZombieCharacter::GetAbilitySystemComponent() const
@@ -89,6 +132,13 @@ void AMosesZombieCharacter::BeginPlay()
 		InitializeAttributes_Server();
 		UE_LOG(LogMosesZombie, Warning, TEXT("[ZOMBIE][SV] Spawned Zombie=%s"), *GetName());
 	}
+}
+
+void AMosesZombieCharacter::OnConstruction(const FTransform& Transform)
+{
+	Super::OnConstruction(Transform);
+
+	AttachAttackHitBoxesToHandSockets();
 }
 
 void AMosesZombieCharacter::InitializeAttributes_Server()

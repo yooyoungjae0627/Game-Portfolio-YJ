@@ -12,6 +12,8 @@
 
 #include "UE5_Multi_Shooter/Match/GameState/MosesMatchGameState.h"
 
+#include "UE5_Multi_Shooter/Persist/MosesMatchRecordStorageSubsystem.h"
+
 #include "Engine/World.h"
 #include "TimerManager.h"
 #include "Kismet/GameplayStatics.h"
@@ -606,29 +608,68 @@ void AMosesMatchGameMode::ServerDecideResult_OnEnterResultPhase()
 		}
 	}
 
-	FString WinnerId;
+	AMosesPlayerState* WinnerPS = nullptr;
 	EMosesResultReason Reason = EMosesResultReason::None;
 
-	const bool bHasWinner = TryChooseWinnerByReason_Server(Players, WinnerId, Reason);
+	// WinnerPid는 TryChoose에서 채우되, 실제 WinnerPS도 잡아준다.
+	FString WinnerPid;
+	const bool bHasWinner = TryChooseWinnerByReason_Server(Players, WinnerPid, Reason);
+
+	if (bHasWinner)
+	{
+		for (AMosesPlayerState* PS : Players)
+		{
+			if (!PS)
+			{
+				continue;
+			}
+
+			const FString Pid = PS->GetPersistentId().ToString(EGuidFormats::DigitsWithHyphens);
+			if (Pid == WinnerPid)
+			{
+				WinnerPS = PS;
+				break;
+			}
+		}
+	}
+
+	// Reason -> String 변환(저장/표시용)
+	auto ReasonToString = [](EMosesResultReason InReason) -> FString
+		{
+			switch (InReason)
+			{
+			case EMosesResultReason::Captures:    return TEXT("Captures");
+			case EMosesResultReason::PvPKills:    return TEXT("PvPKills");
+			case EMosesResultReason::ZombieKills: return TEXT("ZombieKills");
+			case EMosesResultReason::Headshots:   return TEXT("Headshots");
+			case EMosesResultReason::Draw:        return TEXT("Draw");
+			default:                               return TEXT("None");
+			}
+		};
 
 	FMosesMatchResultState RS;
 	RS.bIsResult = true;
 
-	if (!bHasWinner)
+	if (!bHasWinner || !WinnerPS)
 	{
 		RS.bIsDraw = true;
-		RS.WinnerPlayerId = FString();
-		RS.Reason = EMosesResultReason::Draw;
+		RS.WinnerPersistentId = TEXT("");
+		RS.WinnerNickname = TEXT("");
+		RS.ResultReason = TEXT("Draw");
 
-		UE_LOG(LogMosesPhase, Warning, TEXT("[RESULT][SV] DRAW (All tied)"));
+		UE_LOG(LogMosesPhase, Warning, TEXT("[RESULT][SV] DRAW (All tied or WinnerPS missing)"));
 	}
 	else
 	{
 		RS.bIsDraw = false;
-		RS.WinnerPlayerId = WinnerId;
-		RS.Reason = Reason;
+		RS.WinnerPersistentId = WinnerPid;
+		RS.WinnerNickname = WinnerPS->GetPlayerNickName();
+		RS.ResultReason = ReasonToString(Reason);
 
-		UE_LOG(LogMosesPhase, Warning, TEXT("[RESULT][SV] Winner=%s Reason=%d"), *WinnerId, (int32)Reason);
+		UE_LOG(LogMosesPhase, Warning, TEXT("[RESULT][SV] WinnerPid=%s Nick=%s Reason=%s"),
+			*RS.WinnerPersistentId,
+			*RS.WinnerNickname,
+			*RS.ResultReason);
 	}
 
 	MGS->ServerSetResultState(RS);
@@ -642,6 +683,9 @@ void AMosesMatchGameMode::ServerDecideResult_OnEnterResultPhase()
 	{
 		MGS->ServerPushAnnouncement(TEXT("RESULT"), 4.0f);
 	}
+
+	// ✅ [PERSIST][SV] Result 진입 순간 저장 1회 (반드시 여기서 호출)
+	ServerSaveRecord_Once_OnEnterResult();
 }
 
 bool AMosesMatchGameMode::TryChooseWinnerByReason_Server(
@@ -864,4 +908,43 @@ void AMosesMatchGameMode::PollExperienceReady_AndStartWarmup()
 		*GetNameSafe(CurrentExp));
 
 	StartMatchFlow_AfterExperienceReady();
+}
+
+void AMosesMatchGameMode::ServerSaveRecord_Once_OnEnterResult()
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	if (bRecordSavedThisMatch)
+	{
+		return;
+	}
+
+	AMosesMatchGameState* MGS = GetWorld() ? GetWorld()->GetGameState<AMosesMatchGameState>() : nullptr;
+	if (!MGS)
+	{
+		UE_LOG(LogMosesPhase, Warning, TEXT("[PERSIST][SV] Save SKIP (NoMatchGameState)"));
+		return;
+	}
+
+	UGameInstance* GI = GetGameInstance();
+	if (!GI)
+	{
+		UE_LOG(LogMosesPhase, Warning, TEXT("[PERSIST][SV] Save FAIL (NoGameInstance)"));
+		return;
+	}
+
+	UMosesMatchRecordStorageSubsystem* Storage = GI->GetSubsystem<UMosesMatchRecordStorageSubsystem>();
+	if (!Storage)
+	{
+		UE_LOG(LogMosesPhase, Warning, TEXT("[PERSIST][SV] Save FAIL (NoStorageSubsystem)"));
+		return;
+	}
+
+	bRecordSavedThisMatch = true;
+
+	const bool bOk = Storage->SaveMatchRecord_OnResult_Server(MGS);
+	UE_LOG(LogMosesPhase, Warning, TEXT("[PERSIST][SV] SaveOnce Result=%s"), bOk ? TEXT("OK") : TEXT("FAIL"));
 }
