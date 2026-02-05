@@ -11,13 +11,13 @@
 // ============================================================================
 
 #include "UE5_Multi_Shooter/Match/Components/MosesCombatComponent.h"
-
 #include "UE5_Multi_Shooter/Match/Characters/Player/PlayerCharacter.h"
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
 #include "UE5_Multi_Shooter/Match/Weapon/MosesWeaponData.h"
 #include "UE5_Multi_Shooter/Match/Weapon/MosesWeaponRegistrySubsystem.h"
 #include "UE5_Multi_Shooter/MosesPlayerState.h"
 #include "UE5_Multi_Shooter/Match/Weapon/MosesGrenadeProjectile.h"
+#include "UE5_Multi_Shooter/GAS/MosesGameplayTags.h"
 
 #include "Engine/World.h"
 #include "Engine/GameInstance.h"
@@ -30,12 +30,8 @@
 #include "GameplayEffect.h"
 #include "GameplayEffectTypes.h"
 #include "GameplayTagContainer.h"
-
-#include "UE5_Multi_Shooter/GAS/MosesGameplayTags.h"
-
-#include "DrawDebugHelpers.h"                 // [MOD]
-#include "Components/SkeletalMeshComponent.h" // [MOD]
-
+#include "DrawDebugHelpers.h"                
+#include "Components/SkeletalMeshComponent.h" 
 
 namespace MosesCombat_Private
 {
@@ -436,6 +432,8 @@ void UMosesCombatComponent::ServerReload_Implementation()
 
 	if (bIsDead || bIsReloading)
 	{
+		UE_LOG(LogMosesWeapon, Warning, TEXT("[RELOAD][SV] REJECT Dead=%d Reloading=%d Slot=%d"),
+			bIsDead ? 1 : 0, bIsReloading ? 1 : 0, CurrentSlot);
 		return;
 	}
 
@@ -443,6 +441,8 @@ void UMosesCombatComponent::ServerReload_Implementation()
 	const UMosesWeaponData* WeaponData = Server_ResolveEquippedWeaponData(WeaponId);
 	if (!WeaponData)
 	{
+		UE_LOG(LogMosesWeapon, Warning, TEXT("[RELOAD][SV] REJECT NoWeaponData Slot=%d Weapon=%s"),
+			CurrentSlot, *WeaponId.ToString());
 		return;
 	}
 
@@ -450,8 +450,19 @@ void UMosesCombatComponent::ServerReload_Implementation()
 	int32 Reserve = 0;
 	GetSlotAmmo_Internal(CurrentSlot, Mag, Reserve);
 
+	UE_LOG(LogMosesWeapon, Warning,
+		TEXT("[RELOAD][SV] TRY Slot=%d Weapon=%s Mag=%d Reserve=%d MagSize=%d"),
+		CurrentSlot,
+		*WeaponId.ToString(),
+		Mag,
+		Reserve,
+		WeaponData->MagSize);
+
 	if (Reserve <= 0 || Mag >= WeaponData->MagSize)
 	{
+		UE_LOG(LogMosesWeapon, Warning,
+			TEXT("[RELOAD][SV] REJECT Reserve=%d Mag=%d MagSize=%d"),
+			Reserve, Mag, WeaponData->MagSize);
 		return;
 	}
 
@@ -465,13 +476,19 @@ void UMosesCombatComponent::Server_StartReload(const UMosesWeaponData* WeaponDat
 		return;
 	}
 
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
 	bIsReloading = true;
-	OnRep_IsReloading();
+	OnRep_IsReloading(); // ✅ 여기서 RepNotify→Delegate가 나감(클라 HUD/코스메틱 트리거)
 
 	UE_LOG(LogMosesWeapon, Warning, TEXT("[WEAPON][SV] ReloadStart Slot=%d Weapon=%s Sec=%.2f"),
 		CurrentSlot, *GetEquippedWeaponId().ToString(), WeaponData->ReloadSeconds);
 
-	GetWorld()->GetTimerManager().SetTimer(
+	World->GetTimerManager().SetTimer(
 		ReloadTimerHandle,
 		this,
 		&UMosesCombatComponent::Server_FinishReload,
@@ -608,16 +625,34 @@ const UMosesWeaponData* UMosesCombatComponent::Server_ResolveEquippedWeaponData(
 // Ammo Consume
 // ============================================================================
 
-void UMosesCombatComponent::Server_ConsumeAmmo_OnApprovedFire(const UMosesWeaponData* /*WeaponData*/)
+void UMosesCombatComponent::Server_ConsumeAmmo_OnApprovedFire(const UMosesWeaponData* WeaponData)
 {
 	int32 Mag = 0;
 	int32 Reserve = 0;
 	GetSlotAmmo_Internal(CurrentSlot, Mag, Reserve);
 
+	const int32 OldMag = Mag; // [MOD][AUTO-RELOAD]
+
 	Mag = FMath::Max(Mag - 1, 0);
 	SetSlotAmmo_Internal(CurrentSlot, Mag, Reserve);
 
 	BroadcastAmmoChanged(TEXT("Server_ConsumeAmmo_OnApprovedFire"));
+
+	// [MOD][AUTO-RELOAD] 1->0 순간 + Reserve>0 이면 서버가 자동으로 Reload 시작
+	if (bAutoReloadOnEmpty
+		&& !bIsDead
+		&& !bIsReloading
+		&& OldMag > 0
+		&& Mag == 0
+		&& Reserve > 0)
+	{
+		UE_LOG(LogMosesWeapon, Warning,
+			TEXT("[RELOAD][SV][AUTO] Triggered Slot=%d OldMag=%d NewMag=%d Reserve=%d PS=%s"),
+			CurrentSlot, OldMag, Mag, Reserve, *GetNameSafe(GetOwner()));
+
+		// 수동(R)과 동일 루트로 진입
+		ServerReload_Implementation();
+	}
 }
 
 // ============================================================================

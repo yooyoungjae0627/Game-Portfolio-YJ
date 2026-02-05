@@ -29,19 +29,11 @@ DECLARE_MULTICAST_DELEGATE_OneParam(FOnMosesDeathsChangedNative, int32 /*Deaths*
 DECLARE_MULTICAST_DELEGATE_TwoParams(FOnMosesAmmoChangedNative, int32 /*Mag*/, int32 /*Reserve*/);
 DECLARE_MULTICAST_DELEGATE_OneParam(FOnMosesGrenadeChangedNative, int32 /*Count*/);
 DECLARE_MULTICAST_DELEGATE_OneParam(FOnMosesSelectedCharacterChangedNative, int32 /*SelectedId*/);
-
-// PlayerState/HUD 전용(충돌 방지)
 DECLARE_MULTICAST_DELEGATE_OneParam(FOnMosesPlayerCapturesChangedNative, int32 /*Captures*/);
 DECLARE_MULTICAST_DELEGATE_OneParam(FOnMosesPlayerZombieKillsChangedNative, int32 /*ZombieKills*/);
-
-// [MOD] PvP Kill / Headshot
 DECLARE_MULTICAST_DELEGATE_OneParam(FOnMosesPlayerPvPKillsChangedNative, int32 /*PvPKills*/);
 DECLARE_MULTICAST_DELEGATE_OneParam(FOnMosesPlayerHeadshotsChangedNative, int32 /*Headshots*/);
-
-// [MOD] Death/Respawn UI용
 DECLARE_MULTICAST_DELEGATE_TwoParams(FOnMosesDeathStateChangedNative, bool /*bIsDead*/, float /*RespawnEndServerTime*/);
-
-// BP delegate
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnMosesSelectedCharacterChangedBP, int32, SelectedId);
 
 UCLASS()
@@ -87,12 +79,8 @@ public:
 	int32 GetDeaths() const { return Deaths; }
 	int32 GetCaptures() const { return Captures; }
 	int32 GetZombieKills() const { return ZombieKills; }
-
-	// [MOD]
 	int32 GetPvPKills() const { return PvPKills; }
 	int32 GetHeadshots() const { return Headshots; }
-
-	// [MOD]
 	bool IsDead() const { return bIsDead; }
 	float GetRespawnEndServerTime() const { return RespawnEndServerTime; }
 
@@ -188,15 +176,12 @@ public:
 	UFUNCTION()
 	void OnRep_ZombieKills();
 
-	// [MOD]
 	UFUNCTION()
 	void OnRep_PvPKills();
 
-	// [MOD]
 	UFUNCTION()
 	void OnRep_Headshots();
 
-	// [MOD]
 	UFUNCTION()
 	void OnRep_DeathState();
 
@@ -210,24 +195,17 @@ public:
 	FOnMosesDeathsChangedNative OnDeathsChanged;
 	FOnMosesAmmoChangedNative OnAmmoChanged;
 	FOnMosesGrenadeChangedNative OnGrenadeChanged;
-
 	FOnMosesPlayerCapturesChangedNative OnPlayerCapturesChanged;
 	FOnMosesPlayerZombieKillsChangedNative OnPlayerZombieKillsChanged;
-
-	// [MOD]
 	FOnMosesPlayerPvPKillsChangedNative OnPlayerPvPKillsChanged;
 	FOnMosesPlayerHeadshotsChangedNative OnPlayerHeadshotsChanged;
-
-	// [MOD]
 	FOnMosesDeathStateChangedNative OnDeathStateChanged;
-
 	FOnMosesSelectedCharacterChangedNative OnSelectedCharacterChangedNative;
 
 	UPROPERTY(BlueprintAssignable)
 	FOnMosesSelectedCharacterChangedBP OnSelectedCharacterChangedBP;
 
 public:
-	// DoD log
 	void DOD_PS_Log(const UObject* Caller, const TCHAR* Phase) const;
 
 private:
@@ -240,11 +218,8 @@ private:
 	void BroadcastDeaths();
 	void BroadcastAmmoAndGrenade();
 	void BroadcastSelectedCharacterChanged(const TCHAR* Reason);
-
 	void BroadcastPlayerCaptures();
 	void BroadcastPlayerZombieKills();
-
-	// [MOD]
 	void BroadcastPlayerPvPKills();
 	void BroadcastPlayerHeadshots();
 	void BroadcastDeathState();
@@ -321,22 +296,20 @@ private:
 	UPROPERTY(ReplicatedUsing = OnRep_ZombieKills)
 	int32 ZombieKills = 0;
 
-	// [MOD]
 	UPROPERTY(ReplicatedUsing = OnRep_PvPKills)
 	int32 PvPKills = 0;
 
-	// [MOD]
 	UPROPERTY(ReplicatedUsing = OnRep_Headshots)
 	int32 Headshots = 0;
 
-	// [MOD] Death/Respawn replicated state
+	// Death/Respawn replicated state
 	UPROPERTY(ReplicatedUsing = OnRep_DeathState)
 	bool bIsDead = false;
 
 	UPROPERTY(ReplicatedUsing = OnRep_DeathState)
 	float RespawnEndServerTime = 0.f;
 
-	// [MOD] Shield regen timer
+	// Shield regen timer
 	FTimerHandle TimerHandle_ShieldRegen;
 
 	// PawnData

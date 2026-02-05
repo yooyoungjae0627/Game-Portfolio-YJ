@@ -105,6 +105,9 @@ void UMosesHeroComponent::SetupInputBindings(UInputComponent* PlayerInputCompone
 
 	const bool bHasLookSplit = (IA_LookYaw != nullptr) || (IA_LookPitch != nullptr);
 
+	// [MOD][RELOAD] IA_Reload 추가는 "필수 에셋"으로 강제하지 않음(로비/모드별로 비울 수 있으니)
+	// 다만, 전투 맵에서 리로드가 필요하면 에셋이 세팅되어 있어야 함.
+
 	if (!InputMappingContext || !IA_Move || !IA_Sprint || !IA_Jump || !IA_Interact || !bHasLookSplit)
 	{
 		UE_LOG(LogMosesSpawn, Error,
@@ -182,15 +185,11 @@ void UMosesHeroComponent::BindInputActions(UInputComponent* PlayerInputComponent
 		EIC->BindAction(IA_ToggleView.Get(), ETriggerEvent::Started, this, &ThisClass::HandleToggleView);
 	}
 
-	// --------------------------------------------------------------------
-	// [MOD][AIM] Aim(RMB): Started = Press / Completed,Canceled = Release
-	// - Canceled를 Release로 묶지 않으면 "Release만 튀는" 케이스가 생김
-	// --------------------------------------------------------------------
 	if (IA_Aim)
 	{
 		EIC->BindAction(IA_Aim.Get(), ETriggerEvent::Started, this, &ThisClass::HandleAimPressed);
 		EIC->BindAction(IA_Aim.Get(), ETriggerEvent::Completed, this, &ThisClass::HandleAimReleased);
-		EIC->BindAction(IA_Aim.Get(), ETriggerEvent::Canceled, this, &ThisClass::HandleAimReleased); // [MOD]
+		EIC->BindAction(IA_Aim.Get(), ETriggerEvent::Canceled, this, &ThisClass::HandleAimReleased);
 	}
 
 	if (IA_EquipSlot1)
@@ -205,6 +204,15 @@ void UMosesHeroComponent::BindInputActions(UInputComponent* PlayerInputComponent
 	{
 		EIC->BindAction(IA_EquipSlot3.Get(), ETriggerEvent::Started, this, &ThisClass::HandleEquipSlot3);
 	}
+	if (IA_EquipSlot4) // [MOD][SLOT4]
+	{
+		EIC->BindAction(IA_EquipSlot4.Get(), ETriggerEvent::Started, this, &ThisClass::HandleEquipSlot4);
+	}
+
+	if (IA_Reload) // [MOD][RELOAD]
+	{
+		EIC->BindAction(IA_Reload.Get(), ETriggerEvent::Started, this, &ThisClass::HandleReload);
+	}
 
 	if (IA_Fire)
 	{
@@ -217,7 +225,6 @@ void UMosesHeroComponent::BindInputActions(UInputComponent* PlayerInputComponent
 	UE_LOG(LogMosesSpawn, Log, TEXT("[Hero][Input] Bind OK Pawn=%s"), *GetNameSafe(GetOwner()));
 }
 
-
 // ---- Forward to Pawn ----
 
 void UMosesHeroComponent::HandleMove(const FInputActionValue& Value)
@@ -228,7 +235,6 @@ void UMosesHeroComponent::HandleMove(const FInputActionValue& Value)
 	}
 }
 
-// [MOD] IA_LookYaw(float) 지원
 void UMosesHeroComponent::HandleLookYaw(const FInputActionValue& Value)
 {
 	if (APlayerCharacter* PC = Cast<APlayerCharacter>(GetOwner()))
@@ -240,7 +246,6 @@ void UMosesHeroComponent::HandleLookYaw(const FInputActionValue& Value)
 	}
 }
 
-// [MOD] IA_LookPitch(float) 지원
 void UMosesHeroComponent::HandleLookPitch(const FInputActionValue& Value)
 {
 	if (APlayerCharacter* PC = Cast<APlayerCharacter>(GetOwner()))
@@ -313,6 +318,25 @@ void UMosesHeroComponent::HandleEquipSlot3(const FInputActionValue& Value)
 	}
 }
 
+void UMosesHeroComponent::HandleEquipSlot4(const FInputActionValue& Value) // [MOD][SLOT4]
+{
+	if (APlayerCharacter* PC = Cast<APlayerCharacter>(GetOwner()))
+	{
+		PC->Input_EquipSlot4();
+	}
+}
+
+void UMosesHeroComponent::HandleReload(const FInputActionValue& Value) // [MOD][RELOAD]
+{
+	(void)Value;
+
+	if (APlayerCharacter* PC = Cast<APlayerCharacter>(GetOwner()))
+	{
+		UE_LOG(LogMosesWeapon, Warning, TEXT("[RELOAD][CL][Hero] Forward -> Pawn::Input_Reload Pawn=%s"), *GetNameSafe(PC));
+		PC->Input_Reload();
+	}
+}
+
 void UMosesHeroComponent::HandleFirePressed(const FInputActionValue& Value)
 {
 	if (APlayerCharacter* PC = Cast<APlayerCharacter>(GetOwner()))
@@ -350,7 +374,6 @@ void UMosesHeroComponent::HandleAimPressed(const FInputActionValue& /*Value*/)
 		return;
 	}
 
-	// 이미 ON이면 중복 방지
 	if (bWantsSniper2x)
 	{
 		return;
@@ -369,11 +392,8 @@ void UMosesHeroComponent::HandleAimPressed(const FInputActionValue& /*Value*/)
 		return;
 	}
 
-	// ✅ 최종 스코프 가능 여부는 PC가 판단 (스나이퍼 아니면 내부에서 거절됨)
 	MosesPC->Scope_OnPressed_Local();
 
-	// Sniper2x 카메라 모드는 “스코프가 켜질 수 있을 때만” 켜는게 안전
-	// (PC가 거절해도 여기서 켜버리면 화면만 확대되고 스코프 UI는 안 뜨는 상태가 됨)
 	if (!MosesPC->IsScopeActive_Local())
 	{
 		UE_LOG(LogMosesCamera, Warning, TEXT("[Hero][Cam] AimPressed REJECT (ScopeNotActive) Pawn=%s"), *GetNameSafe(Pawn));
@@ -391,7 +411,6 @@ void UMosesHeroComponent::HandleAimReleased(const FInputActionValue& /*Value*/)
 		return;
 	}
 
-	// ✅ 핵심: 현재 ON이 아닐 때는 스팸(Completed/Canceled 연타) 무시
 	if (!bWantsSniper2x)
 	{
 		return;
@@ -406,7 +425,7 @@ void UMosesHeroComponent::HandleAimReleased(const FInputActionValue& /*Value*/)
 
 	if (AMosesPlayerController* MosesPC = Cast<AMosesPlayerController>(PC))
 	{
-		MosesPC->Scope_OnReleased_Local(); // PC쪽에도 bScopeActive 가드 권장
+		MosesPC->Scope_OnReleased_Local();
 	}
 
 	bWantsSniper2x = false;

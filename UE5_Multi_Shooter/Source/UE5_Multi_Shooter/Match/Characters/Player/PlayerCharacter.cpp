@@ -398,6 +398,9 @@ void APlayerCharacter::Input_Reload()
 
 	if (UMosesCombatComponent* CombatComp = GetCombatComponent_Checked())
 	{
+		// (증거 로그용) R 입력이 실제로 Combat으로 들어가는지 확인
+		UE_LOG(LogMosesWeapon, Warning, TEXT("[RELOAD][CL][INPUT] R Press -> RequestReload Pawn=%s"), *GetNameSafe(this));
+
 		CombatComp->RequestReload();
 	}
 }
@@ -710,22 +713,34 @@ void APlayerCharacter::HandleDeadChanged(bool bNewDead)
 
 void APlayerCharacter::HandleReloadingChanged(bool bReloading)
 {
+	// 리로드 시작(true)일 때만 몽타주 재생
 	if (!bReloading)
 	{
 		return;
 	}
 
+	// Dedicated Server는 코스메틱 금지
 	if (GetNetMode() == NM_DedicatedServer)
 	{
 		return;
 	}
 
+	// 몽타주 에셋 없으면 종료
 	if (!ReloadMontage)
 	{
 		UE_LOG(LogMosesWeapon, VeryVerbose, TEXT("[RELOAD][COS] ReloadMontage missing Pawn=%s"), *GetNameSafe(this));
 		return;
 	}
 
+	// Swap 몽타주 중이면(원하면) 리로드 재생을 막아도 됨
+	// (현재는 정책 선택사항. 충돌이 보이면 아래 가드 ON 권장)
+	// if (bSwapInProgress)
+	// {
+	// 	UE_LOG(LogMosesWeapon, Verbose, TEXT("[RELOAD][COS] SKIP (SwapInProgress) Pawn=%s"), *GetNameSafe(this));
+	// 	return;
+	// }
+
+	// ✅ 상체 슬롯(UpperBody)은 ReloadMontage의 Slot Track이 담당해야 함
 	TryPlayMontage_Local(ReloadMontage, TEXT("RELOAD"));
 
 	UE_LOG(LogMosesWeapon, Log, TEXT("[RELOAD][COS] ReloadMontage PLAY Pawn=%s"), *GetNameSafe(this));

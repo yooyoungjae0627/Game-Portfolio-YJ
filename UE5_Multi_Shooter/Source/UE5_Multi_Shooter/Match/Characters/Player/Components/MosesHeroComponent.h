@@ -35,8 +35,8 @@ private:
 private:
 	// ---- Input Handlers ----
 	void HandleMove(const FInputActionValue& Value);
-	void HandleLookYaw(const FInputActionValue& Value);    // IA_LookYaw (float)
-	void HandleLookPitch(const FInputActionValue& Value);  // IA_LookPitch (float)
+	void HandleLookYaw(const FInputActionValue& Value);
+	void HandleLookPitch(const FInputActionValue& Value);
 
 	void HandleJump(const FInputActionValue& Value);
 	void HandleSprintPressed(const FInputActionValue& Value);
@@ -51,6 +51,9 @@ private:
 	void HandleEquipSlot1(const FInputActionValue& Value);
 	void HandleEquipSlot2(const FInputActionValue& Value);
 	void HandleEquipSlot3(const FInputActionValue& Value);
+	void HandleEquipSlot4(const FInputActionValue& Value); // [MOD][SLOT4]
+
+	void HandleReload(const FInputActionValue& Value);      // [MOD][RELOAD]
 
 	void HandleFirePressed(const FInputActionValue& Value);
 	void HandleFireReleased(const FInputActionValue& Value);
@@ -63,7 +66,6 @@ private:
 	UPROPERTY(EditAnywhere, Category = "Moses|Input")
 	TObjectPtr<UInputAction> IA_Move = nullptr;
 
-	// [MOD] 신규: IA_LookYaw / IA_LookPitch (Axis1D)
 	UPROPERTY(EditAnywhere, Category = "Moses|Input")
 	TObjectPtr<UInputAction> IA_LookYaw = nullptr;
 
@@ -95,17 +97,22 @@ private:
 	TObjectPtr<UInputAction> IA_EquipSlot3 = nullptr;
 
 	UPROPERTY(EditAnywhere, Category = "Moses|Input")
+	TObjectPtr<UInputAction> IA_EquipSlot4 = nullptr; // [MOD][SLOT4]
+
+	UPROPERTY(EditAnywhere, Category = "Moses|Input")
+	TObjectPtr<UInputAction> IA_Reload = nullptr;     // [MOD][RELOAD]
+
+	UPROPERTY(EditAnywhere, Category = "Moses|Input")
 	TObjectPtr<UInputAction> IA_Fire = nullptr;
 
 	UPROPERTY(EditAnywhere, Category = "Moses|Input")
 	int32 MappingPriority = 0;
 
-	// [MOD] 마우스 감도(코드 레벨) - 에디터 Scalar(Modifier) + 여기 Sens 둘 다 곱해진다고 생각하면 됨
 	UPROPERTY(EditAnywhere, Category = "Moses|Input|Look", meta = (ClampMin = "0.01", ClampMax = "10.0"))
 	float LookSensitivityYaw = 1.0f;
 
 	UPROPERTY(EditAnywhere, Category = "Moses|Input|Look", meta = (ClampMin = "0.01", ClampMax = "10.0"))
-	float LookSensitivityPitch = 1.0f; // 기존 1.0 -> 1.15 [MOD]
+	float LookSensitivityPitch = 1.0f;
 
 	UPROPERTY(EditAnywhere, Category = "Moses|Input|Look")
 	bool bInvertPitch = false;

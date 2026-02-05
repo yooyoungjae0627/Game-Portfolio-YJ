@@ -1,20 +1,6 @@
 ﻿// ============================================================================
 // UE5_Multi_Shooter/Combat/MosesCombatComponent.h  (FULL - UPDATED)
 // ============================================================================
-//
-// UMosesCombatComponent
-// - SSOT(PlayerState) 소유 컴포넌트.
-// - 슬롯(1~4) 고정 무기/탄약/리로드/사격/스왑을 서버 권위로 판정한다.
-// - Pawn/HUD는 RepNotify -> Native Delegate 이벤트만 받아 "표시"만 한다.
-//
-// [이번 STEP1 작업 목표]
-// - (핵심) 파밍으로 슬롯에 무기가 들어오면, 해당 슬롯의 탄약이 WeaponData 기준으로 초기화되어
-//   스왑(1~4) 시 "그 무기의 탄약만" HUD에 표시되고, "그 무기의 탄약만" 소비되게 한다.
-// - 이를 위해 서버 전용 API(ServerGrantWeaponToSlot)를 제공하고,
-//   Server_EnsureAmmoInitializedForSlot가 실제로 WeaponData 기반 초기 탄약을 세팅하도록 수정한다.
-// - Tick 금지, HUD Binding 금지. RepNotify -> Delegate만 사용.
-//
-// ============================================================================
 
 #pragma once
 
@@ -126,10 +112,8 @@ public:
 
 	// =========================================================================
 	// [MOD][STEP1] Pickup/Grant API (Server only)
-	// - 파밍 성공 시, 해당 슬롯 WeaponId 세팅 + WeaponData 기반 탄약 초기화까지 SSOT에서 확정한다.
-	// - Pawn/HUD는 RepNotify -> Delegate로 자동 갱신된다.
 	// =========================================================================
-	void ServerGrantWeaponToSlot(int32 SlotIndex, const FGameplayTag& WeaponId, bool bInitializeAmmoIfEmpty = true); // ✅ [MOD]
+	void ServerGrantWeaponToSlot(int32 SlotIndex, const FGameplayTag& WeaponId, bool bInitializeAmmoIfEmpty = true);
 
 	// =========================================================================
 	// Delegates (RepNotify -> Delegate)
@@ -148,9 +132,8 @@ public:
 	// =========================================================================
 	void ServerMarkDead();
 
-	// ✅ [ADD] 슬롯 패널 갱신 브로드캐스트 (0=전체, 1~4=특정)
+	// 슬롯 패널 갱신 브로드캐스트 (0=전체, 1~4=특정)
 	void BroadcastSlotsStateChanged(int32 ChangedSlotOr0ForAll, const TCHAR* ContextTag);
-
 
 protected:
 	virtual void BeginPlay() override;
@@ -175,7 +158,6 @@ private:
 	UFUNCTION() void OnRep_IsDead();
 	UFUNCTION() void OnRep_IsReloading();
 
-	// 서버 승인 Swap 컨텍스트 RepNotify
 	UFUNCTION() void OnRep_SwapSerial();
 
 private:
@@ -186,7 +168,6 @@ private:
 	void BroadcastAmmoChanged(const TCHAR* ContextTag);
 	void BroadcastDeadChanged(const TCHAR* ContextTag);
 	void BroadcastReloadingChanged(const TCHAR* ContextTag);
-
 	void BroadcastSwapStarted(const TCHAR* ContextTag);
 
 private:
@@ -196,14 +177,11 @@ private:
 	bool IsValidSlotIndex(int32 SlotIndex) const;
 	FGameplayTag GetSlotWeaponIdInternal(int32 SlotIndex) const;
 
-	// [MOD] 실제 WeaponData 기준으로 초기 탄약을 세팅한다.
-	void Server_EnsureAmmoInitializedForSlot(int32 SlotIndex, const FGameplayTag& WeaponId); // ✅ [MOD]
-
+	void Server_EnsureAmmoInitializedForSlot(int32 SlotIndex, const FGameplayTag& WeaponId);
 	void GetSlotAmmo_Internal(int32 SlotIndex, int32& OutMag, int32& OutReserve) const;
 	void SetSlotAmmo_Internal(int32 SlotIndex, int32 NewMag, int32 NewReserve);
 
-	// [MOD] Slot WeaponId를 서버에서 세팅하고, 즉시 RepNotify/Delegate를 갱신한다.
-	void Server_SetSlotWeaponId_Internal(int32 SlotIndex, const FGameplayTag& WeaponId); // ✅ [MOD]
+	void Server_SetSlotWeaponId_Internal(int32 SlotIndex, const FGameplayTag& WeaponId);
 
 private:
 	// =========================================================================
@@ -218,17 +196,13 @@ private:
 	bool Server_IsFireCooldownReady(const UMosesWeaponData* WeaponData) const;
 	void Server_UpdateFireCooldownStamp();
 
-	// 스프레드 적용 후 히트스캔 수행
 	void Server_PerformFireAndApplyDamage(const UMosesWeaponData* WeaponData);
 
-	// 스프레드 계산/적용
 	float Server_CalcSpreadFactor01(const UMosesWeaponData* WeaponData, const APawn* OwnerPawn) const;
 	FVector Server_ApplySpreadToDirection(const FVector& AimDir, const UMosesWeaponData* WeaponData, float SpreadFactor01, float& OutHalfAngleDeg) const;
 
-	// Projectile 스폰(유탄)
 	void Server_SpawnGrenadeProjectile(const UMosesWeaponData* WeaponData, const FVector& SpawnLoc, const FVector& FireDir, AController* InstigatorController, APawn* OwnerPawn);
 
-	// GAS(SetByCaller Data.Damage) 우선 적용 + ASC 없으면 ApplyDamage fallback
 	bool Server_ApplyDamageToTarget_GAS(AActor* TargetActor, float Damage, AController* InstigatorController, AActor* DamageCauser, const UMosesWeaponData* WeaponData) const;
 
 	void Server_PropagateFireCosmetics(FGameplayTag ApprovedWeaponId);
@@ -338,13 +312,21 @@ private:
 	UPROPERTY(EditDefaultsOnly, Category = "Moses|GAS")
 	TSoftClassPtr<class UGameplayEffect> DamageGE_SetByCaller;
 
-	// [MOD] Evidence-First: 서버 트레이스 디버그(라인/구) 증거 출력
 	UPROPERTY(EditDefaultsOnly, Category = "Moses|Fire|Debug")
 	bool bServerTraceDebugDraw = true;
 
 	UPROPERTY(EditDefaultsOnly, Category = "Moses|Fire|Debug")
 	float ServerTraceDebugDrawTime = 1.5f;
 
+private:
+	// =========================================================================
+	// Reload policy
+	// =========================================================================
+	// [MOD][AUTO-RELOAD]
+	// - 탄창이 1 -> 0이 되는 순간, Reserve > 0이면 서버에서 자동으로 Reload를 시작한다.
+	// - Tick 없이 "탄약 소비 지점"에서만 트리거한다.
+	UPROPERTY(EditDefaultsOnly, Category = "Moses|Reload")
+	bool bAutoReloadOnEmpty = true; // ✅ [MOD][AUTO-RELOAD]
 
 private:
 	// =========================================================================
