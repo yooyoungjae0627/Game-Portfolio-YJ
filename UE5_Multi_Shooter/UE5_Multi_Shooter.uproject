@@ -95,6 +95,10 @@
 		{
 			"Name": "GF_Match_Rules",
 			"Enabled": true
+		},
+		{
+			"Name": "CommonUI",
+			"Enabled": true
 		}
 	]
 }

@@ -28,7 +28,7 @@ public class UE5_Multi_Shooter : ModuleRules
             "NetCore",
 
             "UMG",
-
+            "AIModule",
             "GameplayAbilities",
             "GameplayTasks",
             "GameplayTags",
