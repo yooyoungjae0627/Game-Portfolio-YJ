@@ -79,7 +79,7 @@ public:
 	float MaxChaseDistance = 4000.f;
 
 	UPROPERTY(EditDefaultsOnly, Category = "Moses|Zombie|AI|Attack")
-	float AttackRange = 180.f;
+	float AttackRange = 200.f;
 
 	UPROPERTY(EditDefaultsOnly, Category = "Moses|Zombie|AI|Attack")
 	float AttackCooldownSeconds = 1.2f;

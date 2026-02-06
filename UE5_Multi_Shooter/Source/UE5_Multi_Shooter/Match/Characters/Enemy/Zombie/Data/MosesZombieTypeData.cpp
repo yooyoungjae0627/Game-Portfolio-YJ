@@ -25,6 +25,6 @@ UMosesZombieTypeData::UMosesZombieTypeData()
 	AcceptanceRadius = 120.f;
 	MaxChaseDistance = 4000.f;
 
-	AttackRange = 180.f;
+	AttackRange = 200.f;
 	AttackCooldownSeconds = 1.2f;
 }

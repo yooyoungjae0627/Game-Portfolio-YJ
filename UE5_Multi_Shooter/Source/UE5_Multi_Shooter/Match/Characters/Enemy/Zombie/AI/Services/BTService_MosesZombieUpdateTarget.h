@@ -23,4 +23,15 @@ protected:
 private:
 	UPROPERTY(EditAnywhere, Category="Moses|AI")
 	FName BBKey_TargetActor = TEXT("TargetActor");
+
+	// [NEW] 거리 갱신용 (이미 만들었다면 그대로)
+	UPROPERTY(EditAnywhere, Category = "Blackboard")
+	FName BBKey_DistanceToTarget = TEXT("DistanceToTarget");
+
+	// [NEW] 반경 기반 추적 거리 (요구: 뒤에 있어도 반경이면 쫓음)
+	UPROPERTY(EditAnywhere, Category = "Chase")
+	float AcquireRadius = 1500.f;   // 추적 시작/유지 반경(원하는 값으로)
+
+	UPROPERTY(EditAnywhere, Category = "Attack")
+	float AttackRadius = 150.f;     // 공격 반경(요구: 150)
 };

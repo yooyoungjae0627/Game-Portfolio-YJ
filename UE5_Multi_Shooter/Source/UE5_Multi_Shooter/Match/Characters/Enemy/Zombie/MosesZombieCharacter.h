@@ -81,11 +81,14 @@ private:
 		bool bFromSweep,
 		const FHitResult& SweepResult);
 
+	UFUNCTION()
+	void OnAttackMontageEnded_Server(UAnimMontage* Montage, bool bInterrupted);
+
 	AMosesPlayerState* ResolveKillerPlayerState_FromEffectContext_Server(const FGameplayEffectContextHandle& Context) const;
 	bool ResolveHeadshot_FromEffectContext_Server(const FGameplayEffectContextHandle& Context) const;
 
 	void HandleDeath_Server();
-	float ComputeDeathDestroyDelaySeconds_Server(UAnimMontage* DeathMontage) const; // [NEW]
+	float ComputeDeathDestroyDelaySeconds_Server(UAnimMontage* DeathMontage) const; 
 
 	void PushKillFeed_Server(bool bHeadshot, AMosesPlayerState* KillerPS);
 	void PushHeadshotAnnouncement_Server(AMosesPlayerState* KillerPS) const;
