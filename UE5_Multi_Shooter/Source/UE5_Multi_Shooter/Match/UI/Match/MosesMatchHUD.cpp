@@ -695,7 +695,7 @@ void UMosesMatchHUD::HandleAmmoChangedEx_FromCombat(int32 Mag, int32 ReserveCur,
 	if (WeaponAmmoAmount)
 	{
 		WeaponAmmoAmount->SetText(FText::FromString(
-			FString::Printf(TEXT("%d | %d / %d"), Mag, ReserveCur, ReserveMax)));
+			FString::Printf(TEXT("%d / %d"), Mag, ReserveCur)));
 	}
 
 	UE_LOG(LogMosesHUD, Verbose, TEXT("[HUD][CL] AmmoChangedEx Mag=%d Reserve=%d/%d"), Mag, ReserveCur, ReserveMax);
