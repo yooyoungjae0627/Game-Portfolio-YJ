@@ -1,33 +1,30 @@
 // ============================================================================
-// MosesInteractionComponent.h (FULL)  [MOD]
+// UE5_Multi_Shooter/Match/Components/MosesInteractionComponent.h  (FULL)
 // ----------------------------------------------------------------------------
 // 역할
-// - [MOD] "Overlap 기반" 상호작용 타겟 시스템.
-//   * LineTrace/Timer로 타겟을 찾지 않는다.
-//   * PickupWeapon/FlagSpot이 Overlap(Begin/End) 시 로컬 플레이어의 이 컴포넌트에
-//     Target을 Set/Clear 해준다.
-// - E Press/Release 입력을 받아 서버 RPC로 의도를 전달한다.
-// - 서버는 거리/권한 등 최소 Guard를 수행한 뒤,
-//   FlagSpot(Capture) 또는 PickupWeapon(Pickup)을 처리한다.
+// - Overlap 기반 상호작용 타겟 시스템 (Trace/Timer 금지)
+// - PickupWeapon / FlagSpot이 Overlap Begin/End에서 로컬 타겟 Set/Clear
+// - E Press/Release 입력을 서버 RPC로 전달
+// - 서버는 거리/권한 Guard 후 FlagSpot(Capture) 또는 PickupWeapon(Pickup) 처리
 //
 // 설계 원칙
-// - Server Authority 100%: 결과 확정은 서버에서만.
-// - Tick 금지: 타겟 갱신은 Overlap 이벤트로만 수행한다.
-// - Pawn/Character는 Body(입력/코스메틱), SSOT는 PlayerState.
+// - Server Authority 100%
+// - Tick 금지
+// - Pawn/Character = Body(입력/코스메틱), SSOT = PlayerState
 // ============================================================================
 
 #pragma once
 
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
-
-#include "UE5_Multi_Shooter/MosesLogChannels.h"
 #include "MosesInteractionComponent.generated.h"
 
 class AMosesFlagSpot;
 class AMosesPickupWeapon;
 class AMosesPlayerState;
 class AMosesMatchGameState;
+class APawn;
+class APlayerController;
 
 UENUM()
 enum class EMosesInteractTargetType : uint8
@@ -61,17 +58,10 @@ public:
 	// Client: Target Set/Clear (Overlap에서 호출)
 	// =========================================================================
 
-	/**
-	 * [MOD] 로컬 플레이어가 Overlap 진입했을 때 타겟을 설정한다.
-	 * - 호출 주체: PickupWeapon / FlagSpot (Overlap Begin)
-	 * - 주의: 로컬 플레이어에서만 호출되어야 한다.
-	 */
+	/** 로컬 플레이어가 Overlap 진입했을 때 타겟 설정 */
 	void SetCurrentInteractTarget_Local(AActor* NewTarget);
 
-	/**
-	 * [MOD] 로컬 플레이어가 Overlap 이탈했을 때 타겟을 해제한다.
-	 * - ExpectedTarget이 현재 타겟과 같을 때만 해제한다.
-	 */
+	/** 로컬 플레이어가 Overlap 이탈했을 때 타겟 해제 */
 	void ClearCurrentInteractTarget_Local(AActor* ExpectedTarget);
 
 	// =========================================================================
@@ -107,12 +97,10 @@ private:
 	AMosesPlayerState* GetMosesPlayerState() const;
 	AMosesMatchGameState* GetMatchGameState() const;
 
-	// [MOD] Target type resolve
 	static EMosesInteractTargetType ResolveTargetType(AActor* TargetActor);
 
-	// [ADD] Target을 잃었거나(Overlap End) 상황이 꼬였을 때 로컬 홀드 상태 강제 해제
+	// Target을 잃었거나 상태가 꼬였을 때 로컬 홀드 상태 강제 해제
 	void ForceReleaseInteract_Local(AActor* ExpectedTarget, const TCHAR* ReasonTag);
-
 
 private:
 	// -------------------------------------------------------------------------
@@ -122,7 +110,7 @@ private:
 	float MaxUseDistance = 350.f;
 
 	// -------------------------------------------------------------------------
-	// [MOD] Cached target set by overlap (no timer, no trace)
+	// Cached target set by overlap (no timer, no trace)
 	// -------------------------------------------------------------------------
 	UPROPERTY(Transient)
 	FMosesInteractTarget CachedTarget;

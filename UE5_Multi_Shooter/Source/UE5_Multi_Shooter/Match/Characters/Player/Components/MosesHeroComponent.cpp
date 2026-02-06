@@ -204,12 +204,12 @@ void UMosesHeroComponent::BindInputActions(UInputComponent* PlayerInputComponent
 	{
 		EIC->BindAction(IA_EquipSlot3.Get(), ETriggerEvent::Started, this, &ThisClass::HandleEquipSlot3);
 	}
-	if (IA_EquipSlot4) // [MOD][SLOT4]
+	if (IA_EquipSlot4) 
 	{
 		EIC->BindAction(IA_EquipSlot4.Get(), ETriggerEvent::Started, this, &ThisClass::HandleEquipSlot4);
 	}
 
-	if (IA_Reload) // [MOD][RELOAD]
+	if (IA_Reload) 
 	{
 		EIC->BindAction(IA_Reload.Get(), ETriggerEvent::Started, this, &ThisClass::HandleReload);
 	}

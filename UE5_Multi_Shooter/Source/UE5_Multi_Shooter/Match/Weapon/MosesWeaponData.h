@@ -128,6 +128,9 @@ public:
 	UPROPERTY(EditDefaultsOnly, Category = "Moses|Weapon|Socket")
 	FName MuzzleSocketName = TEXT("MuzzleFlash");
 
+	UPROPERTY(EditDefaultsOnly, Category = "Weapon|Ammo")
+	FGameplayTag AmmoTypeId; // e.g., Ammo.Rifle
+
 public:
 	/** Day7: Speed(0~Max) -> SpreadFactor(0~1)로 정규화할 때 사용할 기준 속도(표시/서버 공통 정책) */
 	UPROPERTY(EditDefaultsOnly, Category = "Weapon|Aim", meta = (ClampMin = "1.0"))

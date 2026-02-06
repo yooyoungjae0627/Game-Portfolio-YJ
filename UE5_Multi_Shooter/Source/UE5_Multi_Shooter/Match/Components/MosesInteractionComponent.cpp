@@ -1,10 +1,17 @@
-﻿#include "UE5_Multi_Shooter/Match/Components/MosesInteractionComponent.h"
+﻿// ============================================================================
+// UE5_Multi_Shooter/Match/Components/MosesInteractionComponent.cpp  (FULL)
+// ============================================================================
+
+#include "UE5_Multi_Shooter/Match/Components/MosesInteractionComponent.h"
+
+#include "UE5_Multi_Shooter/MosesLogChannels.h"
+
 #include "UE5_Multi_Shooter/Match/Flag/MosesFlagSpot.h"
 #include "UE5_Multi_Shooter/Match/Pickup/MosesPickupWeapon.h"
 #include "UE5_Multi_Shooter/MosesPlayerState.h"
 #include "UE5_Multi_Shooter/Match/GameState/MosesMatchGameState.h"
 
-#include "Components/SphereComponent.h"   
+#include "Components/SphereComponent.h"
 #include "GameFramework/Pawn.h"
 #include "GameFramework/PlayerController.h"
 #include "Engine/World.h"
@@ -18,14 +25,13 @@ void UMosesInteractionComponent::BeginPlay()
 {
 	Super::BeginPlay();
 
-	// [MOD] Overlap 기반이므로 타이머/트레이스 없음.
-	// 로컬 타겟은 Pickup/Flag의 Overlap에서 Set/Clear 된다.
+	// Overlap 기반이므로 타이머/트레이스 없음.
 	CachedTarget = FMosesInteractTarget();
 }
 
 void UMosesInteractionComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
-	// ✅ 남아있는 홀드가 있으면 서버/로컬 모두 정리
+	// 남아있는 홀드가 있으면 로컬/서버 모두 정리
 	ForceReleaseInteract_Local(nullptr, TEXT("EndPlay"));
 
 	CachedTarget = FMosesInteractTarget();
@@ -36,7 +42,7 @@ void UMosesInteractionComponent::EndPlay(const EEndPlayReason::Type EndPlayReaso
 }
 
 // ============================================================================
-// [MOD] Target Set/Clear (Local only)
+// Target Set/Clear (Local only)
 // ============================================================================
 
 void UMosesInteractionComponent::SetCurrentInteractTarget_Local(AActor* NewTarget)
@@ -96,16 +102,14 @@ void UMosesInteractionComponent::ClearCurrentInteractTarget_Local(AActor* Expect
 		*GetNameSafe(ExpectedTarget),
 		*GetNameSafe(GetOwner()));
 
-	// ✅ 핵심: 타겟을 잃는 순간(Overlap End) “홀드 상태”가 남아있으면 다음 Press가 막힌다.
-	// 따라서 강제로 Release 처리해서 상태를 깨끗하게 만든다.
+	// 타겟을 잃는 순간 홀드 상태가 남아있으면 다음 Press가 막힌다 → 강제 Release
 	ForceReleaseInteract_Local(ExpectedTarget, TEXT("TargetLost"));
 
 	CachedTarget = FMosesInteractTarget();
 }
 
-
 // ============================================================================
-// Input Endpoints
+// Input Endpoints (E Press/Release)
 // ============================================================================
 
 void UMosesInteractionComponent::RequestInteractPressed()
@@ -115,7 +119,7 @@ void UMosesInteractionComponent::RequestInteractPressed()
 		return;
 	}
 
-	// [FIX] 타겟이 없으면 입력 무시
+	// 타겟이 없으면 입력 무시
 	if (!CachedTarget.TargetActor.IsValid() || CachedTarget.Type == EMosesInteractTargetType::None)
 	{
 		UE_LOG(LogMosesCombat, VeryVerbose, TEXT("[INTERACT][CL] Press IGNORE (NoTarget) Owner=%s"),
@@ -146,7 +150,7 @@ void UMosesInteractionComponent::RequestInteractReleased()
 
 	UE_LOG(LogMosesCombat, Verbose, TEXT("[INTERACT][CL] Release Target=%s"), *GetNameSafe(ReleaseTarget));
 
-	// [FIX] ReleaseTarget가 null이면 서버 RPC 날리지 않음
+	// ReleaseTarget가 null이면 서버 RPC 날리지 않음
 	if (!ReleaseTarget)
 	{
 		return;
@@ -154,7 +158,6 @@ void UMosesInteractionComponent::RequestInteractReleased()
 
 	ServerInteractReleased(ReleaseTarget);
 }
-
 
 // ============================================================================
 // Server RPC
@@ -200,7 +203,7 @@ void UMosesInteractionComponent::HandleInteractPressed_Server(AActor* TargetActo
 	// ---------------------------------------------------------------------
 	if (AMosesFlagSpot* Flag = Cast<AMosesFlagSpot>(TargetActor))
 	{
-		// [FIX] 서버에서 "실제 Zone 안"을 1회 더 확인 (stale target 방지)
+		// 서버에서 "실제 Zone 안"을 1회 더 확인 (stale target 방지)
 		const APawn* Pawn = GetOwningPawn();
 		bool bInZone = false;
 
@@ -282,7 +285,7 @@ void UMosesInteractionComponent::HandleInteractReleased_Server(AActor* TargetAct
 		return;
 	}
 
-	// ✅ 토글 캡처: Release는 취소가 아니다.
+	// 토글 캡처: Release는 취소가 아니다.
 	UE_LOG(LogMosesCombat, Verbose, TEXT("[INTERACT][SV] Release IGNORE (ToggleCapture) Player=%s Target=%s"),
 		*GetNameSafe(PS),
 		*GetNameSafe(TargetActor));
@@ -302,7 +305,7 @@ bool UMosesInteractionComponent::IsWithinUseDistance_Server(const AActor* Target
 
 	FVector TargetLoc = TargetActor->GetActorLocation();
 
-	// ✅ FlagSpot은 CaptureZone 위치 기준으로 거리 판정
+	// FlagSpot은 CaptureZone 위치 기준으로 거리 판정
 	if (const AMosesFlagSpot* FlagSpot = Cast<AMosesFlagSpot>(TargetActor))
 	{
 		if (const USphereComponent* Zone = FlagSpot->GetCaptureZone())
@@ -382,7 +385,7 @@ void UMosesInteractionComponent::ForceReleaseInteract_Local(AActor* ExpectedTarg
 	}
 
 	// ExpectedTarget이 있으면 "그 타겟을 누르고 있던 상황"일 때만 풀어준다.
-	// (타겟이 nullptr이면 무조건 풀어도 됨)
+	// (ExpectedTarget=nullptr이면 무조건 풀어도 됨)
 	if (ExpectedTarget && PressedTarget.Get() != ExpectedTarget)
 	{
 		return;
@@ -400,8 +403,7 @@ void UMosesInteractionComponent::ForceReleaseInteract_Local(AActor* ExpectedTarg
 		*GetNameSafe(ReleaseTarget),
 		*GetNameSafe(GetOwner()));
 
-	// 서버에도 Release를 보내서, “홀드 캡처”라면 즉시 취소되게 한다.
-	// (FlagSpot은 ServerCancelCapture(Released)로 연결됨)
+	// 서버에도 Release 전달
 	if (ReleaseTarget)
 	{
 		ServerInteractReleased(ReleaseTarget);

@@ -109,10 +109,14 @@ void UMosesCombatComponent::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>
 	DOREPLIFETIME(UMosesCombatComponent, bIsDead);
 	DOREPLIFETIME(UMosesCombatComponent, bIsReloading);
 
-	// SwapContext
 	DOREPLIFETIME(UMosesCombatComponent, SwapSerial);
 	DOREPLIFETIME(UMosesCombatComponent, LastSwapFromSlot);
 	DOREPLIFETIME(UMosesCombatComponent, LastSwapToSlot);
+
+	DOREPLIFETIME(UMosesCombatComponent, Slot1ReserveMax);
+	DOREPLIFETIME(UMosesCombatComponent, Slot2ReserveMax);
+	DOREPLIFETIME(UMosesCombatComponent, Slot3ReserveMax);
+	DOREPLIFETIME(UMosesCombatComponent, Slot4ReserveMax);
 }
 
 // ============================================================================
@@ -131,18 +135,23 @@ FGameplayTag UMosesCombatComponent::GetEquippedWeaponId() const
 
 int32 UMosesCombatComponent::GetCurrentMagAmmo() const
 {
-	int32 Mag = 0;
-	int32 Reserve = 0;
-	GetSlotAmmo_Internal(CurrentSlot, Mag, Reserve);
+	int32 Mag = 0, Cur = 0, Max = 0;
+	GetSlotAmmo_Internal(CurrentSlot, Mag, Cur, Max);
 	return Mag;
 }
 
 int32 UMosesCombatComponent::GetCurrentReserveAmmo() const
 {
-	int32 Mag = 0;
-	int32 Reserve = 0;
-	GetSlotAmmo_Internal(CurrentSlot, Mag, Reserve);
-	return Reserve;
+	int32 Mag = 0, Cur = 0, Max = 0;
+	GetSlotAmmo_Internal(CurrentSlot, Mag, Cur, Max);
+	return Cur;
+}
+
+int32 UMosesCombatComponent::GetCurrentReserveMax() const
+{
+	int32 Mag = 0, Cur = 0, Max = 0;
+	GetSlotAmmo_Internal(CurrentSlot, Mag, Cur, Max);
+	return Max;
 }
 
 // ============================================================================
@@ -179,6 +188,10 @@ void UMosesCombatComponent::ServerInitDefaultSlots_4(const FGameplayTag& InSlot1
 	BroadcastAmmoChanged(TEXT("ServerInitDefaultSlots_4"));
 }
 
+// ============================================================================
+// Default 지급: Rifle 30/90 + ReserveMax=90
+// ============================================================================
+
 void UMosesCombatComponent::ServerGrantDefaultRifleAmmo_30_90()
 {
 	if (!GetOwner() || !GetOwner()->HasAuthority())
@@ -192,13 +205,102 @@ void UMosesCombatComponent::ServerGrantDefaultRifleAmmo_30_90()
 		return;
 	}
 
-	SetSlotAmmo_Internal(1, 30, 90);
+	SetSlotAmmo_Internal(1, 30, 90, 90);
 
-	CurrentSlot = 1;
-	OnRep_CurrentSlot();
+	if (CurrentSlot == 1)
+	{
+		OnRep_CurrentSlot(); // equipped slot UI sync
+	}
 
-	UE_LOG(LogMosesWeapon, Warning, TEXT("[AMMO][SV] DefaultRifleAmmo Granted Slot=1 Mag=30 Reserve=90 Weapon=%s"),
+	UE_LOG(LogMosesWeapon, Warning, TEXT("[AMMO][SV] DefaultRifleAmmo Granted Slot=1 Mag=30 Reserve=90/90 Weapon=%s"),
 		*Slot1WeaponId.ToString());
+}
+
+// ============================================================================
+// [AMMO_PICKUP] Ammo Farming - Server Authority ONLY
+// - ReserveMax += ReserveMaxDelta
+// - ReserveCur += ReserveFillDelta (Clamp 0..ReserveMax)
+// - 적용 대상: "해당 AmmoType을 쓰는 무기"가 들어있는 슬롯들
+// ============================================================================
+
+void UMosesCombatComponent::ServerAddAmmoByType(EMosesAmmoType AmmoType, int32 ReserveMaxDelta, int32 ReserveFillDelta)
+{
+	if (!GetOwner() || !GetOwner()->HasAuthority())
+	{
+		return;
+	}
+
+	const UWorld* World = GetWorld();
+	const UGameInstance* GI = World ? World->GetGameInstance() : nullptr;
+	UMosesWeaponRegistrySubsystem* Registry = GI ? GI->GetSubsystem<UMosesWeaponRegistrySubsystem>() : nullptr;
+
+	if (!Registry)
+	{
+		UE_LOG(LogMosesWeapon, Warning, TEXT("[AMMO][SV] AddAmmoByType FAIL (NoRegistry) PS=%s"), *GetNameSafe(GetOwner()));
+		return;
+	}
+
+	bool bAppliedAny = false;
+
+	for (int32 Slot = 1; Slot <= 4; ++Slot)
+	{
+		const FGameplayTag WeaponId = GetWeaponIdForSlot(Slot);
+		if (!WeaponId.IsValid())
+		{
+			continue;
+		}
+
+		const UMosesWeaponData* Data = Registry->ResolveWeaponData(WeaponId);
+		if (!Data)
+		{
+			continue;
+		}
+
+		// ✅ AmmoType 일치 슬롯만 적용
+		if (Data->AmmoType != AmmoType)
+		{
+			continue;
+		}
+
+		int32 Mag = 0, Cur = 0, Max = 0;
+		GetSlotAmmo_Internal(Slot, Mag, Cur, Max);
+
+		const int32 OldCur = Cur;
+		const int32 OldMax = Max;
+
+		Max = FMath::Max(0, Max + FMath::Max(0, ReserveMaxDelta));
+		Cur = FMath::Clamp(Cur + FMath::Max(0, ReserveFillDelta), 0, Max);
+
+		SetSlotAmmo_Internal(Slot, Mag, Cur, Max);
+
+		UE_LOG(LogMosesWeapon, Warning,
+			TEXT("[AMMO][SV] PickupApplied Slot=%d Weapon=%s Type=%d Reserve %d/%d -> %d/%d (DeltaMax=%d Fill=%d) PS=%s"),
+			Slot,
+			*WeaponId.ToString(),
+			(int32)AmmoType,
+			OldCur, OldMax,
+			Cur, Max,
+			ReserveMaxDelta,
+			ReserveFillDelta,
+			*GetNameSafe(GetOwner()));
+
+		bAppliedAny = true;
+
+		if (CurrentSlot == Slot)
+		{
+			BroadcastAmmoChanged(TEXT("ServerAddAmmoByType(CurrentSlot)"));
+		}
+
+		BroadcastSlotsStateChanged(Slot, TEXT("ServerAddAmmoByType"));
+	}
+
+	if (!bAppliedAny)
+	{
+		UE_LOG(LogMosesWeapon, Warning,
+			TEXT("[AMMO][SV] Pickup FAIL (No slot using AmmoType=%d) PS=%s"),
+			(int32)AmmoType,
+			*GetNameSafe(GetOwner()));
+	}
 }
 
 // ============================================================================
@@ -1153,16 +1255,27 @@ void UMosesCombatComponent::BroadcastEquippedChanged(const TCHAR* ContextTag)
 		ContextTag ? ContextTag : TEXT("None"), CurrentSlot, *WeaponId.ToString());
 }
 
+// ============================================================================
+// Broadcast (Ammo) - RepNotify -> Delegate
+// - 기존 2파라미터 유지 + 신규 3파라미터(ReserveMax) 발행
+// ============================================================================
 void UMosesCombatComponent::BroadcastAmmoChanged(const TCHAR* ContextTag)
 {
-	int32 Mag = 0;
-	int32 Reserve = 0;
-	GetSlotAmmo_Internal(CurrentSlot, Mag, Reserve);
+	int32 Mag = 0, Cur = 0, Max = 0;
+	GetSlotAmmo_Internal(CurrentSlot, Mag, Cur, Max);
 
-	OnAmmoChanged.Broadcast(Mag, Reserve);
+	// 기존 호환
+	OnAmmoChanged.Broadcast(Mag, Cur);
 
-	UE_LOG(LogMosesCombat, Warning, TEXT("[AMMO][REP] %s Slot=%d Mag=%d Reserve=%d"),
-		ContextTag ? ContextTag : TEXT("None"), CurrentSlot, Mag, Reserve);
+	// 신규(ReserveMax 포함)
+	OnAmmoChangedEx.Broadcast(Mag, Cur, Max);
+
+	UE_LOG(LogMosesCombat, Warning, TEXT("[AMMO][REP] %s Slot=%d Mag=%d Reserve=%d/%d"),
+		ContextTag ? ContextTag : TEXT("None"),
+		CurrentSlot,
+		Mag,
+		Cur,
+		Max);
 }
 
 void UMosesCombatComponent::BroadcastDeadChanged(const TCHAR* ContextTag)
@@ -1246,7 +1359,9 @@ void UMosesCombatComponent::Server_SetSlotWeaponId_Internal(int32 SlotIndex, con
 }
 
 // ============================================================================
-// Ammo helpers
+// [OPTIONAL BUT RECOMMENDED] 초기 슬롯 Ammo가 0/0/0일 때 WeaponData로 초기화
+// - WeaponData: MagSize, MaxReserve 사용
+// - 기본 정책: Mag=MagSize, ReserveCur=MaxReserve, ReserveMax=MaxReserve
 // ============================================================================
 
 void UMosesCombatComponent::Server_EnsureAmmoInitializedForSlot(int32 SlotIndex, const FGameplayTag& WeaponId)
@@ -1261,20 +1376,18 @@ void UMosesCombatComponent::Server_EnsureAmmoInitializedForSlot(int32 SlotIndex,
 		return;
 	}
 
-	int32 Mag = 0;
-	int32 Reserve = 0;
-	GetSlotAmmo_Internal(SlotIndex, Mag, Reserve);
+	int32 Mag = 0, Cur = 0, Max = 0;
+	GetSlotAmmo_Internal(SlotIndex, Mag, Cur, Max);
 
-	// 이미 탄약이 들어있으면 유지한다(파밍/스왑/리로드 등으로 갱신된 상태 보호)
-	if (Mag > 0 || Reserve > 0)
+	// 이미 초기화되어 있으면 보호
+	if (Mag > 0 || Cur > 0 || Max > 0)
 	{
 		return;
 	}
 
-	// [MOD][STEP1] WeaponData 기반 초기 탄약 세팅
 	const UWorld* World = GetWorld();
 	const UGameInstance* GI = World ? World->GetGameInstance() : nullptr;
-	const UMosesWeaponRegistrySubsystem* Registry = GI ? GI->GetSubsystem<UMosesWeaponRegistrySubsystem>() : nullptr;
+	UMosesWeaponRegistrySubsystem* Registry = GI ? GI->GetSubsystem<UMosesWeaponRegistrySubsystem>() : nullptr;
 
 	const UMosesWeaponData* Data = Registry ? Registry->ResolveWeaponData(WeaponId) : nullptr;
 	if (!Data)
@@ -1284,38 +1397,63 @@ void UMosesCombatComponent::Server_EnsureAmmoInitializedForSlot(int32 SlotIndex,
 		return;
 	}
 
-	// 기본 정책: Mag=MagSize, Reserve=MaxReserve
 	const int32 InitMag = FMath::Max(0, Data->MagSize);
-	const int32 InitReserve = FMath::Max(0, Data->MaxReserve);
+	const int32 InitMax = FMath::Max(0, Data->MaxReserve);
+	const int32 InitCur = InitMax;
 
-	SetSlotAmmo_Internal(SlotIndex, InitMag, InitReserve);
+	SetSlotAmmo_Internal(SlotIndex, InitMag, InitCur, InitMax);
 
-	UE_LOG(LogMosesWeapon, Warning, TEXT("[AMMO][SV] EnsureAmmo INIT Slot=%d Weapon=%s Ammo=%d/%d PS=%s"),
-		SlotIndex, *WeaponId.ToString(), InitMag, InitReserve, *GetNameSafe(GetOwner()));
+	UE_LOG(LogMosesWeapon, Warning, TEXT("[AMMO][SV] EnsureAmmo INIT Slot=%d Weapon=%s Ammo Mag=%d Reserve=%d/%d PS=%s"),
+		SlotIndex, *WeaponId.ToString(), InitMag, InitCur, InitMax, *GetNameSafe(GetOwner()));
 
-	// CurrentSlot이면 HUD 전환 즉시 반영
 	if (CurrentSlot == SlotIndex)
 	{
 		BroadcastAmmoChanged(TEXT("Server_EnsureAmmoInitializedForSlot(CurrentSlot)"));
 	}
 }
 
-void UMosesCombatComponent::GetSlotAmmo_Internal(int32 SlotIndex, int32& OutMag, int32& OutReserve) const
+// ============================================================================
+// Ammo helpers (ReserveMax 포함) - 내부 저장/조회
+// ============================================================================
+
+void UMosesCombatComponent::GetSlotAmmo_Internal(int32 SlotIndex, int32& OutMag, int32& OutReserveCur, int32& OutReserveMax) const
 {
 	OutMag = 0;
-	OutReserve = 0;
+	OutReserveCur = 0;
+	OutReserveMax = 0;
 
 	switch (SlotIndex)
 	{
-	case 1: OutMag = Slot1MagAmmo; OutReserve = Slot1ReserveAmmo; return;
-	case 2: OutMag = Slot2MagAmmo; OutReserve = Slot2ReserveAmmo; return;
-	case 3: OutMag = Slot3MagAmmo; OutReserve = Slot3ReserveAmmo; return;
-	case 4: OutMag = Slot4MagAmmo; OutReserve = Slot4ReserveAmmo; return;
-	default: break;
+	case 1:
+		OutMag = Slot1MagAmmo;
+		OutReserveCur = Slot1ReserveAmmo;
+		OutReserveMax = Slot1ReserveMax;
+		return;
+
+	case 2:
+		OutMag = Slot2MagAmmo;
+		OutReserveCur = Slot2ReserveAmmo;
+		OutReserveMax = Slot2ReserveMax;
+		return;
+
+	case 3:
+		OutMag = Slot3MagAmmo;
+		OutReserveCur = Slot3ReserveAmmo;
+		OutReserveMax = Slot3ReserveMax;
+		return;
+
+	case 4:
+		OutMag = Slot4MagAmmo;
+		OutReserveCur = Slot4ReserveAmmo;
+		OutReserveMax = Slot4ReserveMax;
+		return;
+
+	default:
+		return;
 	}
 }
 
-void UMosesCombatComponent::SetSlotAmmo_Internal(int32 SlotIndex, int32 NewMag, int32 NewReserve)
+void UMosesCombatComponent::SetSlotAmmo_Internal(int32 SlotIndex, int32 NewMag, int32 NewReserveCur, int32 NewReserveMax)
 {
 	if (!GetOwner() || !GetOwner()->HasAuthority())
 	{
@@ -1323,53 +1461,80 @@ void UMosesCombatComponent::SetSlotAmmo_Internal(int32 SlotIndex, int32 NewMag, 
 	}
 
 	NewMag = FMath::Max(NewMag, 0);
-	NewReserve = FMath::Max(NewReserve, 0);
+	NewReserveMax = FMath::Max(NewReserveMax, 0);
+	NewReserveCur = FMath::Clamp(NewReserveCur, 0, NewReserveMax);
 
 	switch (SlotIndex)
 	{
 	case 1:
 		Slot1MagAmmo = NewMag;
-		Slot1ReserveAmmo = NewReserve;
-		OnRep_Slot1Ammo();
+		Slot1ReserveMax = NewReserveMax;
+		Slot1ReserveAmmo = NewReserveCur;
+		OnRep_Slot1Ammo(); // ListenServer 즉시 반영
 		return;
 
 	case 2:
 		Slot2MagAmmo = NewMag;
-		Slot2ReserveAmmo = NewReserve;
+		Slot2ReserveMax = NewReserveMax;
+		Slot2ReserveAmmo = NewReserveCur;
 		OnRep_Slot2Ammo();
 		return;
 
 	case 3:
 		Slot3MagAmmo = NewMag;
-		Slot3ReserveAmmo = NewReserve;
+		Slot3ReserveMax = NewReserveMax;
+		Slot3ReserveAmmo = NewReserveCur;
 		OnRep_Slot3Ammo();
 		return;
 
 	case 4:
 		Slot4MagAmmo = NewMag;
-		Slot4ReserveAmmo = NewReserve;
+		Slot4ReserveMax = NewReserveMax;
+		Slot4ReserveAmmo = NewReserveCur;
 		OnRep_Slot4Ammo();
 		return;
 
 	default:
-		break;
+		return;
 	}
+}
+
+void UMosesCombatComponent::GetSlotAmmo_Internal(int32 SlotIndex, int32& OutMag, int32& OutReserveCur) const
+{
+	int32 DummyMax = 0;
+	GetSlotAmmo_Internal(SlotIndex, OutMag, OutReserveCur, DummyMax);
+}
+
+void UMosesCombatComponent::SetSlotAmmo_Internal(int32 SlotIndex, int32 NewMag, int32 NewReserveCur)
+{
+	// ReserveMax는 "현재 값 유지"가 기본 정책
+	int32 OldMag = 0;
+	int32 OldCur = 0;
+	int32 OldMax = 0;
+	GetSlotAmmo_Internal(SlotIndex, OldMag, OldCur, OldMax);
+
+	SetSlotAmmo_Internal(SlotIndex, NewMag, NewReserveCur, OldMax);
 }
 
 int32 UMosesCombatComponent::GetMagAmmoForSlot(int32 SlotIndex) const
 {
-	int32 Mag = 0;
-	int32 Reserve = 0;
-	GetSlotAmmo_Internal(SlotIndex, Mag, Reserve);
+	int32 Mag = 0, Cur = 0, Max = 0;
+	GetSlotAmmo_Internal(SlotIndex, Mag, Cur, Max);
 	return Mag;
 }
 
 int32 UMosesCombatComponent::GetReserveAmmoForSlot(int32 SlotIndex) const
 {
-	int32 Mag = 0;
-	int32 Reserve = 0;
-	GetSlotAmmo_Internal(SlotIndex, Mag, Reserve);
-	return Reserve;
+	int32 Mag = 0, Cur = 0, Max = 0;
+	GetSlotAmmo_Internal(SlotIndex, Mag, Cur, Max);
+	return Cur;
+}
+
+int32 UMosesCombatComponent::GetReserveMaxForSlot(int32 SlotIndex) const
+{
+	int32 Mag = 0, Cur = 0, Max = 0;
+	GetSlotAmmo_Internal(SlotIndex, Mag, Cur, Max);
+	return Max;
 }
 
 void UMosesCombatComponent::BroadcastSlotsStateChanged(int32 ChangedSlotOr0ForAll, const TCHAR* ContextTag)

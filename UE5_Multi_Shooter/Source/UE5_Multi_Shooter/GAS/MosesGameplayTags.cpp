@@ -67,9 +67,14 @@ void FMosesGameplayTags::AddAllTags(UGameplayTagsManager& Manager)
 
 	// GAS SetByCaller
 	AddTag(Manager, GameplayTags.Data_Damage, "Data.Damage", "SetByCaller damage");
-	AddTag(Manager, GameplayTags.Data_Heal, "Data.Heal", "SetByCaller heal amount"); // ✅ 핵심
+	AddTag(Manager, GameplayTags.Data_Heal, "Data.Heal", "SetByCaller heal amount");
 
 	// Zombie
 	AddTag(Manager, GameplayTags.Zombie_Attack_A, "Zombie.Attack.A", "Zombie attack type A");
 	AddTag(Manager, GameplayTags.Zombie_Attack_B, "Zombie.Attack.B", "Zombie attack type B");
+
+	// Ammo Types 
+	AddTag(Manager, GameplayTags.Ammo_Rifle, "Ammo.Rifle", "Rifle ammo type");
+	AddTag(Manager, GameplayTags.Ammo_Sniper, "Ammo.Sniper", "Sniper ammo type");
+	AddTag(Manager, GameplayTags.Ammo_Grenade, "Ammo.Grenade", "Grenade ammo type");
 }

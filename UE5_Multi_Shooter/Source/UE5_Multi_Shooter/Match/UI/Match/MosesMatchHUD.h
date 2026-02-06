@@ -97,10 +97,12 @@ private:
 
 	void HandleCapturesChanged(int32 NewCaptures);
 	void HandleZombieKillsChanged(int32 NewZombieKills);
-	// [ADD] PvP Kills(내가 플레이어 죽인 수) -> DefeatsAmount 갱신용
+	// PvP Kills(내가 플레이어 죽인 수) -> DefeatsAmount 갱신용
 	void HandlePvPKillsChanged(int32 NewPvPKills);
 	void HandleAmmoChanged_FromPS(int32 Mag, int32 Reserve);
 	void HandleGrenadeChanged(int32 Grenade);
+	//  ReserveMax 포함 버전
+	void HandleAmmoChangedEx_FromCombat(int32 Mag, int32 ReserveCur, int32 ReserveMax);
 
 private:
 	// =========================================================================

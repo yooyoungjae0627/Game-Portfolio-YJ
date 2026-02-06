@@ -400,7 +400,9 @@ void UMosesMatchHUD::BindToCombatComponent_FromPlayerState()
 
 	CachedCombatComponent = Combat;
 
-	Combat->OnAmmoChanged.AddUObject(this, &ThisClass::HandleAmmoChanged_FromCombat);
+	// 3파라미터 버전 바인딩 (ReserveMax 포함)
+	Combat->OnAmmoChangedEx.AddUObject(this, &ThisClass::HandleAmmoChangedEx_FromCombat); 
+
 	Combat->OnEquippedChanged.AddUObject(this, &ThisClass::HandleEquippedChanged_FromCombat);
 	Combat->OnReloadingChanged.AddUObject(this, &ThisClass::HandleReloadingChanged_FromCombat);
 	Combat->OnSlotsStateChanged.AddUObject(this, &ThisClass::HandleSlotsStateChanged_FromCombat);
@@ -408,10 +410,13 @@ void UMosesMatchHUD::BindToCombatComponent_FromPlayerState()
 	UE_LOG(LogMosesHUD, Warning, TEXT("[HUD][CL] Bound CombatComponent delegates Combat=%s PS=%s"),
 		*GetNameSafe(Combat), *GetNameSafe(PS));
 
-	HandleAmmoChanged_FromCombat(Combat->GetCurrentMagAmmo(), Combat->GetCurrentReserveAmmo());
+	// 초기 스냅샷
+	HandleAmmoChangedEx_FromCombat(
+		Combat->GetCurrentMagAmmo(),
+		Combat->GetCurrentReserveAmmo(),
+		Combat->GetCurrentReserveMax());
 
-	// [MOD] Combat 바인딩 직후 즉시 Aim UI 동기화
-	UpdateAimWidgets_Immediate(); // [MOD]
+	UpdateAimWidgets_Immediate();
 }
 
 void UMosesMatchHUD::UnbindCombatComponent()
@@ -419,6 +424,7 @@ void UMosesMatchHUD::UnbindCombatComponent()
 	if (UMosesCombatComponent* Combat = CachedCombatComponent.Get())
 	{
 		Combat->OnAmmoChanged.RemoveAll(this);
+		Combat->OnAmmoChangedEx.RemoveAll(this); 
 		Combat->OnEquippedChanged.RemoveAll(this);
 		Combat->OnReloadingChanged.RemoveAll(this);
 		Combat->OnSlotsStateChanged.RemoveAll(this);
@@ -480,11 +486,14 @@ void UMosesMatchHUD::ApplySnapshotFromMatchGameState()
 
 	if (UMosesCombatComponent* Combat = CachedCombatComponent.Get())
 	{
-		HandleAmmoChanged_FromCombat(Combat->GetCurrentMagAmmo(), Combat->GetCurrentReserveAmmo());
+		HandleAmmoChangedEx_FromCombat(
+			Combat->GetCurrentMagAmmo(),
+			Combat->GetCurrentReserveAmmo(),
+			Combat->GetCurrentReserveMax());
 	}
 
-	// [MOD] 스냅샷 적용 뒤 Aim UI 동기화
-	UpdateAimWidgets_Immediate(); // [MOD]
+	// 스냅샷 적용 뒤 Aim UI 동기화
+	UpdateAimWidgets_Immediate();
 }
 
 void UMosesMatchHUD::RefreshInitial()
@@ -678,6 +687,21 @@ void UMosesMatchHUD::HandleGrenadeChanged(int32 Grenade)
 	{
 		GrenadeAmount->SetText(FText::AsNumber(Grenade));
 	}
+}
+
+void UMosesMatchHUD::HandleAmmoChangedEx_FromCombat(int32 Mag, int32 ReserveCur, int32 ReserveMax)
+{
+	// 표시 정책: "Mag | ReserveCur / ReserveMax"
+	if (WeaponAmmoAmount)
+	{
+		WeaponAmmoAmount->SetText(FText::FromString(
+			FString::Printf(TEXT("%d | %d / %d"), Mag, ReserveCur, ReserveMax)));
+	}
+
+	UE_LOG(LogMosesHUD, Verbose, TEXT("[HUD][CL] AmmoChangedEx Mag=%d Reserve=%d/%d"), Mag, ReserveCur, ReserveMax);
+
+	UpdateCurrentWeaponHeader();
+	UpdateSlotPanels_All();
 }
 
 // ============================================================================
@@ -884,7 +908,8 @@ void UMosesMatchHUD::UpdateSlotPanels_All()
 			{
 				const int32 Mag = Combat->GetMagAmmoForSlot(SlotIndex);
 				const int32 Res = Combat->GetReserveAmmoForSlot(SlotIndex);
-				MosesHUD_SetTextIfValid(AmmoTB, MakeAmmoTextLocal(Mag, Res));
+				const int32 Max = Combat->GetReserveMaxForSlot(SlotIndex); 
+				MosesHUD_SetTextIfValid(AmmoTB, FText::FromString(FString::Printf(TEXT("%d | %d/%d"), Mag, Res, Max)));
 			}
 			else
 			{
