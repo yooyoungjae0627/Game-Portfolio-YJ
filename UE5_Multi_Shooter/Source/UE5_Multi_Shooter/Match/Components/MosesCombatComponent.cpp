@@ -1547,3 +1547,49 @@ void UMosesCombatComponent::BroadcastSlotsStateChanged(int32 ChangedSlotOr0ForAl
 		ContextTag ? ContextTag : TEXT("None"),
 		*GetNameSafe(GetOwner()));
 }
+
+void UMosesCombatComponent::ServerAddAmmoByTag(FGameplayTag AmmoTypeId, int32 ReserveMaxDelta, int32 ReserveFillDelta)
+{
+	if (!GetOwner() || !GetOwner()->HasAuthority())
+	{
+		return;
+	}
+
+	if (!AmmoTypeId.IsValid())
+	{
+		UE_LOG(LogMosesWeapon, Warning, TEXT("[AMMO][SV] AddAmmoByTag FAIL (AmmoTypeId invalid) PS=%s"),
+			*GetNameSafe(GetOwner()));
+		return;
+	}
+
+	// ✅ Tag -> Enum 매핑 (현재 프로젝트는 enum 기반 AddAmmoByType을 이미 구현했으니 재사용)
+	EMosesAmmoType AmmoType = EMosesAmmoType::Rifle;
+
+	const FString TagStr = AmmoTypeId.ToString();
+
+	if (TagStr.Contains(TEXT("Ammo.Rifle"), ESearchCase::IgnoreCase))
+	{
+		AmmoType = EMosesAmmoType::Rifle;
+	}
+	else if (TagStr.Contains(TEXT("Ammo.Sniper"), ESearchCase::IgnoreCase))
+	{
+		AmmoType = EMosesAmmoType::Sniper;
+	}
+	else if (TagStr.Contains(TEXT("Ammo.Grenade"), ESearchCase::IgnoreCase))
+	{
+		AmmoType = EMosesAmmoType::Grenade;
+	}
+	else
+	{
+		UE_LOG(LogMosesWeapon, Warning, TEXT("[AMMO][SV] AddAmmoByTag FAIL (Unknown Tag=%s) PS=%s"),
+			*AmmoTypeId.ToString(),
+			*GetNameSafe(GetOwner()));
+		return;
+	}
+
+	UE_LOG(LogMosesWeapon, Verbose, TEXT("[AMMO][SV] AddAmmoByTag -> AddAmmoByType Tag=%s Type=%d"),
+		*AmmoTypeId.ToString(),
+		(int32)AmmoType);
+
+	ServerAddAmmoByType(AmmoType, ReserveMaxDelta, ReserveFillDelta);
+}

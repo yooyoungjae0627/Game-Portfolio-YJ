@@ -8,6 +8,8 @@
 
 #include "UE5_Multi_Shooter/Match/Flag/MosesFlagSpot.h"
 #include "UE5_Multi_Shooter/Match/Pickup/MosesPickupWeapon.h"
+#include "UE5_Multi_Shooter/Match/Pickup/MosesPickupAmmo.h"
+
 #include "UE5_Multi_Shooter/MosesPlayerState.h"
 #include "UE5_Multi_Shooter/Match/GameState/MosesMatchGameState.h"
 
@@ -269,6 +271,23 @@ void UMosesInteractionComponent::HandleInteractPressed_Server(AActor* TargetActo
 		return;
 	}
 
+	// ✅ PickupAmmo
+	if (AMosesPickupAmmo* Ammo = Cast<AMosesPickupAmmo>(TargetActor))
+	{
+		FText AnnounceText;
+		const bool bOK = Ammo->ServerTryPickup(PS, AnnounceText);
+
+		if (bOK)
+		{
+			if (AMosesMatchGameState* GS = GetMatchGameState())
+			{
+				GS->ServerStartAnnouncementText(AnnounceText, 4);
+			}
+		}
+
+		return;
+	}
+
 	UE_LOG(LogMosesCombat, Warning, TEXT("[INTERACT][SV] Press IGNORE Unknown Target=%s"), *GetNameSafe(TargetActor));
 }
 
@@ -364,7 +383,12 @@ EMosesInteractTargetType UMosesInteractionComponent::ResolveTargetType(AActor* T
 
 	if (TargetActor->IsA<AMosesPickupWeapon>())
 	{
-		return EMosesInteractTargetType::Pickup;
+		return EMosesInteractTargetType::PickupWeapon;
+	}
+
+	if (TargetActor->IsA<AMosesPickupAmmo>())
+	{
+		return EMosesInteractTargetType::PickupAmmo;
 	}
 
 	return EMosesInteractTargetType::None;

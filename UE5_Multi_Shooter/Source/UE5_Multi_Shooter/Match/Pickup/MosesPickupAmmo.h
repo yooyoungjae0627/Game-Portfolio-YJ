@@ -1,25 +1,26 @@
+// ============================================================================
+// MosesPickupAmmo.h (FULL)
+// ----------------------------------------------------------------------------
+// 역할
+// - 탄약 픽업 액터(월드 배치)
+// - Overlap Begin/End에서 로컬 InteractionComponent 타겟 Set/Clear
+// - E Press는 InteractionComponent가 서버로 전달
+// - 서버에서만 CombatComponent에 Ammo 증가 적용 (SSOT)
+// - BP에는 탄약 증가 로직 없음 (절대 금지)
+// ============================================================================
+
 #pragma once
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
-
-#include "UE5_Multi_Shooter/Match/Weapon/MosesWeaponTypes.h" // EMosesAmmoType
 #include "MosesPickupAmmo.generated.h"
 
 class USphereComponent;
 class UStaticMeshComponent;
+
+class UMosesPickupAmmoData;
 class AMosesPlayerState;
 
-/**
- * AMosesPickupAmmo
- *
- * - 상호작용(E)로 획득되는 탄약 픽업
- * - 서버에서만:
- *   ReserveMax += Delta
- *   ReserveCur += Fill (Clamp)
- * - SSOT: PlayerState->CombatComponent
- * - BP에는 로직 없음(메시/델타값만 세팅)
- */
 UCLASS()
 class UE5_MULTI_SHOOTER_API AMosesPickupAmmo : public AActor
 {
@@ -28,8 +29,10 @@ class UE5_MULTI_SHOOTER_API AMosesPickupAmmo : public AActor
 public:
 	AMosesPickupAmmo();
 
-public:
+	/** 서버에서만 호출: 픽업 시도 → 성공하면 Destroy */
 	bool ServerTryPickup(AMosesPlayerState* PickerPS, FText& OutAnnounceText);
+
+	UMosesPickupAmmoData* GetPickupData() const { return PickupData; }
 
 protected:
 	virtual void BeginPlay() override;
@@ -37,11 +40,11 @@ protected:
 private:
 	UFUNCTION()
 	void OnSphereBeginOverlap(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor,
-	                         UPrimitiveComponent* OtherComp, int32 OtherBodyIndex, bool bFromSweep, const FHitResult& SweepResult);
+		UPrimitiveComponent* OtherComp, int32 OtherBodyIndex, bool bFromSweep, const FHitResult& SweepResult);
 
 	UFUNCTION()
 	void OnSphereEndOverlap(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor,
-	                        UPrimitiveComponent* OtherComp, int32 OtherBodyIndex);
+		UPrimitiveComponent* OtherComp, int32 OtherBodyIndex);
 
 private:
 	UPROPERTY(VisibleAnywhere)
@@ -50,19 +53,7 @@ private:
 	UPROPERTY(VisibleAnywhere)
 	TObjectPtr<UStaticMeshComponent> Mesh = nullptr;
 
-public:
-	// -----------------------
-	// Data (Editor/BP set)
-	// -----------------------
-	UPROPERTY(EditDefaultsOnly, Category="Moses|Ammo")
-	EMosesAmmoType AmmoType = EMosesAmmoType::Rifle;
-
-	UPROPERTY(EditDefaultsOnly, Category="Moses|Ammo", meta=(ClampMin="0"))
-	int32 ReserveMaxDelta = 30;
-
-	UPROPERTY(EditDefaultsOnly, Category="Moses|Ammo", meta=(ClampMin="0"))
-	int32 ReserveFillDelta = 30;
-
-	UPROPERTY(EditDefaultsOnly, Category="Moses|UI")
-	FText PickupName = FText::FromString(TEXT("탄약"));
+	/** BP에서 지정: DA_Pickup_Ammo_* */
+	UPROPERTY(EditDefaultsOnly, Category="Moses|Pickup")
+	TObjectPtr<UMosesPickupAmmoData> PickupData = nullptr;
 };

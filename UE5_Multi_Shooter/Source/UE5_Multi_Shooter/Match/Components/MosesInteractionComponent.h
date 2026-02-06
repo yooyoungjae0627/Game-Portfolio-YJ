@@ -31,8 +31,10 @@ enum class EMosesInteractTargetType : uint8
 {
 	None,
 	FlagSpot,
-	Pickup
+	PickupWeapon,
+	PickupAmmo,
 };
+
 
 USTRUCT()
 struct FMosesInteractTarget

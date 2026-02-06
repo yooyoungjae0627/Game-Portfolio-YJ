@@ -143,6 +143,10 @@ public:
 
 	void BroadcastSlotsStateChanged(int32 ChangedSlotOr0ForAll, const TCHAR* ContextTag);
 
+	// [ADD][AMMO_TAG] PickupAmmo가 Tag 기반일 때 호출 (내부에서 enum으로 매핑해서 기존 로직 재사용)
+	void ServerAddAmmoByTag(FGameplayTag AmmoTypeId, int32 ReserveMaxDelta, int32 ReserveFillDelta);
+
+
 protected:
 	virtual void BeginPlay() override;
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
