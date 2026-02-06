@@ -1,5 +1,4 @@
-#include "UE5_Multi_Shooter/Match/Characters/Animation/AnimNotifies/AnimNotifyState_MosesZombieAttackWindow.h" // [MOD] 경로 수정
-
+#include "AnimNotifyState_MosesZombieAttackWindow.h" 
 #include "UE5_Multi_Shooter/Match/Characters/Enemy/Zombie/MosesZombieCharacter.h"
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
 

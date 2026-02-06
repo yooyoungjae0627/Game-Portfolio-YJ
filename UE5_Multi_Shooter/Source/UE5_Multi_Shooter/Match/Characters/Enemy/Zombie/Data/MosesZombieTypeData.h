@@ -8,11 +8,10 @@ class UAnimMontage;
 class UGameplayEffect;
 
 /**
- * Zombie Type Data (Data-only)
- * - 좀비 타입별 스펙(DataAsset)
- * - 피해 적용은 "SetByCaller GE"로 통일
+ * Zombie Type Data (DataAsset)
+ * - Stats + Attack Montages + (NEW) AI Params
  */
-UCLASS(BlueprintType)
+UCLASS()
 class UE5_MULTI_SHOOTER_API UMosesZombieTypeData : public UDataAsset
 {
 	GENERATED_BODY()
@@ -21,37 +20,47 @@ public:
 	UMosesZombieTypeData();
 
 public:
-	/** Max HP (Default 100) */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Zombie|Stats")
-	float MaxHP;
+	// ---- Combat ----
+	UPROPERTY(EditDefaultsOnly, Category="Moses|Zombie|Combat")
+	float MaxHP = 100.f;
 
-	/** Melee Damage Magnitude (Default 10) */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Zombie|Combat")
-	float MeleeDamage;
+	UPROPERTY(EditDefaultsOnly, Category="Moses|Zombie|Combat")
+	float MeleeDamage = 10.f;
 
-	/**
-	 * Damage GameplayEffect (SetByCaller)
-	 * - Tag: Data.Damage
-	 */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Zombie|Combat")
-	TSubclassOf<UGameplayEffect> DamageGE_SetByCaller;
-
-	/**
-	 * Attack Montages (2개 권장)
-	 * - 서버가 랜덤 선택 -> Multicast로 재생(코스메틱)
-	 */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Zombie|Combat")
+	UPROPERTY(EditDefaultsOnly, Category="Moses|Zombie|Combat")
 	TArray<TObjectPtr<UAnimMontage>> AttackMontages;
 
-	// --------------------------------------------------------------------
-	// [DAY10] Headshot Feedback -> 공용 Announcement 팝업(모두에게 보임)
-	// --------------------------------------------------------------------
+	UPROPERTY(EditDefaultsOnly, Category="Moses|Zombie|Combat")
+	TSubclassOf<UGameplayEffect> DamageGE_SetByCaller;
 
-	/** 헤드샷 공용 팝업 텍스트(한글 시작 권장: 네 Announcement 위젯이 영어 제거/한글 시작 필터를 함) */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Zombie|Feedback")
+	// ---- Headshot Popup ----
+	UPROPERTY(EditDefaultsOnly, Category="Moses|Zombie|Headshot")
 	FText HeadshotAnnouncementText;
 
-	/** 헤드샷 팝업 표시 시간(초) */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Zombie|Feedback")
-	float HeadshotAnnouncementSeconds;
+	UPROPERTY(EditDefaultsOnly, Category="Moses|Zombie|Headshot")
+	float HeadshotAnnouncementSeconds = 0.9f;
+
+	// -------------------------
+	// [MOD] AI Params (Server)
+	// -------------------------
+	UPROPERTY(EditDefaultsOnly, Category="Moses|Zombie|AI|Sense")
+	float SightRadius = 1500.f;
+
+	UPROPERTY(EditDefaultsOnly, Category="Moses|Zombie|AI|Sense")
+	float LoseSightRadius = 1800.f;
+
+	UPROPERTY(EditDefaultsOnly, Category="Moses|Zombie|AI|Sense")
+	float PeripheralVisionAngleDeg = 70.f;
+
+	UPROPERTY(EditDefaultsOnly, Category="Moses|Zombie|AI|Move")
+	float AcceptanceRadius = 120.f;
+
+	UPROPERTY(EditDefaultsOnly, Category="Moses|Zombie|AI|Move")
+	float MaxChaseDistance = 4000.f;
+
+	UPROPERTY(EditDefaultsOnly, Category="Moses|Zombie|AI|Attack")
+	float AttackRange = 180.f;
+
+	UPROPERTY(EditDefaultsOnly, Category="Moses|Zombie|AI|Attack")
+	float AttackCooldownSeconds = 1.2f;
 };

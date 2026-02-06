@@ -6,7 +6,7 @@
 #include "UE5_Multi_Shooter/Match/GameState/MosesMatchGameState.h"
 #include "UE5_Multi_Shooter/MosesPlayerState.h"
 #include "UE5_Multi_Shooter/GAS/Components/MosesAbilitySystemComponent.h"
-#include "UE5_Multi_Shooter/GAS/MosesGameplayTags.h" 
+#include "UE5_Multi_Shooter/GAS/MosesGameplayTags.h"
 
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
 
@@ -24,6 +24,9 @@ AMosesZombieCharacter::AMosesZombieCharacter()
 {
 	bReplicates = true;
 	SetReplicateMovement(true);
+
+	// [MOD] AIController 자동 소유 (스폰/배치 모두)
+	AutoPossessAI = EAutoPossessAI::PlacedInWorldOrSpawned;
 
 	HeadBoneName = TEXT("head");
 	LastDamageKillerPS = nullptr;
@@ -55,6 +58,10 @@ AMosesZombieCharacter::AMosesZombieCharacter()
 
 	bAttackHitEnabled_L = false;
 	bAttackHitEnabled_R = false;
+
+	// [MOD] AI attack guard defaults
+	NextAttackServerTime = 0.0;
+	bIsAttacking_Server = false;
 }
 
 void AMosesZombieCharacter::AttachAttackHitBoxesToHandSockets()
@@ -70,31 +77,29 @@ void AMosesZombieCharacter::AttachAttackHitBoxesToHandSockets()
 	static const FName RightSocketName(TEXT("RightHandSocket"));
 
 	auto AttachIfSocketExists = [this, MeshComp](UBoxComponent* HitBox, const FName SocketName, const TCHAR* SideLabel)
+	{
+		if (!HitBox)
 		{
-			if (!HitBox)
-			{
-				UE_LOG(LogMosesZombie, Warning, TEXT("[ZOMBIE][HITBOX] %s FAIL - HitBox=null Zombie=%s"), SideLabel, *GetName());
-				return;
-			}
+			UE_LOG(LogMosesZombie, Warning, TEXT("[ZOMBIE][HITBOX] %s FAIL - HitBox=null Zombie=%s"), SideLabel, *GetName());
+			return;
+		}
 
-			// 요구사항: 소켓 없으면 생성 X, 부착 X
-			if (!MeshComp->DoesSocketExist(SocketName))
-			{
-				UE_LOG(LogMosesZombie, Warning, TEXT("[ZOMBIE][HITBOX] %s Skip - SocketMissing=%s Zombie=%s"),
-					SideLabel, *SocketName.ToString(), *GetName());
-				return;
-			}
+		if (!MeshComp->DoesSocketExist(SocketName))
+		{
+			UE_LOG(LogMosesZombie, Warning, TEXT("[ZOMBIE][HITBOX] %s Skip - SocketMissing=%s Zombie=%s"),
+				SideLabel, *SocketName.ToString(), *GetName());
+			return;
+		}
 
-			// ★중요: BP에서 조절한 RelativeLocation/Rotation/Scale 값을 유지해야 하므로 KeepRelativeTransform
-			HitBox->AttachToComponent(MeshComp, FAttachmentTransformRules::KeepRelativeTransform, SocketName);
+		HitBox->AttachToComponent(MeshComp, FAttachmentTransformRules::KeepRelativeTransform, SocketName);
 
-			UE_LOG(LogMosesZombie, Log, TEXT("[ZOMBIE][HITBOX] %s Attached (KeepRelative) Socket=%s RelLoc=%s RelRot=%s Zombie=%s"),
-				SideLabel,
-				*SocketName.ToString(),
-				*HitBox->GetRelativeLocation().ToString(),
-				*HitBox->GetRelativeRotation().ToString(),
-				*GetName());
-		};
+		UE_LOG(LogMosesZombie, Log, TEXT("[ZOMBIE][HITBOX] %s Attached (KeepRelative) Socket=%s RelLoc=%s RelRot=%s Zombie=%s"),
+			SideLabel,
+			*SocketName.ToString(),
+			*HitBox->GetRelativeLocation().ToString(),
+			*HitBox->GetRelativeRotation().ToString(),
+			*GetName());
+	};
 
 	AttachIfSocketExists(AttackHitBox_L, LeftSocketName, TEXT("L"));
 	AttachIfSocketExists(AttackHitBox_R, RightSocketName, TEXT("R"));
@@ -114,17 +119,11 @@ void AMosesZombieCharacter::BeginPlay()
 		AbilitySystemComponent->InitAbilityActorInfo(this, this);
 	}
 
-	// [MOD] 클라에서는 어차피 판정 안 하므로, 비용 줄이려면 OverlapEvents를 꺼도 됨(선택)
+	// 클라 비용 절감(서버만 판정)
 	if (!HasAuthority())
 	{
-		if (AttackHitBox_L)
-		{
-			AttackHitBox_L->SetGenerateOverlapEvents(false);
-		}
-		if (AttackHitBox_R)
-		{
-			AttackHitBox_R->SetGenerateOverlapEvents(false);
-		}
+		if (AttackHitBox_L) { AttackHitBox_L->SetGenerateOverlapEvents(false); }
+		if (AttackHitBox_R) { AttackHitBox_R->SetGenerateOverlapEvents(false); }
 	}
 
 	if (HasAuthority())
@@ -137,7 +136,6 @@ void AMosesZombieCharacter::BeginPlay()
 void AMosesZombieCharacter::OnConstruction(const FTransform& Transform)
 {
 	Super::OnConstruction(Transform);
-
 	AttachAttackHitBoxesToHandSockets();
 }
 
@@ -156,29 +154,6 @@ void AMosesZombieCharacter::InitializeAttributes_Server()
 	UE_LOG(LogMosesZombie, Warning, TEXT("[ZOMBIE][SV] InitAttr HP=%.0f Zombie=%s"), MaxHP, *GetName());
 }
 
-void AMosesZombieCharacter::ServerStartAttack()
-{
-	if (!HasAuthority())
-	{
-		return;
-	}
-
-	UAnimMontage* Montage = PickAttackMontage_Server();
-	if (!Montage)
-	{
-		return;
-	}
-
-	UE_LOG(LogMosesZombie, Warning, TEXT("[ZOMBIE][SV] Attack Start Zombie=%s Montage=%s"),
-		*GetName(), *GetNameSafe(Montage));
-
-	// 애니 연출은 모든 클라 동일
-	Multicast_PlayAttackMontage(Montage);
-
-	// [MOD] 공격 판정 윈도우 ON/OFF는 "AnimNotifyState_MosesZombieAttackWindow"가 제어한다.
-	// 즉, 여기서 타이머로 켜고 끄지 않는다.
-}
-
 UAnimMontage* AMosesZombieCharacter::PickAttackMontage_Server() const
 {
 	if (!ZombieTypeData || ZombieTypeData->AttackMontages.Num() <= 0)
@@ -190,7 +165,81 @@ UAnimMontage* AMosesZombieCharacter::PickAttackMontage_Server() const
 	return ZombieTypeData->AttackMontages[Index];
 }
 
-void AMosesZombieCharacter::ServerSetMeleeAttackWindow(EMosesZombieAttackHand Hand, bool bEnabled, bool bResetHitActorsOnBegin) // [MOD]
+// -------------------------
+// [MOD] AI Helper
+// -------------------------
+
+float AMosesZombieCharacter::GetAttackRange_Server() const
+{
+	return ZombieTypeData ? ZombieTypeData->AttackRange : 180.f;
+}
+
+float AMosesZombieCharacter::GetMaxChaseDistance_Server() const
+{
+	return ZombieTypeData ? ZombieTypeData->MaxChaseDistance : 4000.f;
+}
+
+bool AMosesZombieCharacter::ServerTryStartAttack_FromAI(AActor* TargetActor)
+{
+	if (!HasAuthority())
+	{
+		return false;
+	}
+
+	if (!IsValid(TargetActor))
+	{
+		return false;
+	}
+
+	const double Now = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0;
+	if (Now < NextAttackServerTime)
+	{
+		UE_LOG(LogMosesZombie, Verbose, TEXT("[ZAI][SV] AttackSkip Cooldown Remain=%.2f Zombie=%s"),
+			(float)(NextAttackServerTime - Now), *GetName());
+		return false;
+	}
+
+	if (bIsAttacking_Server)
+	{
+		UE_LOG(LogMosesZombie, Verbose, TEXT("[ZAI][SV] AttackSkip AlreadyAttacking Zombie=%s"), *GetName());
+		return false;
+	}
+
+	// 쿨다운 예약(공격 시작 즉시)
+	const float CD = ZombieTypeData ? ZombieTypeData->AttackCooldownSeconds : 1.2f;
+	NextAttackServerTime = Now + FMath::Max(0.1f, CD);
+	bIsAttacking_Server = true;
+
+	UE_LOG(LogMosesZombie, Warning, TEXT("[ZAI][SV] AttackStart Target=%s CD=%.2f Zombie=%s"),
+		*GetNameSafe(TargetActor), CD, *GetName());
+
+	ServerStartAttack();
+	return true;
+}
+
+void AMosesZombieCharacter::ServerStartAttack()
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	UAnimMontage* Montage = PickAttackMontage_Server();
+	if (!Montage)
+	{
+		bIsAttacking_Server = false; // [MOD] 실패 시 상태 복구
+		return;
+	}
+
+	UE_LOG(LogMosesZombie, Warning, TEXT("[ZOMBIE][SV] Attack Start Zombie=%s Montage=%s"),
+		*GetName(), *GetNameSafe(Montage));
+
+	Multicast_PlayAttackMontage(Montage);
+
+	// 공격 판정 윈도우 ON/OFF는 AnimNotifyState가 제어
+}
+
+void AMosesZombieCharacter::ServerSetMeleeAttackWindow(EMosesZombieAttackHand Hand, bool bEnabled, bool bResetHitActorsOnBegin)
 {
 	if (!HasAuthority())
 	{
@@ -204,13 +253,19 @@ void AMosesZombieCharacter::ServerSetMeleeAttackWindow(EMosesZombieAttackHand Ha
 
 	SetAttackHitEnabled_Server(Hand, bEnabled);
 
+	// [MOD] 윈도우 종료 시 “공격 중” 상태 해제 (단순하지만 안전)
+	if (!bEnabled)
+	{
+		bIsAttacking_Server = false;
+	}
+
 	UE_LOG(LogMosesZombie, Verbose, TEXT("[ZOMBIE][SV] AttackWindow Hand=%d Enabled=%s Zombie=%s"),
 		static_cast<int32>(Hand),
 		bEnabled ? TEXT("true") : TEXT("false"),
 		*GetName());
 }
 
-void AMosesZombieCharacter::SetAttackHitEnabled_Server(EMosesZombieAttackHand Hand, bool bEnabled) // [MOD]
+void AMosesZombieCharacter::SetAttackHitEnabled_Server(EMosesZombieAttackHand Hand, bool bEnabled)
 {
 	if (!HasAuthority())
 	{
@@ -218,13 +273,10 @@ void AMosesZombieCharacter::SetAttackHitEnabled_Server(EMosesZombieAttackHand Ha
 	}
 
 	const auto SetOne = [bEnabled](UBoxComponent* Box)
-		{
-			if (!Box)
-			{
-				return;
-			}
-			Box->SetCollisionEnabled(bEnabled ? ECollisionEnabled::QueryOnly : ECollisionEnabled::NoCollision);
-		};
+	{
+		if (!Box) { return; }
+		Box->SetCollisionEnabled(bEnabled ? ECollisionEnabled::QueryOnly : ECollisionEnabled::NoCollision);
+	};
 
 	switch (Hand)
 	{
@@ -269,7 +321,6 @@ bool AMosesZombieCharacter::ApplySetByCallerDamageGE_Server(UAbilitySystemCompon
 		return false;
 	}
 
-	// [MOD] 태그는 SSOT 싱글톤에서 가져오는 게 원칙
 	const FGameplayTag DamageTag = FMosesGameplayTags::Get().Data_Damage;
 
 	FGameplayEffectContextHandle Context = TargetASC->MakeEffectContext();
@@ -294,7 +345,6 @@ void AMosesZombieCharacter::OnAttackHitOverlapBegin(
 	bool /*bFromSweep*/,
 	const FHitResult& /*SweepResult*/)
 {
-	// 서버만 판정
 	if (!HasAuthority())
 	{
 		return;
@@ -305,25 +355,13 @@ void AMosesZombieCharacter::OnAttackHitOverlapBegin(
 		return;
 	}
 
-	// [MOD] 손별 윈도우 체크
 	const bool bIsLeft = (OverlappedComp == AttackHitBox_L);
 	const bool bIsRight = (OverlappedComp == AttackHitBox_R);
 
-	if (bIsLeft && !bAttackHitEnabled_L)
-	{
-		return;
-	}
-	if (bIsRight && !bAttackHitEnabled_R)
-	{
-		return;
-	}
-	if (!bIsLeft && !bIsRight)
-	{
-		// 예외: 다른 컴포넌트에서 들어온 경우 무시
-		return;
-	}
+	if (bIsLeft && !bAttackHitEnabled_L) { return; }
+	if (bIsRight && !bAttackHitEnabled_R) { return; }
+	if (!bIsLeft && !bIsRight) { return; }
 
-	// [MOD] 중복 타격 방지(공격 윈도우 동안 1회만)
 	if (HasHitActorThisWindow(OtherActor))
 	{
 		return;
@@ -407,7 +445,6 @@ bool AMosesZombieCharacter::ResolveHeadshot_FromEffectContext_Server(const FGame
 		return false;
 	}
 
-	// 무기 서버 트레이스가 EffectContext에 HitResult를 넣어야 동작함(AddHitResult)
 	const FHitResult* HR = Context.GetHitResult();
 	if (!HR)
 	{
@@ -439,7 +476,6 @@ void AMosesZombieCharacter::HandleDeath_Server()
 
 	PushKillFeed_Server(bHeadshot, KillerPS);
 
-	// Headshot -> 공용 Announcement 팝업
 	if (bHeadshot)
 	{
 		PushHeadshotAnnouncement_Server(KillerPS);
@@ -513,7 +549,7 @@ void AMosesZombieCharacter::Multicast_PlayAttackMontage_Implementation(UAnimMont
 }
 
 // ----------------------
-// [MOD] 중복 타격 방지
+// 중복 타격 방지
 // ----------------------
 
 void AMosesZombieCharacter::ResetHitActorsThisWindow()

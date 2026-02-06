@@ -2,15 +2,9 @@
 
 #include "CoreMinimal.h"
 #include "Animation/AnimNotifies/AnimNotifyState.h"
-#include "AnimNotifyState_MosesZombieAttackWindow.generated.h"
+#include "UE5_Multi_Shooter/Match/Characters/Enemy/Zombie/Types/MosesZombieAttackTypes.h"
 
-UENUM(BlueprintType)
-enum class EMosesZombieAttackHand : uint8
-{
-	Left	UMETA(DisplayName = "Left"),
-	Right	UMETA(DisplayName = "Right"),
-	Both	UMETA(DisplayName = "Both"),
-};
+#include "AnimNotifyState_MosesZombieAttackWindow.generated.h"
 
 /**
  * AnimNotifyState - Zombie melee attack window

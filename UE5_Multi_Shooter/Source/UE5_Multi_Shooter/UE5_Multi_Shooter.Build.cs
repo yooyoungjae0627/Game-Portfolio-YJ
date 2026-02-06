@@ -33,7 +33,9 @@ public class UE5_Multi_Shooter : ModuleRules
             "GameplayTasks",
             "GameplayTags",
             "Niagara",
-            "CommonUI"
+            "CommonUI",
+            "AIModule",
+            "NavigationSystem",
         });
 
         // ============================

@@ -3,49 +3,60 @@
 #include "CoreMinimal.h"
 #include "GameFramework/Character.h"
 #include "AbilitySystemInterface.h"
-
-#include "GameplayEffectTypes.h" // [MOD] FGameplayEffectContextHandle 정의 여기 있음(이거 없어서 연쇄 폭발)
-
-#include "UE5_Multi_Shooter/Match/Characters/Animation/AnimNotifies/AnimNotifyState_MosesZombieAttackWindow.h" // [MOD] 경로 수정
-
+#include "UE5_Multi_Shooter/Match/Characters/Enemy/Zombie/Types/MosesZombieAttackTypes.h"
 #include "MosesZombieCharacter.generated.h"
-
-class UBoxComponent;
 
 class UMosesAbilitySystemComponent;
 class UMosesZombieAttributeSet;
 class UMosesZombieTypeData;
-
+class UBoxComponent;
+class UAnimMontage;
 class AMosesPlayerState;
-class AMosesMatchGameState;
 
 struct FGameplayEffectModCallbackData;
+struct FGameplayEffectContextHandle;
 
 UCLASS()
 class UE5_MULTI_SHOOTER_API AMosesZombieCharacter : public ACharacter, public IAbilitySystemInterface
 {
 	GENERATED_BODY()
 
-	// [MOD] AttributeSet이 보호된 서버 처리 함수를 호출해야 하므로 friend로만 허용
-	friend class UMosesZombieAttributeSet;
-
 public:
 	AMosesZombieCharacter();
 
+	//~IAbilitySystemInterface
 	virtual UAbilitySystemComponent* GetAbilitySystemComponent() const override;
+
+public:
+	// -------------------------
+	// [MOD] AI Helper (Server)
+	// -------------------------
+	UMosesZombieTypeData* GetZombieTypeData() const { return ZombieTypeData; }
+
+	float GetAttackRange_Server() const;
+	float GetMaxChaseDistance_Server() const;
+
+	/** AI가 호출: 쿨다운/상태 가드 후 공격 시작 */
+	bool ServerTryStartAttack_FromAI(AActor* TargetActor);
+
+public:
+	/** 서버에서 공격 시작(외부 호출 전제) */
+	void ServerStartAttack();
+
+	/** AnimNotifyState에서 공격 윈도우를 켜고 끄기 */
+	void ServerSetMeleeAttackWindow(EMosesZombieAttackHand Hand, bool bEnabled, bool bResetHitActorsOnBegin);
+
+	/** GAS 데미지 적용 후(AttrSet에서 콜백) */
+	void HandleDamageAppliedFromGAS_Server(const FGameplayEffectModCallbackData& Data, float AppliedDamage, float NewHealth);
 
 protected:
 	virtual void BeginPlay() override;
 	virtual void OnConstruction(const FTransform& Transform) override;
 
-public:
-	UFUNCTION(BlueprintCallable, Category = "Moses|Zombie")
-	void ServerStartAttack();
-
-	void ServerSetMeleeAttackWindow(EMosesZombieAttackHand Hand, bool bEnabled, bool bResetHitActorsOnBegin);
-
-protected:
+private:
+	void AttachAttackHitBoxesToHandSockets();
 	void InitializeAttributes_Server();
+
 	UAnimMontage* PickAttackMontage_Server() const;
 
 	void SetAttackHitEnabled_Server(EMosesZombieAttackHand Hand, bool bEnabled);
@@ -62,9 +73,6 @@ protected:
 		bool bFromSweep,
 		const FHitResult& SweepResult);
 
-	// 여기 protected 유지 가능 (friend로 AttributeSet만 호출 가능)
-	void HandleDamageAppliedFromGAS_Server(const FGameplayEffectModCallbackData& Data, float AppliedDamage, float NewHealth);
-
 	AMosesPlayerState* ResolveKillerPlayerState_FromEffectContext_Server(const FGameplayEffectContextHandle& Context) const;
 	bool ResolveHeadshot_FromEffectContext_Server(const FGameplayEffectContextHandle& Context) const;
 
@@ -72,51 +80,51 @@ protected:
 	void PushKillFeed_Server(bool bHeadshot, AMosesPlayerState* KillerPS);
 	void PushHeadshotAnnouncement_Server(AMosesPlayerState* KillerPS) const;
 
-	/** 손 소켓에 공격 히트박스를 부착한다. (소켓 없으면 부착하지 않음, BP 상대 트랜스폼 유지) */
-	void AttachAttackHitBoxesToHandSockets();
-
-protected:
 	UFUNCTION(NetMulticast, Reliable)
 	void Multicast_PlayAttackMontage(UAnimMontage* MontageToPlay);
 
-private:
+	// ---- Window Hit Dedup ----
 	void ResetHitActorsThisWindow();
 	bool HasHitActorThisWindow(AActor* Actor) const;
 	void MarkHitActorThisWindow(AActor* Actor);
 
-public:
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Moses|Zombie")
-	TObjectPtr<UMosesZombieTypeData> ZombieTypeData;
+private:
+	// ---- GAS ----
+	UPROPERTY(VisibleAnywhere, Category="Moses|Zombie")
+	TObjectPtr<UMosesAbilitySystemComponent> AbilitySystemComponent = nullptr;
 
-protected:
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Moses|GAS")
-	TObjectPtr<UMosesAbilitySystemComponent> AbilitySystemComponent;
+	UPROPERTY()
+	TObjectPtr<UMosesZombieAttributeSet> AttributeSet = nullptr;
 
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Moses|GAS")
-	TObjectPtr<UMosesZombieAttributeSet> AttributeSet;
+	// ---- Data ----
+	UPROPERTY(EditDefaultsOnly, Category="Moses|Zombie")
+	TObjectPtr<UMosesZombieTypeData> ZombieTypeData = nullptr;
 
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Moses|Zombie|Melee")
-	TObjectPtr<UBoxComponent> AttackHitBox_L;
+	// ---- HitBoxes ----
+	UPROPERTY(VisibleAnywhere, Category="Moses|Zombie|HitBox")
+	TObjectPtr<UBoxComponent> AttackHitBox_L = nullptr;
 
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Moses|Zombie|Melee")
-	TObjectPtr<UBoxComponent> AttackHitBox_R;
+	UPROPERTY(VisibleAnywhere, Category="Moses|Zombie|HitBox")
+	TObjectPtr<UBoxComponent> AttackHitBox_R = nullptr;
 
-	UPROPERTY(VisibleInstanceOnly, Category = "Moses|Zombie|Melee")
 	bool bAttackHitEnabled_L = false;
-
-	UPROPERTY(VisibleInstanceOnly, Category = "Moses|Zombie|Melee")
 	bool bAttackHitEnabled_R = false;
 
-	UPROPERTY(EditDefaultsOnly, Category = "Moses|Zombie|Hit")
+	UPROPERTY()
+	TSet<TObjectPtr<AActor>> HitActorsThisWindow;
+
+	// ---- Headshot ----
+	UPROPERTY(EditDefaultsOnly, Category="Moses|Zombie")
 	FName HeadBoneName;
 
-	UPROPERTY(Transient)
-	TObjectPtr<AMosesPlayerState> LastDamageKillerPS;
+	UPROPERTY()
+	TObjectPtr<class AMosesPlayerState> LastDamageKillerPS = nullptr;
 
-	UPROPERTY(Transient)
 	bool bLastDamageHeadshot = false;
 
-private:
-	UPROPERTY(Transient)
-	TSet<TObjectPtr<AActor>> HitActorsThisWindow;
+	// -------------------------
+	// [MOD] AI Attack Guard
+	// -------------------------
+	double NextAttackServerTime = 0.0;
+	bool bIsAttacking_Server = false;
 };
