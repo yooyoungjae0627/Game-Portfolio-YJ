@@ -105,6 +105,7 @@ void AMosesFlagSpot::BeginPlay()
 		*GetActorLocation().ToString());
 
 	ApplyDormancyPolicy_ServerOnly();
+	ValidateLinkedSpawnSpot_ServerOnly();
 }
 
 void AMosesFlagSpot::ApplyDormancyPolicy_ServerOnly()
@@ -620,6 +621,27 @@ void AMosesFlagSpot::ApplyBillboardRotation_Local()
 	LookRot.Roll = 0.f;
 
 	PromptWidgetComponent->SetWorldRotation(LookRot);
+}
+
+void AMosesFlagSpot::ValidateLinkedSpawnSpot_ServerOnly()
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	if (!LinkedZombieSpawnSpot)
+	{
+		UE_LOG(LogMosesZombie, Error,
+			TEXT("[ZOMBIE][SV] Link FAIL (NULL) FlagSpot=%s (LinkedZombieSpawnSpot is NULL)"),
+			*GetNameSafe(this));
+		return;
+	}
+
+	UE_LOG(LogMosesZombie, Warning,
+		TEXT("[ZOMBIE][SV] Link OK FlagSpot=%s -> SpawnSpot=%s"),
+		*GetNameSafe(this),
+		*GetNameSafe(LinkedZombieSpawnSpot));
 }
 
 // ============================================================================

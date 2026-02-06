@@ -116,6 +116,7 @@ private:
 	void StopPromptBillboard_Local();
 	void TickPromptBillboard_Local();
 	void ApplyBillboardRotation_Local();
+	void ValidateLinkedSpawnSpot_ServerOnly();
 
 	// ---------------------------------------------------------------------
 	// Guards
@@ -125,7 +126,6 @@ private:
 	bool IsDead_Server(const AMosesPlayerState* PS) const;
 
 	float ResolveBroadcastSeconds() const;
-
 private:
 	// ---------------------------------------------------------------------
 	// Components

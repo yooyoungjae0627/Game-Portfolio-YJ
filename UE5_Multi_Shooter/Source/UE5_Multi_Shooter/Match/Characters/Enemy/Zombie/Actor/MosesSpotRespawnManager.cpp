@@ -1,18 +1,21 @@
+// ============================================================================
+// MosesSpotRespawnManager.cpp (FULL)  [MOD]
+// ============================================================================
+
 #include "UE5_Multi_Shooter/Match/Characters/Enemy/Zombie/Actor/MosesSpotRespawnManager.h"
 
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
 #include "UE5_Multi_Shooter/Match/GameState/MosesMatchGameState.h"
 #include "UE5_Multi_Shooter/Match/Characters/Enemy/Zombie/Actor/MosesZombieSpawnSpot.h"
 
-#include "EngineUtils.h"
 #include "Engine/World.h"
+#include "EngineUtils.h"
 #include "TimerManager.h"
 
 AMosesSpotRespawnManager::AMosesSpotRespawnManager()
 {
 	bReplicates = false;
-	RespawnCountdownSeconds = 10;
-	CurrentCountdown = 0;
+	SetActorTickEnabled(false);
 }
 
 void AMosesSpotRespawnManager::BeginPlay()
@@ -21,62 +24,136 @@ void AMosesSpotRespawnManager::BeginPlay()
 
 	if (!HasAuthority())
 	{
+		// [MOD] 권한 경계 증거 로그(클라는 매니저가 서버전용임)
+		UE_LOG(LogMosesAnnounce, Verbose, TEXT("[ANN][CL] RespawnManager BeginPlay (Ignored - ServerOnly)"));
 		return;
 	}
 
+	// 디버그/검증용: ManagedSpots 비었으면 월드에서 스캔
 	if (ManagedSpots.Num() <= 0)
 	{
-		for (TActorIterator<AMosesZombieSpawnSpot> It(GetWorld()); It; ++It)
+		if (UWorld* World = GetWorld())
 		{
-			ManagedSpots.Add(*It);
+			for (TActorIterator<AMosesZombieSpawnSpot> It(World); It; ++It)
+			{
+				ManagedSpots.Add(*It);
+			}
 		}
 	}
 
 	UE_LOG(LogMosesAnnounce, Warning, TEXT("[ANN][SV] RespawnManager Ready Spots=%d"), ManagedSpots.Num());
 }
 
-void AMosesSpotRespawnManager::ServerOnSpotCaptured(AMosesZombieSpawnSpot* CapturedSpot)
+void AMosesSpotRespawnManager::ServerOnSpotCaptured(AMosesZombieSpawnSpot* OldZoneSpotToRespawn) // [MOD]
 {
-	if (!HasAuthority() || !CapturedSpot)
+	// [MOD] BP에서 AuthorityOnly라도, C++에서 오호출 방지 및 증거 로그
+	if (!HasAuthority())
+	{
+		UE_LOG(LogMosesAnnounce, Warning,
+			TEXT("[ANN][CL] ServerOnSpotCaptured called on Client (Ignored) Spot=%s"),
+			*GetNameSafe(OldZoneSpotToRespawn));
+		return;
+	}
+
+	if (!OldZoneSpotToRespawn)
+	{
+		UE_LOG(LogMosesAnnounce, Warning, TEXT("[ANN][SV] RespawnCountdown Start FAIL (NullSpot)"));
+		return;
+	}
+
+	StartCountdown_Server(OldZoneSpotToRespawn);
+}
+
+void AMosesSpotRespawnManager::StartCountdown_Server(AMosesZombieSpawnSpot* TargetSpot)
+{
+	check(HasAuthority());
+
+	if (!ensureMsgf(TargetSpot, TEXT("[ANN][SV] StartCountdown_Server TargetSpot is NULL")))
 	{
 		return;
 	}
 
-	PendingRespawnSpot = CapturedSpot;
-	CurrentCountdown = RespawnCountdownSeconds;
+	UWorld* World = GetWorld();
+	if (!ensureMsgf(World, TEXT("[ANN][SV] StartCountdown_Server World is NULL")))
+	{
+		return;
+	}
 
-	UE_LOG(LogMosesAnnounce, Warning, TEXT("[ANN][SV] RespawnCountdown Start=%d Spot=%s"),
-		CurrentCountdown, *GetNameSafe(PendingRespawnSpot));
+	// 진행 중이던 카운트다운이 있으면 최신으로 교체
+	const bool bWasActive = GetWorldTimerManager().IsTimerActive(CountdownTimerHandle);
 
-	BroadcastCountdown_Server(CurrentCountdown);
+	PendingRespawnSpot = TargetSpot;
 
-	GetWorldTimerManager().ClearTimer(CountdownTimerHandle);
+	const float Now = World->GetTimeSeconds();
+	RespawnEndServerTime = Now + static_cast<float>(RespawnCountdownSeconds);
+
+	UE_LOG(LogMosesAnnounce, Warning,
+		TEXT("[ANN][SV] RespawnCountdown Start Spot=%s EndTime=%.2f WasActive=%d Seconds=%d"),
+		*GetNameSafe(PendingRespawnSpot),
+		RespawnEndServerTime,
+		bWasActive ? 1 : 0,
+		RespawnCountdownSeconds);
+
+	// [MOD] 기존 타이머 정리 후 즉시 1회 방송(10초부터 보여주기)
+	StopCountdown_Server();
+	ServerTickRespawnCountdown();
+
+	// 1초 타이머
 	GetWorldTimerManager().SetTimer(
 		CountdownTimerHandle,
 		this,
-		&AMosesSpotRespawnManager::TickCountdown_Server,
+		&ThisClass::ServerTickRespawnCountdown,
 		1.0f,
 		true);
 }
 
-void AMosesSpotRespawnManager::TickCountdown_Server()
+void AMosesSpotRespawnManager::StopCountdown_Server()
+{
+	GetWorldTimerManager().ClearTimer(CountdownTimerHandle);
+}
+
+void AMosesSpotRespawnManager::ServerTickRespawnCountdown()
 {
 	if (!HasAuthority())
 	{
 		return;
 	}
 
-	CurrentCountdown = FMath::Max(0, CurrentCountdown - 1);
-	BroadcastCountdown_Server(CurrentCountdown);
-
-	if (CurrentCountdown <= 0)
+	if (!PendingRespawnSpot)
 	{
-		GetWorldTimerManager().ClearTimer(CountdownTimerHandle);
-		ExecuteRespawn_Server();
+		UE_LOG(LogMosesAnnounce, Warning, TEXT("[ANN][SV] RespawnCountdown Tick FAIL (PendingRespawnSpot NULL)"));
+		StopCountdown_Server();
+		return;
+	}
+
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		UE_LOG(LogMosesAnnounce, Warning, TEXT("[ANN][SV] RespawnCountdown Tick FAIL (World NULL)"));
+		StopCountdown_Server();
+		return;
+	}
+
+	const float Now = World->GetTimeSeconds();
+	const float Remaining = RespawnEndServerTime - Now;
+
+	// 남은 초 정수화 (10→0)
+	const int32 RemainingSec = FMath::Max(0, FMath::CeilToInt(Remaining));
+
+	UE_LOG(LogMosesAnnounce, Warning,
+		TEXT("[ANN][SV] RespawnCountdown Tick Spot=%s Remaining=%d"),
+		*GetNameSafe(PendingRespawnSpot),
+		RemainingSec);
+
+	BroadcastCountdown_Server(RemainingSec);
+
+	if (RemainingSec <= 0)
+	{
+		ExecuteCountdown_Server();
 	}
 }
 
-void AMosesSpotRespawnManager::BroadcastCountdown_Server(int32 Seconds)
+void AMosesSpotRespawnManager::BroadcastCountdown_Server(int32 RemainingSec)
 {
 	if (!HasAuthority())
 	{
@@ -86,30 +163,37 @@ void AMosesSpotRespawnManager::BroadcastCountdown_Server(int32 Seconds)
 	AMosesMatchGameState* MGS = GetWorld() ? GetWorld()->GetGameState<AMosesMatchGameState>() : nullptr;
 	if (!MGS)
 	{
+		UE_LOG(LogMosesAnnounce, Verbose, TEXT("[ANN][SV] BroadcastCountdown Skip (MGS NULL)"));
 		return;
 	}
 
-	// 한글 시작 권장(네 Announcement 위젯 필터)
-	const FString Msg = FString::Printf(TEXT("리스폰 %d초 전"), Seconds);
-	MGS->ServerPushAnnouncement(Msg, 1.05f);
+	// 1초짜리 공지(너 HUD 구조에 맞춤)
+	const FText Text = FText::Format(
+		FText::FromString(TEXT("좀비 리스폰까지 {0}초")),
+		FText::AsNumber(RemainingSec));
 
-	UE_LOG(LogMosesAnnounce, Warning, TEXT("[ANN][SV] RespawnCountdown Tick=%d Spot=%s"),
-		Seconds, *GetNameSafe(PendingRespawnSpot));
+	MGS->ServerStartAnnouncementText(Text, 1);
 }
 
-void AMosesSpotRespawnManager::ExecuteRespawn_Server()
+void AMosesSpotRespawnManager::ExecuteCountdown_Server()
 {
-	if (!HasAuthority() || !PendingRespawnSpot)
+	check(HasAuthority());
+
+	StopCountdown_Server();
+
+	if (!PendingRespawnSpot)
 	{
+		UE_LOG(LogMosesAnnounce, Warning, TEXT("[ANN][SV] RespawnCountdown Execute FAIL (PendingRespawnSpot NULL)"));
 		return;
 	}
 
-	UE_LOG(LogMosesAnnounce, Warning, TEXT("[ANN][SV] Respawn Execute Spot=%s"), *GetNameSafe(PendingRespawnSpot));
+	UE_LOG(LogMosesAnnounce, Warning,
+		TEXT("[ANN][SV] RespawnCountdown Execute Spot=%s"),
+		*GetNameSafe(PendingRespawnSpot));
 
+	// ✅ STEP3 DoD의 ZOMBIE 로그는 SpawnSpot 내부에서 찍힘
 	PendingRespawnSpot->ServerRespawnSpotZombies();
 
-	// TODO(DAY10 확장): Flag 리스폰이 필요하면 여기서 훅 호출
-	// PendingRespawnSpot->ServerRespawnFlag();
-
 	PendingRespawnSpot = nullptr;
+	RespawnEndServerTime = 0.f;
 }

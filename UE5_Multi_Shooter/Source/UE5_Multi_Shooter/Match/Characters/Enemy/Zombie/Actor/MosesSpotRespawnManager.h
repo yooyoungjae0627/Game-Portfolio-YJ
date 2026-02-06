@@ -1,3 +1,12 @@
+// ============================================================================
+// MosesSpotRespawnManager.h (FULL)  [MOD]
+// ----------------------------------------------------------------------------
+// [MOD] Changes
+//  - ServerOnSpotCaptured: BlueprintAuthorityOnly + param rename for clarity
+//  - Added authority misuse logs for evidence/debug
+//  - Minor guard/ensure messages for "NULL 0개" 정책 보강
+// ============================================================================
+
 #pragma once
 
 #include "CoreMinimal.h"
@@ -6,11 +15,6 @@
 
 class AMosesZombieSpawnSpot;
 
-/**
- * Spot Respawn Manager (Server Authority)
- * - 캡처 성공 이벤트 수신:
- *   10초 카운트다운 방송(10→0) -> 0초에 해당 구역 좀비 리스폰(+Flag 리스폰 훅)
- */
 UCLASS()
 class UE5_MULTI_SHOOTER_API AMosesSpotRespawnManager : public AActor
 {
@@ -19,29 +23,56 @@ class UE5_MULTI_SHOOTER_API AMosesSpotRespawnManager : public AActor
 public:
 	AMosesSpotRespawnManager();
 
+	/**
+	 * 서버: FlagSpot 캡처 성공 시 호출
+	 *
+	 * 중요:
+	 * - 이 함수에 전달되는 Spot은 "이번 캡처로 인해 Flag가 떠난 이전 Zone의 SpawnSpot"이어야 한다.
+	 *   (새로 활성화된 Zone의 SpawnSpot을 넘기면 규칙이 틀어진다)
+	 */
+	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "Respawn") // [MOD]
+		void ServerOnSpotCaptured(AMosesZombieSpawnSpot* OldZoneSpotToRespawn);     // [MOD]
+
 protected:
 	virtual void BeginPlay() override;
 
 private:
-	void TickCountdown_Server();
-	void BroadcastCountdown_Server(int32 Seconds);
-	void ExecuteRespawn_Server();
+	// ---------------------------------------------------------------------
+	// Countdown (Server)
+	// ---------------------------------------------------------------------
+	void StartCountdown_Server(AMosesZombieSpawnSpot* TargetSpot);
+	void StopCountdown_Server();
 
-public:
-	UFUNCTION(BlueprintCallable, Category = "Respawn")
-	void ServerOnSpotCaptured(AMosesZombieSpawnSpot* CapturedSpot);
+	UFUNCTION()
+	void ServerTickRespawnCountdown();
 
-public:
-	UPROPERTY(EditDefaultsOnly, Category = "Respawn")
+	void ExecuteCountdown_Server();
+
+	void BroadcastCountdown_Server(int32 RemainingSec);
+
+private:
+	// ---------------------------------------------------------------------
+	// Config
+	// ---------------------------------------------------------------------
+	UPROPERTY(EditDefaultsOnly, Category = "Respawn", meta = (AllowPrivateAccess = "true"))
 	int32 RespawnCountdownSeconds = 10;
 
-	UPROPERTY(EditInstanceOnly, Category = "Respawn")
+	/**
+	 * (옵션) 관리 스팟 목록.
+	 * 비워두면 BeginPlay에서 월드의 SpawnSpot들을 스캔하여 디버그용으로 채움.
+	 */
+	UPROPERTY(EditInstanceOnly, Category = "Respawn", meta = (AllowPrivateAccess = "true"))
 	TArray<TObjectPtr<AMosesZombieSpawnSpot>> ManagedSpots;
 
 private:
-	UPROPERTY()
+	// ---------------------------------------------------------------------
+	// Runtime (Server)
+	// ---------------------------------------------------------------------
+	UPROPERTY(Transient)
 	TObjectPtr<AMosesZombieSpawnSpot> PendingRespawnSpot = nullptr;
 
-	int32 CurrentCountdown = 0;
+	UPROPERTY(Transient)
+	float RespawnEndServerTime = 0.f;
+
 	FTimerHandle CountdownTimerHandle;
 };

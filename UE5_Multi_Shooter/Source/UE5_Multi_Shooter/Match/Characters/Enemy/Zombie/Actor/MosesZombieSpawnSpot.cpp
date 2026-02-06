@@ -1,3 +1,7 @@
+Ôªø// ============================================================================
+// MosesZombieSpawnSpot.cpp (FULL)
+// ============================================================================
+
 #include "UE5_Multi_Shooter/Match/Characters/Enemy/Zombie/Actor/MosesZombieSpawnSpot.h"
 
 #include "UE5_Multi_Shooter/Match/Characters/Enemy/Zombie/MosesZombieCharacter.h"
@@ -9,20 +13,25 @@
 AMosesZombieSpawnSpot::AMosesZombieSpawnSpot()
 {
 	bReplicates = true;
+	SetReplicateMovement(false);
 
 	Root = CreateDefaultSubobject<USceneComponent>(TEXT("Root"));
 	SetRootComponent(Root);
+
+	UE_LOG(LogMosesZombie, Warning, TEXT("[ZOMBIE][CTOR] Spot=%s Rep=%d"), *GetNameSafe(this), bReplicates ? 1 : 0);
 }
 
 void AMosesZombieSpawnSpot::BeginPlay()
 {
 	Super::BeginPlay();
 
-	if (HasAuthority())
+	if (!HasAuthority())
 	{
-		CollectSpawnPointsFromChildren_Server(); // [NEW]
-		SpawnZombies_Server();
+		return;
 	}
+
+	CollectSpawnPointsFromChildren_Server();
+	SpawnZombies_Server();
 }
 
 void AMosesZombieSpawnSpot::ServerRespawnSpotZombies()
@@ -33,35 +42,45 @@ void AMosesZombieSpawnSpot::ServerRespawnSpotZombies()
 	}
 
 	CleanupSpawnedZombies_Server();
-
-	CollectSpawnPointsFromChildren_Server(); // [NEW] ∏ÆΩ∫∆˘ ∂ßµµ ¿Áºˆ¡˝
 	SpawnZombies_Server();
 }
 
 void AMosesZombieSpawnSpot::CleanupSpawnedZombies_Server()
 {
-	for (AMosesZombieCharacter* Z : SpawnedZombies)
+	check(HasAuthority());
+
+	int32 Removed = 0;
+
+	for (TObjectPtr<AMosesZombieCharacter>& Z : SpawnedZombies)
 	{
 		if (IsValid(Z))
 		{
 			Z->Destroy();
+			Removed++;
 		}
 	}
+
 	SpawnedZombies.Reset();
+
+	UE_LOG(LogMosesZombie, Warning, TEXT("[ZOMBIE][SV] Cleanup Spot=%s Removed=%d"), *GetNameSafe(this), Removed);
 }
 
 void AMosesZombieSpawnSpot::CollectSpawnPointsFromChildren_Server()
 {
-	if (!HasAuthority() || !Root)
+	check(HasAuthority());
+
+	if (!Root)
 	{
+		UE_LOG(LogMosesZombie, Warning, TEXT("[ZOMBIE][SV] CollectSpawnPoints FAIL Root=NULL Spot=%s"), *GetNameSafe(this));
 		return;
 	}
 
 	SpawnPoints.Reset();
 
-	// [FIX] 'Children' ¿Ã∏ß √Êµπ πÊ¡ˆ
 	TArray<USceneComponent*> ChildSceneComps;
 	Root->GetChildrenComponents(/*bIncludeAllDescendants=*/true, ChildSceneComps);
+
+	const FString PrefixStr = SpawnPointPrefix.ToString();
 
 	for (USceneComponent* C : ChildSceneComps)
 	{
@@ -70,23 +89,23 @@ void AMosesZombieSpawnSpot::CollectSpawnPointsFromChildren_Server()
 			continue;
 		}
 
-		// ¿Ã∏ß¿Ã "SP_" ∑Œ Ω√¿€«œ¥¬ ∞Õ∏∏ SpawnPoint∑Œ ¿Œ¡§
-		const FString Name = C->GetName();
-		if (SpawnPointPrefix != NAME_None)
+		// "SP_"Î°ú ÏãúÏûëÌïòÎäî Í≤ÉÎßå SpawnPointÎ°ú Ïù∏Ï†ï
+		if (!PrefixStr.IsEmpty())
 		{
-			const FString PrefixStr = SpawnPointPrefix.ToString();
+			const FString Name = C->GetName();
 			if (!Name.StartsWith(PrefixStr))
 			{
 				continue;
 			}
 		}
 
-		SpawnPoints.Add(C); // ∆˜¿Œ≈Õ∑Œ Add -> OK
+		SpawnPoints.Add(C);
 	}
 
-	// [FIX] TObjectPtr Sort ∞Ê∞Ì »∏««: Raw∑Œ ¡§∑ƒ »ƒ ¥ŸΩ√ ¥„±‚
+	// Ï†ïÎ†¨(Ïù¥Î¶Ñ Í∏∞Ï§Ä): TObjectPtr Sort Í≤ΩÍ≥† ÌöåÌîºÎ•º ÏúÑÌï¥ RawÎ°ú Ï†ïÎ†¨ ÌõÑ Ïû¨Îì±Î°ù
 	TArray<USceneComponent*> SortedRaw;
 	SortedRaw.Reserve(SpawnPoints.Num());
+
 	for (const TObjectPtr<USceneComponent>& Ptr : SpawnPoints)
 	{
 		SortedRaw.Add(Ptr.Get());
@@ -99,6 +118,7 @@ void AMosesZombieSpawnSpot::CollectSpawnPointsFromChildren_Server()
 
 	SpawnPoints.Reset();
 	SpawnPoints.Reserve(SortedRaw.Num());
+
 	for (USceneComponent* P : SortedRaw)
 	{
 		if (P)
@@ -107,21 +127,19 @@ void AMosesZombieSpawnSpot::CollectSpawnPointsFromChildren_Server()
 		}
 	}
 
-	UE_LOG(LogMosesZombie, Warning, TEXT("[ZOMBIE][SV] CollectSpawnPoints Spot=%s Count=%d"),
-		*GetName(), SpawnPoints.Num());
+	UE_LOG(LogMosesZombie, Warning, TEXT("[ZOMBIE][SV] CollectSpawnPoints Spot=%s Count=%d Prefix=%s"),
+		*GetNameSafe(this), SpawnPoints.Num(), *PrefixStr);
 }
 
 void AMosesZombieSpawnSpot::SpawnZombies_Server()
 {
-	if (!HasAuthority())
-	{
-		return;
-	}
+	check(HasAuthority());
 
 	if (SpawnPoints.Num() <= 0 || ZombieClasses.Num() <= 0)
 	{
-		UE_LOG(LogMosesZombie, Warning, TEXT("[ZOMBIE][SV] SpawnSpot Missing Setup Spot=%s Points=%d Classes=%d"),
-			*GetName(), SpawnPoints.Num(), ZombieClasses.Num());
+		UE_LOG(LogMosesZombie, Warning,
+			TEXT("[ZOMBIE][SV] SpawnSpot Missing Setup Spot=%s Points=%d Classes=%d"),
+			*GetNameSafe(this), SpawnPoints.Num(), ZombieClasses.Num());
 		return;
 	}
 
@@ -131,15 +149,17 @@ void AMosesZombieSpawnSpot::SpawnZombies_Server()
 		return;
 	}
 
+	int32 SpawnedCount = 0;
+
 	for (int32 i = 0; i < SpawnPoints.Num(); ++i)
 	{
-		USceneComponent* P = SpawnPoints[i];
+		USceneComponent* P = SpawnPoints[i].Get();
 		if (!P)
 		{
 			continue;
 		}
 
-		const int32 ClassIdx = i % ZombieClasses.Num();
+		const int32 ClassIdx = (i % ZombieClasses.Num());
 		const TSubclassOf<AMosesZombieCharacter> SpawnClass = ZombieClasses[ClassIdx];
 		if (!SpawnClass)
 		{
@@ -158,8 +178,12 @@ void AMosesZombieSpawnSpot::SpawnZombies_Server()
 
 		Spawned->FinishSpawning(TM);
 		SpawnedZombies.Add(Spawned);
+		SpawnedCount++;
 
+		// ‚úÖ STEP3 DoD Î°úÍ∑∏ (2Ï¢Ö Ï§ë 1Í∞ú)
 		UE_LOG(LogMosesZombie, Warning, TEXT("[ZOMBIE][SV] Spawn Spot=%s Zombie=%s Index=%d Point=%s"),
-			*GetName(), *GetNameSafe(Spawned), i, *GetNameSafe(P));
+			*GetNameSafe(this), *GetNameSafe(Spawned), i, *GetNameSafe(P));
 	}
+
+	UE_LOG(LogMosesZombie, Warning, TEXT("[ZOMBIE][SV] Spawn Spot=%s Spawned=%d"), *GetNameSafe(this), SpawnedCount);
 }

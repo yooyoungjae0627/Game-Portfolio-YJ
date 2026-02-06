@@ -1,3 +1,16 @@
+// ============================================================================
+// MosesZombieSpawnSpot.h (FULL)
+// ----------------------------------------------------------------------------
+// - Zone 단위 Zombie Spawn Spot
+// - Server Authority only
+// - SpawnPoints: Root의 자식 SceneComponent 중 이름이 "SP_" 접두사인 것들을
+//   서버 BeginPlay에서 자동 수집 (에디터 배열 수동 입력 금지)
+// - Respawn: 기존 스폰 좀비 제거 후 다시 스폰
+// - Evidence logs:
+//   - [ZOMBIE][SV] CollectSpawnPoints ...
+//   - [ZOMBIE][SV] Spawn Spot=...
+// ============================================================================
+
 #pragma once
 
 #include "CoreMinimal.h"
@@ -7,15 +20,6 @@
 class USceneComponent;
 class AMosesZombieCharacter;
 
-/**
- * Zombie Spawn Spot
- * - 구역(스팟) 단위로 좀비 스폰 포인트 배열을 가진다.
- * - 서버만 스폰/리스폰 권한을 가진다.
- *
- * [MOD] SpawnPoints는 에디터에서 직접 배열에 넣지 않고,
- *       Root의 자식 SceneComponent 중 이름이 "SP_"로 시작하는 것들을
- *       서버 BeginPlay에서 자동 수집한다.
- */
 UCLASS()
 class UE5_MULTI_SHOOTER_API AMosesZombieSpawnSpot : public AActor
 {
@@ -24,34 +28,49 @@ class UE5_MULTI_SHOOTER_API AMosesZombieSpawnSpot : public AActor
 public:
 	AMosesZombieSpawnSpot();
 
+	/** 서버: 스팟 좀비 리스폰(기존 제거 -> 스폰) */
+	UFUNCTION(BlueprintCallable, Category = "Zombie|Spawn")
+	void ServerRespawnSpotZombies();
+
 protected:
 	virtual void BeginPlay() override;
 
 private:
-	void CollectSpawnPointsFromChildren_Server(); // [NEW]
+	// ---------------------------------------------------------------------
+	// Server internals
+	// ---------------------------------------------------------------------
+	void CollectSpawnPointsFromChildren_Server();
 	void SpawnZombies_Server();
 	void CleanupSpawnedZombies_Server();
 
-public:
-	UFUNCTION(BlueprintCallable, Category = "Zombie|Spawn")
-	void ServerRespawnSpotZombies();
-
-public:
-	UPROPERTY(VisibleAnywhere, Category = "Components")
+private:
+	// ---------------------------------------------------------------------
+	// Components
+	// ---------------------------------------------------------------------
+	UPROPERTY(VisibleAnywhere, Category = "Components", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<USceneComponent> Root = nullptr;
 
-	/** [MOD] 자동 수집된 SpawnPoint 컴포넌트들 */
-	UPROPERTY(VisibleInstanceOnly, Category = "Zombie|Spawn") // [MOD] 인스턴스에서 보이기만(수정 불가)
-		TArray<TObjectPtr<USceneComponent>> SpawnPoints;
+private:
+	// ---------------------------------------------------------------------
+	// Config (Defaults)
+	// ---------------------------------------------------------------------
+	/** 자식 컴포넌트 이름 접두사. 예: "SP_" */
+	UPROPERTY(EditDefaultsOnly, Category = "Zombie|Spawn", meta = (AllowPrivateAccess = "true"))
+	FName SpawnPointPrefix = TEXT("SP_");
 
-	/** 4종 좀비 BP 클래스 배열 (BP Defaults에서 세팅) */
-	UPROPERTY(EditDefaultsOnly, Category = "Zombie|Spawn")
+	/** 좀비 BP 클래스 배열 (BP Defaults에서 세팅) */
+	UPROPERTY(EditDefaultsOnly, Category = "Zombie|Spawn", meta = (AllowPrivateAccess = "true"))
 	TArray<TSubclassOf<AMosesZombieCharacter>> ZombieClasses;
 
+private:
+	// ---------------------------------------------------------------------
+	// Runtime (Server)
+	// ---------------------------------------------------------------------
+	/** [AUTO] Root 자식에서 자동 수집된 스폰 포인트들(읽기 전용) */
+	UPROPERTY(VisibleInstanceOnly, Category = "Zombie|Spawn", meta = (AllowPrivateAccess = "true"))
+	TArray<TObjectPtr<USceneComponent>> SpawnPoints;
+
+	/** 서버가 스폰한 좀비들(리스폰 시 Destroy) */
 	UPROPERTY(Transient)
 	TArray<TObjectPtr<AMosesZombieCharacter>> SpawnedZombies;
-
-	/** [NEW] 자식 컴포넌트 이름 접두사 */
-	UPROPERTY(EditDefaultsOnly, Category = "Zombie|Spawn")
-	FName SpawnPointPrefix = TEXT("SP_");
 };
