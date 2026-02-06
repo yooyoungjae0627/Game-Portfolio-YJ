@@ -351,11 +351,26 @@ void AMosesGrenadeProjectile::ApplyRadialDamage_Server(const FVector& Center)
 		Radius, HitCount, bAny ? 1 : 0);
 }
 
-void AMosesGrenadeProjectile::Multicast_PlayExplodeFX_Implementation(const FVector& Center, const FVector& HitNormal)
+void AMosesGrenadeProjectile::Multicast_PlayExplodeFX_Implementation(
+	const FVector& Center,
+	const FVector& HitNormal)
 {
-	// 코스메틱 FX/SFX는 BP/에셋에서 처리(여기는 로그만)
-	UE_LOG(LogMosesCombat, Verbose,
-		TEXT("[GRENADE][CL] ExplodeFX Center=%s Normal=%s"),
-		*Center.ToCompactString(),
-		*HitNormal.ToCompactString());
+	// 파티클
+	if (ExplosionVFX)
+	{
+		UGameplayStatics::SpawnEmitterAtLocation(
+			GetWorld(),
+			ExplosionVFX,
+			FTransform(HitNormal.Rotation(), Center));
+	}
+
+	// 사운드
+	if (ExplosionSFX)
+	{
+		UGameplayStatics::PlaySoundAtLocation(
+			GetWorld(),
+			ExplosionSFX,
+			Center);
+	}
 }
+

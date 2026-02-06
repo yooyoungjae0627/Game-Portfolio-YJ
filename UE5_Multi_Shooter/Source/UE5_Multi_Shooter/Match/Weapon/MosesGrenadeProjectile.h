@@ -113,4 +113,11 @@ private:
 
 	/** [MOD] 서버에서 스폰된 시간(arming 판정용) */
 	float SpawnWorldTimeSeconds_Server = 0.0f;
+
+protected:
+	UPROPERTY(EditDefaultsOnly, Category = "Moses|Grenade|FX")
+	TObjectPtr<UParticleSystem> ExplosionVFX = nullptr;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Moses|Grenade|FX")
+	TObjectPtr<USoundBase> ExplosionSFX = nullptr;
 };

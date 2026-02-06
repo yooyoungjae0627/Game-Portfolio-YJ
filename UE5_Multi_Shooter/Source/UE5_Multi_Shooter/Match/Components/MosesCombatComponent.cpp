@@ -843,32 +843,8 @@ void UMosesCombatComponent::Server_PerformFireAndApplyDamage(const UMosesWeaponD
 	float HalfAngleDeg = 0.0f;
 	const FVector SpreadDir = Server_ApplySpreadToDirection(AimDir, WeaponData, SpreadFactor, HalfAngleDeg);
 
-	// Projectile weapon (Grenade Launcher)
-	if (WeaponData && WeaponData->bIsProjectileWeapon)
-	{
-		Server_SpawnGrenadeProjectile(WeaponData, ViewLoc, SpreadDir, Controller, OwnerPawn);
-		return;
-	}
-
 	// --------------------------------------------------------------------
-	// 1) [1차] 카메라 기준 Trace로 AimPoint 확보 (크로스헤어 체감의 기준)
-	// --------------------------------------------------------------------
-	const FVector CamStart = ViewLoc;
-	const FVector CamEnd = CamStart + (SpreadDir * HitscanDistance);
-
-	FCollisionQueryParams CamParams(SCENE_QUERY_STAT(Moses_FireTrace_Cam), true);
-	CamParams.AddIgnoredActor(OwnerPawn);
-
-	FHitResult CamHit;
-	const bool bCamHit = GetWorld()->LineTraceSingleByChannel(CamHit, CamStart, CamEnd, FireTraceChannel, CamParams);
-
-	const FVector AimPoint = (bCamHit ? CamHit.ImpactPoint : CamEnd);
-
-	// --------------------------------------------------------------------
-	// 2) 총구(Muzzle) Start 확보
-	// - 서버에서도 "WeaponMesh_Hand" 컴포넌트는 존재하므로,
-	//   컴포넌트 이름으로 찾아 소켓(MuzzleSocketName) 월드 위치를 뽑는다.
-	// - 실패 시 폴백: PawnViewLocation(카메라)로 시작 (안전)
+	// 1) 총구(Muzzle) Start 확보 (히트스캔/프로젝트 공통으로 씀)
 	// --------------------------------------------------------------------
 	FVector MuzzleStart = OwnerPawn->GetPawnViewLocation();
 	bool bGotMuzzle = false;
@@ -889,7 +865,6 @@ void UMosesCombatComponent::Server_PerformFireAndApplyDamage(const UMosesWeaponD
 					continue;
 				}
 
-				// PlayerCharacter.cpp에서 CreateDefaultSubobject(TEXT("WeaponMesh_Hand"))로 생성됨
 				if (Comp->GetFName() == TEXT("WeaponMesh_Hand"))
 				{
 					if (Comp->DoesSocketExist(MuzzleSocketName))
@@ -904,7 +879,40 @@ void UMosesCombatComponent::Server_PerformFireAndApplyDamage(const UMosesWeaponD
 	}
 
 	// --------------------------------------------------------------------
-	// 3) [2차] 총구 기준 Trace로 최종 판정(엄폐/근거리 억까 최소화)
+	// 2) Projectile weapon (Grenade Launcher)
+	// [MOD] SpawnLoc = ViewLoc ❌ → MuzzleStart ✅
+	// --------------------------------------------------------------------
+	if (WeaponData && WeaponData->bIsProjectileWeapon)
+	{
+		Server_SpawnGrenadeProjectile(WeaponData, MuzzleStart, SpreadDir, Controller, OwnerPawn);
+
+		UE_LOG(LogMosesCombat, Warning,
+			TEXT("[GRENADE][SV] FireRequest Weapon=%s Muzzle=%d SpawnLoc=%s ViewLoc=%s Dir=%s"),
+			*WeaponData->WeaponId.ToString(),
+			bGotMuzzle ? 1 : 0,
+			*MuzzleStart.ToCompactString(),
+			*ViewLoc.ToCompactString(),
+			*SpreadDir.ToCompactString());
+
+		return;
+	}
+
+	// --------------------------------------------------------------------
+	// 3) [1차] 카메라 기준 Trace로 AimPoint 확보 (크로스헤어 체감의 기준)
+	// --------------------------------------------------------------------
+	const FVector CamStart = ViewLoc;
+	const FVector CamEnd = CamStart + (SpreadDir * HitscanDistance);
+
+	FCollisionQueryParams CamParams(SCENE_QUERY_STAT(Moses_FireTrace_Cam), true);
+	CamParams.AddIgnoredActor(OwnerPawn);
+
+	FHitResult CamHit;
+	const bool bCamHit = GetWorld()->LineTraceSingleByChannel(CamHit, CamStart, CamEnd, FireTraceChannel, CamParams);
+
+	const FVector AimPoint = (bCamHit ? CamHit.ImpactPoint : CamEnd);
+
+	// --------------------------------------------------------------------
+	// 4) [2차] 총구 기준 Trace로 최종 판정(엄폐/근거리 억까 최소화)
 	// --------------------------------------------------------------------
 	const FVector MuzzleEnd = AimPoint;
 
@@ -915,7 +923,7 @@ void UMosesCombatComponent::Server_PerformFireAndApplyDamage(const UMosesWeaponD
 	const bool bFinalHit = GetWorld()->LineTraceSingleByChannel(FinalHit, MuzzleStart, MuzzleEnd, FireTraceChannel, MuzzleParams);
 
 	// --------------------------------------------------------------------
-	// 4) Evidence-First (서버 로그 + 디버그 라인/구)
+	// 5) Evidence-First
 	// --------------------------------------------------------------------
 	UE_LOG(LogMosesCombat, Warning,
 		TEXT("[TRACE][SV] Weapon=%s Spread=%.2f HalfAngle=%.2f Muzzle=%d CamHit=%d FinalHit=%d CamStart=%s CamEnd=%s MuzzleStart=%s AimPoint=%s FinalActor=%s Bone=%s"),
@@ -932,31 +940,8 @@ void UMosesCombatComponent::Server_PerformFireAndApplyDamage(const UMosesWeaponD
 		*GetNameSafe(FinalHit.GetActor()),
 		*FinalHit.BoneName.ToString());
 
-	if (bServerTraceDebugDraw)
-	{
-		const float T = ServerTraceDebugDrawTime;
-
-		// Cam trace (white)
-		DrawDebugSphere(GetWorld(), CamStart, 6.0f, 12, FColor::Green, false, T);
-		DrawDebugLine(GetWorld(), CamStart, CamEnd, FColor::White, false, T, 0, 1.0f);
-
-		if (bCamHit)
-		{
-			DrawDebugSphere(GetWorld(), CamHit.ImpactPoint, 8.0f, 12, FColor::Red, false, T);
-		}
-
-		// Muzzle trace (cyan)
-		DrawDebugSphere(GetWorld(), MuzzleStart, 6.0f, 12, FColor::Cyan, false, T);
-		DrawDebugLine(GetWorld(), MuzzleStart, MuzzleEnd, FColor::Cyan, false, T, 0, 1.0f);
-
-		if (bFinalHit)
-		{
-			DrawDebugSphere(GetWorld(), FinalHit.ImpactPoint, 10.0f, 12, FColor::Red, false, T);
-		}
-	}
-
 	// --------------------------------------------------------------------
-	// 5) 최종 피해 적용
+	// 6) 최종 피해 적용
 	// --------------------------------------------------------------------
 	if (!bFinalHit || !FinalHit.GetActor())
 	{
@@ -988,9 +973,6 @@ void UMosesCombatComponent::Server_SpawnGrenadeProjectile(
 	AController* InstigatorController,
 	APawn* OwnerPawn)
 {
-	// --------------------------------------------------------------------
-	// Guard
-	// --------------------------------------------------------------------
 	if (!GetOwner() || !GetOwner()->HasAuthority())
 	{
 		return;
@@ -1003,9 +985,7 @@ void UMosesCombatComponent::Server_SpawnGrenadeProjectile(
 		return;
 	}
 
-	// --------------------------------------------------------------------
-	// ProjectileClass는 WeaponData가 단일 진실
-	// --------------------------------------------------------------------
+	// ProjectileClass는 WeaponData 단일 진실
 	TSubclassOf<AMosesGrenadeProjectile> ProjectileClass = WeaponData->ProjectileClass;
 	if (!ProjectileClass)
 	{
@@ -1015,9 +995,6 @@ void UMosesCombatComponent::Server_SpawnGrenadeProjectile(
 		return;
 	}
 
-	// --------------------------------------------------------------------
-	// Source ASC (Damage Source)
-	// --------------------------------------------------------------------
 	AMosesPlayerState* PS = MosesCombat_Private::GetOwnerPS(this);
 	if (!PS)
 	{
@@ -1036,33 +1013,27 @@ void UMosesCombatComponent::Server_SpawnGrenadeProjectile(
 	}
 
 	// --------------------------------------------------------------------
-	// Damage GE
+	// [MOD] Damage GE (없어도 스폰은 진행)
+	// - GE가 없으면 Projectile 내부에서 GAS 적용은 실패 → ApplyDamage 폴백으로 감
 	// --------------------------------------------------------------------
 	TSubclassOf<UGameplayEffect> GEClass = DamageGE_SetByCaller.LoadSynchronous();
 	if (!GEClass)
 	{
 		UE_LOG(LogMosesGAS, Warning,
-			TEXT("[GRENADE][SV] Spawn FAIL (DamageGE_SetByCaller load failed)"));
-		return;
+			TEXT("[GRENADE][SV] DamageGE missing -> FallbackOnly. SoftPath=%s"),
+			*DamageGE_SetByCaller.ToSoftObjectPath().ToString());
+		// return;  // ❌ 막지 않는다
 	}
 
-	// --------------------------------------------------------------------
-	// Spawn params (Owner / Instigator 중요)
-	// --------------------------------------------------------------------
 	FActorSpawnParameters Params;
-	Params.Owner = OwnerPawn;           // ✅ 반드시 Pawn
+	Params.Owner = OwnerPawn; // Pawn으로 고정
 	Params.Instigator = OwnerPawn;
-	Params.SpawnCollisionHandlingOverride =
-		ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn;
+	Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn;
 
 	const FRotator SpawnRot = FireDir.Rotation();
 
 	AMosesGrenadeProjectile* Projectile =
-		GetWorld()->SpawnActor<AMosesGrenadeProjectile>(
-			ProjectileClass,
-			SpawnLoc,
-			SpawnRot,
-			Params);
+		GetWorld()->SpawnActor<AMosesGrenadeProjectile>(ProjectileClass, SpawnLoc, SpawnRot, Params);
 
 	if (!Projectile)
 	{
@@ -1071,41 +1042,32 @@ void UMosesCombatComponent::Server_SpawnGrenadeProjectile(
 		return;
 	}
 
-	// --------------------------------------------------------------------
-	// Damage / Radius 결정
-	// --------------------------------------------------------------------
 	const float ExplodeDamage =
 		(WeaponData->ExplosionDamageOverride > 0.0f)
 		? WeaponData->ExplosionDamageOverride
 		: WeaponData->Damage;
 
-	// --------------------------------------------------------------------
-	// Projectile 초기화 (Server Only)
-	// --------------------------------------------------------------------
 	Projectile->InitFromCombat_Server(
 		SourceASC,
-		GEClass,
+		GEClass, // null일 수도 있음(폴백용)
 		ExplodeDamage,
 		WeaponData->ExplosionRadius,
 		InstigatorController,
 		OwnerPawn,
 		WeaponData);
 
-	// --------------------------------------------------------------------
-	// Launch
-	// --------------------------------------------------------------------
-	Projectile->Launch_Server(
-		FireDir,
-		WeaponData->ProjectileSpeed);
+	Projectile->Launch_Server(FireDir, WeaponData->ProjectileSpeed);
 
 	UE_LOG(LogMosesCombat, Warning,
-		TEXT("[GRENADE][SV] Spawn OK Weapon=%s Loc=%s Speed=%.1f Radius=%.1f Damage=%.1f"),
+		TEXT("[GRENADE][SV] Spawn OK Weapon=%s Loc=%s Speed=%.1f Radius=%.1f Damage=%.1f GE=%s"),
 		*WeaponData->WeaponId.ToString(),
 		*SpawnLoc.ToCompactString(),
 		WeaponData->ProjectileSpeed,
 		WeaponData->ExplosionRadius,
-		ExplodeDamage);
+		ExplodeDamage,
+		GEClass ? *GetNameSafe(GEClass.Get()) : TEXT("None(FallbackOnly)"));
 }
+
 
 // ============================================================================
 // GAS Damage (히트스캔 + 유탄 공통 파이프라인)
