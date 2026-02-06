@@ -981,55 +981,107 @@ void UMosesCombatComponent::Server_PerformFireAndApplyDamage(const UMosesWeaponD
 	}
 }
 
-void UMosesCombatComponent::Server_SpawnGrenadeProjectile(const UMosesWeaponData* WeaponData, const FVector& SpawnLoc, const FVector& FireDir, AController* InstigatorController, APawn* OwnerPawn)
+void UMosesCombatComponent::Server_SpawnGrenadeProjectile(
+	const UMosesWeaponData* WeaponData,
+	const FVector& SpawnLoc,
+	const FVector& FireDir,
+	AController* InstigatorController,
+	APawn* OwnerPawn)
 {
+	// --------------------------------------------------------------------
+	// Guard
+	// --------------------------------------------------------------------
+	if (!GetOwner() || !GetOwner()->HasAuthority())
+	{
+		return;
+	}
+
 	if (!WeaponData || !OwnerPawn)
 	{
+		UE_LOG(LogMosesCombat, Warning,
+			TEXT("[GRENADE][SV] Spawn FAIL (Invalid WeaponData or OwnerPawn)"));
 		return;
 	}
 
-	if (!GrenadeProjectileClass)
+	// --------------------------------------------------------------------
+	// ProjectileClass는 WeaponData가 단일 진실
+	// --------------------------------------------------------------------
+	TSubclassOf<AMosesGrenadeProjectile> ProjectileClass = WeaponData->ProjectileClass;
+	if (!ProjectileClass)
 	{
-		UE_LOG(LogMosesCombat, Warning, TEXT("[GRENADE][SV] Spawn FAIL (GrenadeProjectileClass is null)"));
+		UE_LOG(LogMosesCombat, Warning,
+			TEXT("[GRENADE][SV] Spawn FAIL (WeaponData ProjectileClass is null) Weapon=%s"),
+			*WeaponData->WeaponId.ToString());
 		return;
 	}
 
+	// --------------------------------------------------------------------
+	// Source ASC (Damage Source)
+	// --------------------------------------------------------------------
 	AMosesPlayerState* PS = MosesCombat_Private::GetOwnerPS(this);
 	if (!PS)
 	{
-		UE_LOG(LogMosesCombat, Warning, TEXT("[GRENADE][SV] Spawn FAIL (No PlayerState owner)"));
+		UE_LOG(LogMosesCombat, Warning,
+			TEXT("[GRENADE][SV] Spawn FAIL (No PlayerState owner)"));
 		return;
 	}
 
 	UAbilitySystemComponent* SourceASC = PS->GetAbilitySystemComponent();
 	if (!SourceASC)
 	{
-		UE_LOG(LogMosesCombat, Warning, TEXT("[GRENADE][SV] Spawn FAIL (No Source ASC)"));
+		UE_LOG(LogMosesCombat, Warning,
+			TEXT("[GRENADE][SV] Spawn FAIL (No Source ASC) PS=%s"),
+			*GetNameSafe(PS));
 		return;
 	}
 
+	// --------------------------------------------------------------------
+	// Damage GE
+	// --------------------------------------------------------------------
 	TSubclassOf<UGameplayEffect> GEClass = DamageGE_SetByCaller.LoadSynchronous();
 	if (!GEClass)
 	{
-		UE_LOG(LogMosesGAS, Warning, TEXT("[GAS][SV] DamageGE_SetByCaller is null (load failed)"));
+		UE_LOG(LogMosesGAS, Warning,
+			TEXT("[GRENADE][SV] Spawn FAIL (DamageGE_SetByCaller load failed)"));
 		return;
 	}
 
+	// --------------------------------------------------------------------
+	// Spawn params (Owner / Instigator 중요)
+	// --------------------------------------------------------------------
 	FActorSpawnParameters Params;
-	Params.Owner = PS;
+	Params.Owner = OwnerPawn;           // ✅ 반드시 Pawn
 	Params.Instigator = OwnerPawn;
+	Params.SpawnCollisionHandlingOverride =
+		ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn;
 
-	const FRotator Rot = FireDir.Rotation();
+	const FRotator SpawnRot = FireDir.Rotation();
 
-	AMosesGrenadeProjectile* Projectile = GetWorld()->SpawnActor<AMosesGrenadeProjectile>(GrenadeProjectileClass, SpawnLoc, Rot, Params);
+	AMosesGrenadeProjectile* Projectile =
+		GetWorld()->SpawnActor<AMosesGrenadeProjectile>(
+			ProjectileClass,
+			SpawnLoc,
+			SpawnRot,
+			Params);
+
 	if (!Projectile)
 	{
-		UE_LOG(LogMosesCombat, Warning, TEXT("[GRENADE][SV] Spawn FAIL (SpawnActor returned null)"));
+		UE_LOG(LogMosesCombat, Warning,
+			TEXT("[GRENADE][SV] Spawn FAIL (SpawnActor returned null)"));
 		return;
 	}
 
-	const float ExplodeDamage = (WeaponData->ExplosionDamageOverride > 0.0f) ? WeaponData->ExplosionDamageOverride : WeaponData->Damage;
+	// --------------------------------------------------------------------
+	// Damage / Radius 결정
+	// --------------------------------------------------------------------
+	const float ExplodeDamage =
+		(WeaponData->ExplosionDamageOverride > 0.0f)
+		? WeaponData->ExplosionDamageOverride
+		: WeaponData->Damage;
 
+	// --------------------------------------------------------------------
+	// Projectile 초기화 (Server Only)
+	// --------------------------------------------------------------------
 	Projectile->InitFromCombat_Server(
 		SourceASC,
 		GEClass,
@@ -1039,11 +1091,17 @@ void UMosesCombatComponent::Server_SpawnGrenadeProjectile(const UMosesWeaponData
 		OwnerPawn,
 		WeaponData);
 
-	Projectile->Launch_Server(FireDir, WeaponData->ProjectileSpeed);
+	// --------------------------------------------------------------------
+	// Launch
+	// --------------------------------------------------------------------
+	Projectile->Launch_Server(
+		FireDir,
+		WeaponData->ProjectileSpeed);
 
 	UE_LOG(LogMosesCombat, Warning,
-		TEXT("[GRENADE][SV] Spawn OK Weapon=%s Speed=%.1f Radius=%.1f Damage=%.1f"),
+		TEXT("[GRENADE][SV] Spawn OK Weapon=%s Loc=%s Speed=%.1f Radius=%.1f Damage=%.1f"),
 		*WeaponData->WeaponId.ToString(),
+		*SpawnLoc.ToCompactString(),
 		WeaponData->ProjectileSpeed,
 		WeaponData->ExplosionRadius,
 		ExplodeDamage);

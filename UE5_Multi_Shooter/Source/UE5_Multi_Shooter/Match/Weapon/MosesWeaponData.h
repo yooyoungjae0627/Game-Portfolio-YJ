@@ -7,9 +7,11 @@
 #include "UE5_Multi_Shooter/Match/Weapon/MosesWeaponTypes.h"
 #include "MosesWeaponData.generated.h"
 
+// Forward declarations
 class USkeletalMesh;
 class USoundBase;
 class UParticleSystem;
+class AMosesGrenadeProjectile;
 
 /**
  * UMosesWeaponData
@@ -87,6 +89,10 @@ public:
 	UPROPERTY(EditDefaultsOnly, Category = "Weapon|Projectile")
 	bool bIsProjectileWeapon = false;
 
+	/** Day9: Projectile 클래스(유탄 런처 등) */
+	UPROPERTY(EditDefaultsOnly, Category = "Weapon|Projectile")
+	TSubclassOf<AMosesGrenadeProjectile> ProjectileClass;
+
 	/** Day9: Projectile 초기 속도(유탄) */
 	UPROPERTY(EditDefaultsOnly, Category = "Weapon|Projectile", meta = (ClampMin = "1.0"))
 	float ProjectileSpeed = 2400.0f;
@@ -117,10 +123,11 @@ public:
 	UPROPERTY(EditDefaultsOnly, Category = "Moses|Weapon|Mesh")
 	TSoftObjectPtr<USkeletalMesh> WeaponSkeletalMesh;
 
-	// PlayerCharacter가 사용하는 이름과 통일(FireSFX/MuzzleVFX)
+	/** 발사 사운드 */
 	UPROPERTY(EditDefaultsOnly, Category = "Moses|Weapon|SFX")
 	TSoftObjectPtr<USoundBase> FireSFX;
 
+	/** 총구 이펙트 */
 	UPROPERTY(EditDefaultsOnly, Category = "Moses|Weapon|VFX")
 	TSoftObjectPtr<UParticleSystem> MuzzleVFX;
 
@@ -128,11 +135,12 @@ public:
 	UPROPERTY(EditDefaultsOnly, Category = "Moses|Weapon|Socket")
 	FName MuzzleSocketName = TEXT("MuzzleFlash");
 
+	/** AmmoType GameplayTag (Pickup/확장용) */
 	UPROPERTY(EditDefaultsOnly, Category = "Weapon|Ammo")
 	FGameplayTag AmmoTypeId; // e.g., Ammo.Rifle
 
 public:
-	/** Day7: Speed(0~Max) -> SpreadFactor(0~1)로 정규화할 때 사용할 기준 속도(표시/서버 공통 정책) */
+	/** Day7: Speed(0~Max) -> SpreadFactor(0~1)로 정규화할 때 사용할 기준 속도 */
 	UPROPERTY(EditDefaultsOnly, Category = "Weapon|Aim", meta = (ClampMin = "1.0"))
 	float SpreadSpeedRef = 600.0f;
 };

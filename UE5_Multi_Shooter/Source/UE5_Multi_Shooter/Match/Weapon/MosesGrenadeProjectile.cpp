@@ -8,7 +8,6 @@
 #include "GameFramework/ProjectileMovementComponent.h"
 
 #include "Engine/World.h"
-
 #include "Engine/OverlapResult.h"
 #include "Engine/EngineTypes.h"
 
@@ -22,29 +21,56 @@
 AMosesGrenadeProjectile::AMosesGrenadeProjectile()
 {
 	bReplicates = true;
+	SetReplicateMovement(true); // [MOD] 투사체 이동 복제 안정화
 
 	Collision = CreateDefaultSubobject<USphereComponent>(TEXT("Collision"));
 	SetRootComponent(Collision);
 
+	// ----------------------------
+	// [MOD] HIT 기반 세팅(Overlap 금지)
+	// ----------------------------
 	Collision->InitSphereRadius(12.0f);
-	Collision->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+
+	// ProjectileMovement는 "Block/Hit"가 정석이라 QueryAndPhysics 권장
+	Collision->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics); // [MOD]
 	Collision->SetCollisionObjectType(ECC_WorldDynamic);
-	Collision->SetCollisionResponseToAllChannels(ECR_Overlap);
+
+	// 전부 Block 기본, Camera/Visibility는 Ignore
+	Collision->SetCollisionResponseToAllChannels(ECR_Block); // [MOD]
+	Collision->SetCollisionResponseToChannel(ECC_Camera, ECR_Ignore); // [MOD]
+	Collision->SetCollisionResponseToChannel(ECC_Visibility, ECR_Ignore); // [MOD]
+
+	// Overlap 이벤트 금지
+	Collision->SetGenerateOverlapEvents(false); // [MOD]
+
+	// Hit 이벤트 발생(= "Simulation Generates Hit Events" 의미)
+	Collision->SetNotifyRigidBodyCollision(true); // [MOD]
 
 	Movement = CreateDefaultSubobject<UProjectileMovementComponent>(TEXT("Movement"));
+	Movement->SetUpdatedComponent(Collision); // [MOD] UpdatedComponent 명시
+
 	Movement->bRotationFollowsVelocity = true;
 	Movement->ProjectileGravityScale = 0.35f;
 	Movement->InitialSpeed = 2400.0f;
 	Movement->MaxSpeed = 3200.0f;
+
+	// Bounce는 BP/데이터에서 바꿀 수 있게 기본 OFF 유지(원하면 true)
+	Movement->bShouldBounce = false;
 }
 
 void AMosesGrenadeProjectile::BeginPlay()
 {
 	Super::BeginPlay();
 
+	if (HasAuthority())
+	{
+		SpawnWorldTimeSeconds_Server = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f; // [MOD]
+	}
+
 	if (Collision)
 	{
-		Collision->OnComponentBeginOverlap.AddDynamic(this, &ThisClass::OnCollisionBeginOverlap);
+		// [MOD] Overlap 바인딩 삭제 → Hit 바인딩으로 교체
+		Collision->OnComponentHit.AddDynamic(this, &ThisClass::OnCollisionHit);
 	}
 }
 
@@ -73,6 +99,8 @@ void AMosesGrenadeProjectile::InitFromCombat_Server(
 	InstigatorController = InInstigatorController;
 	DamageCauser = InDamageCauser;
 	WeaponData = InWeaponData;
+
+	ConfigureIgnoreActors_Server(); // [MOD] self-hit 방지
 }
 
 void AMosesGrenadeProjectile::Launch_Server(const FVector& Dir, float Speed)
@@ -81,18 +109,69 @@ void AMosesGrenadeProjectile::Launch_Server(const FVector& Dir, float Speed)
 
 	if (Movement)
 	{
-		Movement->Velocity = Dir.GetSafeNormal() * FMath::Max(1.0f, Speed);
+		const FVector Vel = Dir.GetSafeNormal() * FMath::Max(1.0f, Speed);
+		Movement->Velocity = Vel;
+		Movement->Activate(true); // [MOD] 명시적으로 활성화
 	}
 }
 
-void AMosesGrenadeProjectile::OnCollisionBeginOverlap(
-	UPrimitiveComponent* /*OverlappedComp*/,
-	AActor* /*OtherActor*/,
-	UPrimitiveComponent* /*OtherComp*/,
-	int32 /*OtherBodyIndex*/,
-	bool /*bFromSweep*/,
-	const FHitResult& /*SweepResult*/)
+void AMosesGrenadeProjectile::ConfigureIgnoreActors_Server()
 {
+	check(HasAuthority());
+
+	// [MOD] 발사자(Owner/Instigator) 즉시 자폭 방지
+	AActor* OwnerActor = GetOwner();
+	if (OwnerActor && Collision)
+	{
+		Collision->IgnoreActorWhenMoving(OwnerActor, true);
+	}
+
+	APawn* InstPawn = (InstigatorController.IsValid() ? InstigatorController->GetPawn() : nullptr);
+	if (InstPawn && Collision)
+	{
+		Collision->IgnoreActorWhenMoving(InstPawn, true);
+	}
+
+	if (AActor* Causer = DamageCauser.Get())
+	{
+		if (Collision)
+		{
+			Collision->IgnoreActorWhenMoving(Causer, true);
+		}
+	}
+
+	UE_LOG(LogMosesCombat, Warning,
+		TEXT("[GRENADE][SV] ConfigureIgnore Owner=%s InstPawn=%s Causer=%s"),
+		*GetNameSafe(OwnerActor),
+		*GetNameSafe(InstPawn),
+		*GetNameSafe(DamageCauser.Get()));
+}
+
+bool AMosesGrenadeProjectile::IsArming_Server() const
+{
+	if (!HasAuthority())
+	{
+		return false;
+	}
+
+	const UWorld* World = GetWorld();
+	if (!World)
+	{
+		return false;
+	}
+
+	const float Now = World->GetTimeSeconds();
+	return (Now - SpawnWorldTimeSeconds_Server) < ArmingSeconds;
+}
+
+void AMosesGrenadeProjectile::OnCollisionHit(
+	UPrimitiveComponent* /*HitComp*/,
+	AActor* OtherActor,
+	UPrimitiveComponent* /*OtherComp*/,
+	FVector /*NormalImpulse*/,
+	const FHitResult& Hit)
+{
+	// OnHit는 모든 머신에서 호출될 수 있음 → 서버만 결정
 	if (!HasAuthority())
 	{
 		return;
@@ -103,10 +182,34 @@ void AMosesGrenadeProjectile::OnCollisionBeginOverlap(
 		return;
 	}
 
-	Explode_Server(GetActorLocation());
+	// [MOD] 스폰 직후 짧은 시간은 충돌 무시(총구/캡슐 겹침 보호)
+	if (IsArming_Server())
+	{
+		UE_LOG(LogMosesCombat, Verbose,
+			TEXT("[GRENADE][SV] Hit Ignored (Arming) Other=%s"),
+			*GetNameSafe(OtherActor));
+		return;
+	}
+
+	// [MOD] 자기 자신/Owner/Instigator 충돌은 무시(2중 방어)
+	AActor* OwnerActor = GetOwner();
+	APawn* InstPawn = (InstigatorController.IsValid() ? InstigatorController->GetPawn() : nullptr);
+
+	if (OtherActor == nullptr
+		|| OtherActor == this
+		|| OtherActor == OwnerActor
+		|| OtherActor == InstPawn)
+	{
+		UE_LOG(LogMosesCombat, Verbose,
+			TEXT("[GRENADE][SV] Hit Ignored (Self/Owner/Instigator) Other=%s"),
+			*GetNameSafe(OtherActor));
+		return;
+	}
+
+	Explode_Server(Hit.ImpactPoint, &Hit);
 }
 
-void AMosesGrenadeProjectile::Explode_Server(const FVector& ExplodeLocation)
+void AMosesGrenadeProjectile::Explode_Server(const FVector& ExplodeLocation, const FHitResult* HitOpt)
 {
 	if (!HasAuthority() || bExploded)
 	{
@@ -115,16 +218,22 @@ void AMosesGrenadeProjectile::Explode_Server(const FVector& ExplodeLocation)
 
 	bExploded = true;
 
-	ApplyRadialDamage_Server(ExplodeLocation);
+	const FVector HitNormal = (HitOpt ? HitOpt->ImpactNormal : FVector::UpVector);
 
 	UE_LOG(LogMosesCombat, Warning,
-		TEXT("[GRENADE][SV] Explode Radius=%.1f Damage=%.1f Weapon=%s"),
+		TEXT("[GRENADE][SV] Explode Loc=%s Normal=%s Radius=%.1f Damage=%.1f Weapon=%s"),
+		*ExplodeLocation.ToCompactString(),
+		*HitNormal.ToCompactString(),
 		Radius,
 		DamageAmount,
 		WeaponData.IsValid() ? *WeaponData->WeaponId.ToString() : TEXT("None"));
 
-	Multicast_PlayExplodeFX(ExplodeLocation);
+	ApplyRadialDamage_Server(ExplodeLocation);
 
+	// 코스메틱은 멀티캐스트로 통일
+	Multicast_PlayExplodeFX(ExplodeLocation, HitNormal);
+
+	// 연출 여유 후 제거
 	SetLifeSpan(LifeSecondsAfterExplode);
 }
 
@@ -137,6 +246,7 @@ void AMosesGrenadeProjectile::ApplyRadialDamage_Server(const FVector& Center)
 	}
 
 	TArray<FOverlapResult> Results;
+
 	FCollisionQueryParams Params(SCENE_QUERY_STAT(Moses_GrenadeOverlap), false);
 	Params.AddIgnoredActor(this);
 
@@ -145,14 +255,32 @@ void AMosesGrenadeProjectile::ApplyRadialDamage_Server(const FVector& Center)
 		Params.AddIgnoredActor(Causer);
 	}
 
+	// Owner/Instigator도 피해 제외(자기 자신/발사자 보호)
+	if (AActor* OwnerActor = GetOwner())
+	{
+		Params.AddIgnoredActor(OwnerActor);
+	}
+	if (APawn* InstPawn = (InstigatorController.IsValid() ? InstigatorController->GetPawn() : nullptr))
+	{
+		Params.AddIgnoredActor(InstPawn);
+	}
+
 	const FCollisionShape Sphere = FCollisionShape::MakeSphere(Radius);
-	const bool bAny = World->OverlapMultiByChannel(Results, Center, FQuat::Identity, ECC_Pawn, Sphere, Params);
+
+	// 대상 수집은 Pawn 채널로(플레이어/좀비)
+	const bool bAny = World->OverlapMultiByChannel(
+		Results,
+		Center,
+		FQuat::Identity,
+		ECC_Pawn,
+		Sphere,
+		Params);
 
 	int32 HitCount = 0;
 
 	for (const FOverlapResult& R : Results)
 	{
-		AActor* Target = R.GetActor(); // ✅ 이제 GetActor() 가능
+		AActor* Target = R.GetActor();
 		if (!Target)
 		{
 			continue;
@@ -171,8 +299,14 @@ void AMosesGrenadeProjectile::ApplyRadialDamage_Server(const FVector& Center)
 				if (TargetASC && DamageGE)
 				{
 					FGameplayEffectContextHandle Ctx = SrcASC->MakeEffectContext();
-					Ctx.AddInstigator(DamageCauser.Get(), InstigatorController.Get());
+
+					// [MOD] Instigator/Causer 정리:
+					// - Instigator: 발사자 Pawn/Controller
+					// - EffectCauser: Projectile(this) 권장
+					APawn* InstPawn = (InstigatorController.IsValid() ? InstigatorController->GetPawn() : nullptr);
+					Ctx.AddInstigator(InstPawn, InstigatorController.Get());
 					Ctx.AddSourceObject(this);
+
 					if (WeaponData.IsValid())
 					{
 						Ctx.AddSourceObject(WeaponData.Get());
@@ -181,14 +315,16 @@ void AMosesGrenadeProjectile::ApplyRadialDamage_Server(const FVector& Center)
 					const FGameplayEffectSpecHandle SpecHandle = SrcASC->MakeOutgoingSpec(DamageGE, 1.f, Ctx);
 					if (SpecHandle.IsValid())
 					{
+						// 데미지는 음수로(기존 파이프라인 유지)
 						const float SignedDamage = -FMath::Abs(DamageAmount);
 						SpecHandle.Data->SetSetByCallerMagnitude(FMosesGameplayTags::Get().Data_Damage, SignedDamage);
+
 						SrcASC->ApplyGameplayEffectSpecToTarget(*SpecHandle.Data.Get(), TargetASC);
 
 						bAppliedByGAS = true;
 
 						UE_LOG(LogMosesGAS, Warning,
-							TEXT("[DAMAGE][SV] Applied To=%s Amount=%.1f (Grenade GAS)"),
+							TEXT("[DAMAGE][SV] Grenade GAS To=%s Amount=%.1f"),
 							*GetNameSafe(Target),
 							DamageAmount);
 					}
@@ -199,10 +335,10 @@ void AMosesGrenadeProjectile::ApplyRadialDamage_Server(const FVector& Center)
 		// 폴백(ASC 없는 대상 대응)
 		if (!bAppliedByGAS)
 		{
-			UGameplayStatics::ApplyDamage(Target, DamageAmount, InstigatorController.Get(), DamageCauser.Get(), nullptr);
+			UGameplayStatics::ApplyDamage(Target, DamageAmount, InstigatorController.Get(), this, nullptr);
 
 			UE_LOG(LogMosesCombat, Warning,
-				TEXT("[DAMAGE][SV] Applied To=%s Amount=%.1f (Grenade Fallback)"),
+				TEXT("[DAMAGE][SV] Grenade Fallback To=%s Amount=%.1f"),
 				*GetNameSafe(Target),
 				DamageAmount);
 		}
@@ -210,11 +346,16 @@ void AMosesGrenadeProjectile::ApplyRadialDamage_Server(const FVector& Center)
 		++HitCount;
 	}
 
-	UE_LOG(LogMosesCombat, Warning, TEXT("[GRENADE][SV] Explode Radius=%.1f Hits=%d Any=%d"), Radius, HitCount, bAny ? 1 : 0);
+	UE_LOG(LogMosesCombat, Warning,
+		TEXT("[GRENADE][SV] ApplyRadialDamage Radius=%.1f Hits=%d Any=%d"),
+		Radius, HitCount, bAny ? 1 : 0);
 }
 
-void AMosesGrenadeProjectile::Multicast_PlayExplodeFX_Implementation(const FVector& Center)
+void AMosesGrenadeProjectile::Multicast_PlayExplodeFX_Implementation(const FVector& Center, const FVector& HitNormal)
 {
 	// 코스메틱 FX/SFX는 BP/에셋에서 처리(여기는 로그만)
-	UE_LOG(LogMosesCombat, Verbose, TEXT("[GRENADE][CL] ExplodeFX Center=%s"), *Center.ToCompactString());
+	UE_LOG(LogMosesCombat, Verbose,
+		TEXT("[GRENADE][CL] ExplodeFX Center=%s Normal=%s"),
+		*Center.ToCompactString(),
+		*HitNormal.ToCompactString());
 }

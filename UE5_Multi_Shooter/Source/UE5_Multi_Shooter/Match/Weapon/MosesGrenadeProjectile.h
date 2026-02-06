@@ -16,12 +16,14 @@ class UMosesWeaponData;
  * AMosesGrenadeProjectile
  *
  * [역할]
- * - 서버 권위 Projectile.
- * - Overlap 시 서버가 폭발 확정(원자성 1회)
+ * - 서버 권위 Projectile (Dedicated Server / Authority 100%)
+ * - Overlap 기반 폭발 ❌ 금지
+ * - Hit 기반 폭발 ✅ (OnComponentHit)
+ * - 폭발 1회 원자성(bExploded)
  * - 폭발 시 OverlapSphere로 대상 수집 후:
- *   - GAS SetByCaller(Data.Damage)로 데미지 적용(히트스캔과 동일 파이프라인)
- *   - ASC 없는 대상은 ApplyDamage 폴백(최소 호환)
- * - FX/SFX는 Multicast로 전파(코스메틱)
+ *   - GAS SetByCaller(Data.Damage)로 데미지 적용
+ *   - ASC 없는 대상은 ApplyDamage 폴백
+ * - FX/SFX는 Multicast로 통일(코스메틱)
  */
 UCLASS()
 class UE5_MULTI_SHOOTER_API AMosesGrenadeProjectile : public AActor
@@ -50,21 +52,29 @@ protected:
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 
 private:
+	/** [MOD] Overlap 금지 → Hit 기반으로만 폭발 */
 	UFUNCTION()
-	void OnCollisionBeginOverlap(
-		UPrimitiveComponent* OverlappedComp,
+	void OnCollisionHit(
+		UPrimitiveComponent* HitComp,
 		AActor* OtherActor,
 		UPrimitiveComponent* OtherComp,
-		int32 OtherBodyIndex,
-		bool bFromSweep,
-		const FHitResult& SweepResult);
+		FVector NormalImpulse,
+		const FHitResult& Hit);
 
-	void Explode_Server(const FVector& ExplodeLocation);
+	/** 서버만 */
+	void Explode_Server(const FVector& ExplodeLocation, const FHitResult* HitOpt);
 
+	/** 서버만 */
 	void ApplyRadialDamage_Server(const FVector& Center);
 
+	/** [MOD] 서버 스폰 직후 Self-hit 방지용 Ignore 설정 */
+	void ConfigureIgnoreActors_Server();
+
+	/** [MOD] Arming(스폰 직후 짧은 시간 충돌 무시) */
+	bool IsArming_Server() const;
+
 	UFUNCTION(NetMulticast, Unreliable)
-	void Multicast_PlayExplodeFX(const FVector& Center);
+	void Multicast_PlayExplodeFX(const FVector& Center, const FVector& HitNormal);
 
 private:
 	UPROPERTY(VisibleAnywhere)
@@ -93,6 +103,14 @@ private:
 	TWeakObjectPtr<const UMosesWeaponData> WeaponData;
 
 private:
+	/** 폭발 후 몇 초 뒤 제거(연출 여유) */
 	UPROPERTY(EditDefaultsOnly, Category = "Moses|Grenade")
 	float LifeSecondsAfterExplode = 1.0f;
+
+	/** [MOD] 스폰 직후 self-hit 방지 arming 시간 */
+	UPROPERTY(EditDefaultsOnly, Category = "Moses|Grenade")
+	float ArmingSeconds = 0.06f;
+
+	/** [MOD] 서버에서 스폰된 시간(arming 판정용) */
+	float SpawnWorldTimeSeconds_Server = 0.0f;
 };
