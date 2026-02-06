@@ -1,8 +1,16 @@
+// ============================================================================
+// UE5_Multi_Shooter/Match/Characters/Enemy/Zombie/MosesZombieCharacter.h
+// (FULL - UPDATED)
+// - [NEW] bIsDying_Server 가드
+// - Death RPC 제거(공용 Multicast_PlayAttackMontage 재사용)
+// ============================================================================
+
 #pragma once
 
 #include "CoreMinimal.h"
 #include "GameFramework/Character.h"
 #include "AbilitySystemInterface.h"
+
 #include "UE5_Multi_Shooter/Match/Characters/Enemy/Zombie/Types/MosesZombieAttackTypes.h"
 #include "MosesZombieCharacter.generated.h"
 
@@ -29,7 +37,7 @@ public:
 
 public:
 	// -------------------------
-	// [MOD] AI Helper (Server)
+	// AI Helper (Server)
 	// -------------------------
 	UMosesZombieTypeData* GetZombieTypeData() const { return ZombieTypeData; }
 
@@ -77,6 +85,8 @@ private:
 	bool ResolveHeadshot_FromEffectContext_Server(const FGameplayEffectContextHandle& Context) const;
 
 	void HandleDeath_Server();
+	float ComputeDeathDestroyDelaySeconds_Server(UAnimMontage* DeathMontage) const; // [NEW]
+
 	void PushKillFeed_Server(bool bHeadshot, AMosesPlayerState* KillerPS);
 	void PushHeadshotAnnouncement_Server(AMosesPlayerState* KillerPS) const;
 
@@ -90,21 +100,21 @@ private:
 
 private:
 	// ---- GAS ----
-	UPROPERTY(VisibleAnywhere, Category="Moses|Zombie")
+	UPROPERTY(VisibleAnywhere, Category = "Moses|Zombie")
 	TObjectPtr<UMosesAbilitySystemComponent> AbilitySystemComponent = nullptr;
 
 	UPROPERTY()
 	TObjectPtr<UMosesZombieAttributeSet> AttributeSet = nullptr;
 
 	// ---- Data ----
-	UPROPERTY(EditDefaultsOnly, Category="Moses|Zombie")
+	UPROPERTY(EditDefaultsOnly, Category = "Moses|Zombie")
 	TObjectPtr<UMosesZombieTypeData> ZombieTypeData = nullptr;
 
 	// ---- HitBoxes ----
-	UPROPERTY(VisibleAnywhere, Category="Moses|Zombie|HitBox")
+	UPROPERTY(VisibleAnywhere, Category = "Moses|Zombie|HitBox")
 	TObjectPtr<UBoxComponent> AttackHitBox_L = nullptr;
 
-	UPROPERTY(VisibleAnywhere, Category="Moses|Zombie|HitBox")
+	UPROPERTY(VisibleAnywhere, Category = "Moses|Zombie|HitBox")
 	TObjectPtr<UBoxComponent> AttackHitBox_R = nullptr;
 
 	bool bAttackHitEnabled_L = false;
@@ -114,17 +124,22 @@ private:
 	TSet<TObjectPtr<AActor>> HitActorsThisWindow;
 
 	// ---- Headshot ----
-	UPROPERTY(EditDefaultsOnly, Category="Moses|Zombie")
+	UPROPERTY(EditDefaultsOnly, Category = "Moses|Zombie")
 	FName HeadBoneName;
 
 	UPROPERTY()
-	TObjectPtr<class AMosesPlayerState> LastDamageKillerPS = nullptr;
+	TObjectPtr<AMosesPlayerState> LastDamageKillerPS = nullptr;
 
 	bool bLastDamageHeadshot = false;
 
 	// -------------------------
-	// [MOD] AI Attack Guard
+	// AI Attack Guard
 	// -------------------------
 	double NextAttackServerTime = 0.0;
 	bool bIsAttacking_Server = false;
+
+	// -------------------------
+	// [NEW] Death Guard (Server)
+	// -------------------------
+	bool bIsDying_Server = false; // [NEW]
 };
