@@ -79,7 +79,11 @@ void UMosesCombatComponent::BeginPlay()
 
 	if (GetOwner() && GetOwner()->HasAuthority())
 	{
-		UE_LOG(LogMosesCombat, Warning, TEXT("[WEAPON][SV] CombatComponent BeginPlay PS=%s"), *GetNameSafe(GetOwner()));
+		UE_LOG(LogMosesCombat, Warning,
+			TEXT("[WEAPON][SV] CombatComponent BeginPlay Owner=%s OwnerClass=%s DamageGE_SoftPath=%s"),
+			*GetNameSafe(GetOwner()),
+			*GetNameSafe(GetOwner()->GetClass()),
+			*DamageGE_SetByCaller.ToSoftObjectPath().ToString());
 	}
 }
 
@@ -829,6 +833,12 @@ void UMosesCombatComponent::Server_PerformFireAndApplyDamage(const UMosesWeaponD
 		return;
 	}
 
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
 	// --------------------------------------------------------------------
 	// 0) 카메라(시야) 기준 입력
 	// --------------------------------------------------------------------
@@ -844,7 +854,7 @@ void UMosesCombatComponent::Server_PerformFireAndApplyDamage(const UMosesWeaponD
 	const FVector SpreadDir = Server_ApplySpreadToDirection(AimDir, WeaponData, SpreadFactor, HalfAngleDeg);
 
 	// --------------------------------------------------------------------
-	// 1) 총구(Muzzle) Start 확보 (히트스캔/프로젝트 공통으로 씀)
+	// 1) 총구(Muzzle) Start 확보 (히트스캔/프로젝트 공통)
 	// --------------------------------------------------------------------
 	FVector MuzzleStart = OwnerPawn->GetPawnViewLocation();
 	bool bGotMuzzle = false;
@@ -865,6 +875,7 @@ void UMosesCombatComponent::Server_PerformFireAndApplyDamage(const UMosesWeaponD
 					continue;
 				}
 
+				// 손 무기 메시로 고정
 				if (Comp->GetFName() == TEXT("WeaponMesh_Hand"))
 				{
 					if (Comp->DoesSocketExist(MuzzleSocketName))
@@ -880,7 +891,6 @@ void UMosesCombatComponent::Server_PerformFireAndApplyDamage(const UMosesWeaponD
 
 	// --------------------------------------------------------------------
 	// 2) Projectile weapon (Grenade Launcher)
-	// [MOD] SpawnLoc = ViewLoc ❌ → MuzzleStart ✅
 	// --------------------------------------------------------------------
 	if (WeaponData && WeaponData->bIsProjectileWeapon)
 	{
@@ -898,7 +908,7 @@ void UMosesCombatComponent::Server_PerformFireAndApplyDamage(const UMosesWeaponD
 	}
 
 	// --------------------------------------------------------------------
-	// 3) [1차] 카메라 기준 Trace로 AimPoint 확보 (크로스헤어 체감의 기준)
+	// 3) [1차] 카메라 기준 Trace로 AimPoint 확보
 	// --------------------------------------------------------------------
 	const FVector CamStart = ViewLoc;
 	const FVector CamEnd = CamStart + (SpreadDir * HitscanDistance);
@@ -906,24 +916,73 @@ void UMosesCombatComponent::Server_PerformFireAndApplyDamage(const UMosesWeaponD
 	FCollisionQueryParams CamParams(SCENE_QUERY_STAT(Moses_FireTrace_Cam), true);
 	CamParams.AddIgnoredActor(OwnerPawn);
 
+	// (선택) Pawn Mesh도 무조건 무시하고 싶으면:
+	if (USkeletalMeshComponent* MeshComp = OwnerPawn->FindComponentByClass<USkeletalMeshComponent>())
+	{
+		CamParams.AddIgnoredComponent(MeshComp);
+	}
+
 	FHitResult CamHit;
-	const bool bCamHit = GetWorld()->LineTraceSingleByChannel(CamHit, CamStart, CamEnd, FireTraceChannel, CamParams);
+	const bool bCamHit = World->LineTraceSingleByChannel(CamHit, CamStart, CamEnd, FireTraceChannel, CamParams);
 
-	const FVector AimPoint = (bCamHit ? CamHit.ImpactPoint : CamEnd);
+	// ImpactPoint가 0으로 나오는 케이스가 있어서 Location 우선
+	const FVector CamImpact = (bCamHit ? (CamHit.Location.IsNearlyZero() ? CamHit.ImpactPoint : CamHit.Location) : CamEnd);
+	const FVector AimPoint = CamImpact;
 
 	// --------------------------------------------------------------------
-	// 4) [2차] 총구 기준 Trace로 최종 판정(엄폐/근거리 억까 최소화)
+	// 4) [2차] 총구 기준 Trace로 최종 판정
 	// --------------------------------------------------------------------
-	const FVector MuzzleEnd = AimPoint;
+	FVector MuzzleEnd = AimPoint;
+
+	// 너무 짧으면(거의 동일점) Trace가 의미없어져서 최소거리 보정
+	const float DistMS = FVector::Dist(MuzzleStart, MuzzleEnd);
+	if (DistMS < 10.0f)
+	{
+		MuzzleEnd = MuzzleStart + (SpreadDir * 10.0f);
+	}
 
 	FCollisionQueryParams MuzzleParams(SCENE_QUERY_STAT(Moses_FireTrace_Muzzle), true);
 	MuzzleParams.AddIgnoredActor(OwnerPawn);
 
+	// 손 무기 메시가 라인에 걸리는 경우 방지(가능한 범위에서)
+	{
+		TInlineComponentArray<USkeletalMeshComponent*> SkelComps;
+		OwnerPawn->GetComponents<USkeletalMeshComponent>(SkelComps);
+		for (USkeletalMeshComponent* Comp : SkelComps)
+		{
+			if (!Comp)
+			{
+				continue;
+			}
+
+			// Pawn 본체 메시는 물론, 손 무기 메시는 무시
+			if (Comp == OwnerPawn->FindComponentByClass<USkeletalMeshComponent>() || Comp->GetFName() == TEXT("WeaponMesh_Hand"))
+			{
+				MuzzleParams.AddIgnoredComponent(Comp);
+			}
+		}
+	}
+
 	FHitResult FinalHit;
-	const bool bFinalHit = GetWorld()->LineTraceSingleByChannel(FinalHit, MuzzleStart, MuzzleEnd, FireTraceChannel, MuzzleParams);
+	const bool bFinalHit = World->LineTraceSingleByChannel(FinalHit, MuzzleStart, MuzzleEnd, FireTraceChannel, MuzzleParams);
+
+	const FVector FinalImpact = (bFinalHit ? (FinalHit.Location.IsNearlyZero() ? FinalHit.ImpactPoint : FinalHit.Location) : MuzzleEnd);
 
 	// --------------------------------------------------------------------
-	// 5) Evidence-First
+	// ✅ 4.5) Debug Draw (게임 화면에서 보이게 = 클라에서 DrawDebug)
+	// - 서버가 계산한 값을 Multicast로 뿌려서 각 클라가 그리게 한다.
+	// --------------------------------------------------------------------
+	if (bServerTraceDebugDraw)
+	{
+		Multicast_DrawFireTraceDebug(
+			CamStart, CamEnd,
+			bCamHit, CamImpact,
+			MuzzleStart, MuzzleEnd,
+			bFinalHit, FinalImpact);
+	}
+
+	// --------------------------------------------------------------------
+	// 5) Evidence-First 로그
 	// --------------------------------------------------------------------
 	UE_LOG(LogMosesCombat, Warning,
 		TEXT("[TRACE][SV] Weapon=%s Spread=%.2f HalfAngle=%.2f Muzzle=%d CamHit=%d FinalHit=%d CamStart=%s CamEnd=%s MuzzleStart=%s AimPoint=%s FinalActor=%s Bone=%s"),
@@ -965,6 +1024,7 @@ void UMosesCombatComponent::Server_PerformFireAndApplyDamage(const UMosesWeaponD
 			*GetNameSafe(FinalHit.GetActor()), AppliedDamage);
 	}
 }
+
 
 void UMosesCombatComponent::Server_SpawnGrenadeProjectile(
 	const UMosesWeaponData* WeaponData,
@@ -1070,11 +1130,45 @@ void UMosesCombatComponent::Server_SpawnGrenadeProjectile(
 
 
 // ============================================================================
-// GAS Damage (히트스캔 + 유탄 공통 파이프라인)
+// UMosesCombatComponent::Server_ApplyDamageToTarget_GAS (FULL)  [MOD]
+// ----------------------------------------------------------------------------
+// 목표:
+// - 서버 권위 100%
+// - "총 히트 대상"이 Pawn(플레이어 캐릭터)인 경우, ASC가 PlayerState(SSOT)에 있으므로
+//   TargetASC를 Pawn->PlayerState->ASC로 우회해서 데미지 GE를 적용한다.
+// - 좀비/기타 대상이 IAbilitySystemInterface를 구현한 경우(ASC가 Pawn에 있는 경우)는
+//   기존대로 TargetActor의 ASI를 사용한다.
+// - 실패 시 false 반환하여 호출부에서 ApplyDamage 폴백(디버그) 가능
+// ----------------------------------------------------------------------------
+// 기대 로그:
+// - 성공: [GAS][SV] APPLY OK TargetASC=... TargetActor=... Damage=...
+// - 실패: [GAS][SV] APPLY FAIL (...)
 // ============================================================================
 
-bool UMosesCombatComponent::Server_ApplyDamageToTarget_GAS(AActor* TargetActor, float Damage, AController* InstigatorController, AActor* DamageCauser, const UMosesWeaponData* WeaponData) const
+bool UMosesCombatComponent::Server_ApplyDamageToTarget_GAS(
+	AActor* TargetActor,
+	float Damage,
+	AController* InstigatorController,
+	AActor* DamageCauser,
+	const UMosesWeaponData* WeaponData) const
 {
+
+	// [MOD] Dead target guard (PS SSOT)
+	if (APawn* TargetPawn = Cast<APawn>(TargetActor))
+	{
+		if (AMosesPlayerState* TargetPS = TargetPawn->GetPlayerState<AMosesPlayerState>())
+		{
+			if (TargetPS->IsDead())
+			{
+				UE_LOG(LogMosesGAS, Verbose,
+					TEXT("[GAS][SV] APPLY SKIP (TargetAlreadyDead) TargetPawn=%s TargetPS=%s"),
+					*GetNameSafe(TargetPawn),
+					*GetNameSafe(TargetPS));
+				return false;
+			}
+		}
+	}
+
 	if (!GetOwner() || !GetOwner()->HasAuthority())
 	{
 		UE_LOG(LogMosesGAS, Warning, TEXT("[GAS][SV] APPLY FAIL (NotAuthority)"));
@@ -1087,71 +1181,100 @@ bool UMosesCombatComponent::Server_ApplyDamageToTarget_GAS(AActor* TargetActor, 
 		return false;
 	}
 
-	AMosesPlayerState* PS = MosesCombat_Private::GetOwnerPS(this);
-	if (!PS)
+	AMosesPlayerState* SourcePS = Cast<AMosesPlayerState>(GetOwner());
+	if (!SourcePS)
 	{
-		UE_LOG(LogMosesGAS, Warning, TEXT("[GAS][SV] APPLY FAIL (NoOwnerPS)"));
+		UE_LOG(LogMosesGAS, Warning, TEXT("[GAS][SV] APPLY FAIL (NoOwnerPS) Owner=%s"), *GetNameSafe(GetOwner()));
 		return false;
 	}
 
-	UAbilitySystemComponent* SourceASC = PS->GetAbilitySystemComponent();
+	UAbilitySystemComponent* SourceASC = SourcePS->GetAbilitySystemComponent();
 	if (!SourceASC)
 	{
-		UE_LOG(LogMosesGAS, Warning, TEXT("[GAS][SV] APPLY FAIL (NoSourceASC) PS=%s"), *GetNameSafe(PS));
+		UE_LOG(LogMosesGAS, Warning, TEXT("[GAS][SV] APPLY FAIL (NoSourceASC) PS=%s"), *GetNameSafe(SourcePS));
 		return false;
 	}
 
-	IAbilitySystemInterface* TargetASI = Cast<IAbilitySystemInterface>(TargetActor);
-	if (!TargetASI)
+	// ---- Target ASC resolve (ASI or Pawn->PlayerState) ----
+	UAbilitySystemComponent* TargetASC = nullptr;
+	AActor* ResolvedTargetOwnerForLog = TargetActor;
+
+	if (IAbilitySystemInterface* TargetASI = Cast<IAbilitySystemInterface>(TargetActor))
 	{
-		UE_LOG(LogMosesGAS, Warning, TEXT("[GAS][SV] APPLY FAIL (TargetNoASI) Target=%s"), *GetNameSafe(TargetActor));
+		TargetASC = TargetASI->GetAbilitySystemComponent();
+	}
+	else if (APawn* TargetPawn = Cast<APawn>(TargetActor))
+	{
+		if (AMosesPlayerState* TargetPS = TargetPawn->GetPlayerState<AMosesPlayerState>())
+		{
+			TargetASC = TargetPS->GetAbilitySystemComponent();
+			ResolvedTargetOwnerForLog = TargetPS;
+		}
+		else
+		{
+			UE_LOG(LogMosesGAS, Warning, TEXT("[GAS][SV] APPLY FAIL (PawnHasNoPlayerState) Pawn=%s"), *GetNameSafe(TargetPawn));
+			return false;
+		}
+	}
+	else
+	{
+		UE_LOG(LogMosesGAS, Warning,
+			TEXT("[GAS][SV] APPLY FAIL (TargetNoASI_AndNotPawn) Target=%s Class=%s"),
+			*GetNameSafe(TargetActor),
+			*GetNameSafe(TargetActor ? TargetActor->GetClass() : nullptr));
 		return false;
 	}
 
-	UAbilitySystemComponent* TargetASC = TargetASI->GetAbilitySystemComponent();
 	if (!TargetASC)
 	{
-		UE_LOG(LogMosesGAS, Warning, TEXT("[GAS][SV] APPLY FAIL (TargetNoASC) Target=%s"), *GetNameSafe(TargetActor));
+		UE_LOG(LogMosesGAS, Warning, TEXT("[GAS][SV] APPLY FAIL (NoTargetASC) Target=%s"), *GetNameSafe(ResolvedTargetOwnerForLog));
 		return false;
 	}
 
+	// ---- Damage GE resolve ----
 	TSubclassOf<UGameplayEffect> GEClass = DamageGE_SetByCaller.LoadSynchronous();
 	if (!GEClass)
 	{
-		UE_LOG(LogMosesGAS, Error, TEXT("[GAS][SV] APPLY FAIL (NoDamageGE) SoftPath=%s"),
-			*DamageGE_SetByCaller.ToSoftObjectPath().ToString());
+		UE_LOG(LogMosesGAS, Error,
+			TEXT("[GAS][SV] APPLY FAIL (NoDamageGE) SoftPath=%s Owner=%s OwnerClass=%s"),
+			*DamageGE_SetByCaller.ToSoftObjectPath().ToString(),
+			*GetNameSafe(GetOwner()),
+			*GetNameSafe(GetOwner() ? GetOwner()->GetClass() : nullptr));
 		return false;
 	}
 
+	// ---- Context / Spec ----
 	FGameplayEffectContextHandle Ctx = SourceASC->MakeEffectContext();
 	Ctx.AddInstigator(DamageCauser, InstigatorController);
 	Ctx.AddSourceObject(this);
 	Ctx.AddSourceObject(WeaponData);
 
-	const FGameplayEffectSpecHandle SpecHandle = SourceASC->MakeOutgoingSpec(GEClass, 1.f, Ctx);
-	if (!SpecHandle.IsValid())
+	const FGameplayEffectSpecHandle SpecHandle = SourceASC->MakeOutgoingSpec(GEClass, 1.0f, Ctx);
+	if (!SpecHandle.IsValid() || !SpecHandle.Data.IsValid())
 	{
-		UE_LOG(LogMosesGAS, Warning, TEXT("[GAS][SV] APPLY FAIL (SpecInvalid) Target=%s"), *GetNameSafe(TargetActor));
+		UE_LOG(LogMosesGAS, Warning,
+			TEXT("[GAS][SV] APPLY FAIL (SpecInvalid) Target=%s GE=%s"),
+			*GetNameSafe(ResolvedTargetOwnerForLog),
+			*GetNameSafe(GEClass.Get()));
 		return false;
 	}
 
-	// NOTE:
-	// - 현재 프로젝트에서는 "Health를 Add로 깎는" GE를 쓰는 경로를 가정하고 SignedDamage(음수)를 주입한다.
-	// - GE 설계가 바뀌면 여기의 부호 정책도 함께 변경되어야 한다.
-	const float SignedDamage = -FMath::Abs(Damage);
-
-	SpecHandle.Data->SetSetByCallerMagnitude(FMosesGameplayTags::Get().Data_Damage, SignedDamage);
+	const float FinalDamageForSetByCaller = FMath::Abs(Damage);
+	SpecHandle.Data->SetSetByCallerMagnitude(FMosesGameplayTags::Get().Data_Damage, FinalDamageForSetByCaller);
 
 	SourceASC->ApplyGameplayEffectSpecToTarget(*SpecHandle.Data.Get(), TargetASC);
 
-	UE_LOG(LogMosesGAS, Warning, TEXT("[GAS][SV] APPLY OK Target=%s Damage=%.1f Signed=%.1f Weapon=%s"),
+	UE_LOG(LogMosesGAS, Warning,
+		TEXT("[GAS][SV] APPLY OK TargetActor=%s ResolvedOwner=%s TargetASC_Owner=%s Damage=%.1f Weapon=%s"),
 		*GetNameSafe(TargetActor),
-		Damage,
-		SignedDamage,
+		*GetNameSafe(ResolvedTargetOwnerForLog),
+		*GetNameSafe(TargetASC ? TargetASC->GetOwner() : nullptr),
+		FinalDamageForSetByCaller,
 		WeaponData ? *WeaponData->WeaponId.ToString() : TEXT("None"));
 
 	return true;
 }
+
 
 // ============================================================================
 // Cosmetic propagation (Fire only - already server approved by ServerFire)
@@ -1166,8 +1289,14 @@ void UMosesCombatComponent::Server_PropagateFireCosmetics(FGameplayTag ApprovedW
 		return;
 	}
 
+	UE_LOG(LogMosesCombat, Warning,
+		TEXT("[FIRE][SV] PropagateCosmetic OK ShooterPawn=%s Weapon=%s"),
+		*GetNameSafe(PlayerChar),
+		*ApprovedWeaponId.ToString());
+
 	PlayerChar->Multicast_PlayFireMontage(ApprovedWeaponId);
 }
+
 
 // ============================================================================
 // Dead Hook
@@ -1186,8 +1315,75 @@ void UMosesCombatComponent::ServerMarkDead()
 	}
 
 	bIsDead = true;
+
+	// Reload/Swap 같은 상태도 서버에서 확실히 끊어주는 게 안정적
+	bIsReloading = false;
+
+	// 서버 타이머 정리
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(ReloadTimerHandle);
+	}
+
+	// RepNotify/Delegate
 	OnRep_IsDead();
-	BroadcastDeadChanged(TEXT("ServerMarkDead"));
+	OnRep_IsReloading();
+
+	UE_LOG(LogMosesCombat, Warning,
+		TEXT("[DEAD][SV][CC] MarkDead bIsDead=1 PS=%s PS_Pawn=%s"),
+		*GetNameSafe(GetOwner()),
+		*GetNameSafe(MosesCombat_Private::GetOwnerPawn(this)));
+
+	// ❌ 몽타주는 여기서 절대 재생하지 않는다.
+}
+
+
+// ============================================================================
+// [FIX] UMosesCombatComponent::ServerClearDeadAfterRespawn
+// - MatchGameMode / PlayerState에서 호출 중인데 정의가 없어서 LNK2019 발생
+// - 서버 권위에서만 Dead 상태/Reload 상태/타이머를 정리하고 RepNotify->Delegate 갱신
+// ============================================================================
+
+void UMosesCombatComponent::ServerClearDeadAfterRespawn()
+{
+	if (!GetOwner() || !GetOwner()->HasAuthority())
+	{
+		return;
+	}
+
+	if (!bIsDead && !bIsReloading)
+	{
+		return;
+	}
+
+	const bool bOldDead = bIsDead;
+	const bool bOldReload = bIsReloading;
+
+	bIsDead = false;
+	bIsReloading = false;
+
+	// 서버 타이머 정리(리스폰 직후 잔존 타이머 방지)
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(ReloadTimerHandle);
+	}
+
+	// RepNotify/Delegate (ListenServer 즉시 반영 패턴 유지)
+	if (bOldDead)
+	{
+		OnRep_IsDead();
+	}
+	if (bOldReload)
+	{
+		OnRep_IsReloading();
+	}
+
+	UE_LOG(LogMosesCombat, Warning,
+		TEXT("[RESPAWN][SV][CC] ClearDead DONE Dead %d->0 Reload %d->0 PS=%s Pawn=%s"),
+		bOldDead ? 1 : 0,
+		bOldReload ? 1 : 0,
+		*GetNameSafe(GetOwner()),
+		*GetNameSafe(MosesCombat_Private::GetOwnerPawn(this)));
 }
 
 // ============================================================================
@@ -1613,3 +1809,54 @@ void UMosesCombatComponent::ServerAddAmmoByTag(FGameplayTag AmmoTypeId, int32 Re
 
 	ServerAddAmmoByType(AmmoType, ReserveMaxDelta, ReserveFillDelta);
 }
+
+// ============================================================================
+// [MOD][DEBUG] Trace Debug (Server -> All Clients)
+// ============================================================================
+void UMosesCombatComponent::Multicast_DrawFireTraceDebug_Implementation(
+	const FVector& CamStart,
+	const FVector& CamEnd,
+	bool bCamHit,
+	const FVector& CamImpact,
+	const FVector& MuzzleStart,
+	const FVector& MuzzleEnd,
+	bool bFinalHit,
+	const FVector& FinalImpact)
+{
+#if ENABLE_DRAW_DEBUG
+	// Dedicated Server는 렌더링 없음
+	if (GetNetMode() == NM_DedicatedServer)
+	{
+		return;
+	}
+
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	// 게임 플레이 월드에서만(에디터 프리뷰/에디터월드 꼬임 방지)
+	if (!World->IsGameWorld())
+	{
+		return;
+	}
+
+	const float Life = FMath::Max(0.01f, ServerTraceDebugDrawTime);
+
+	// 시야(Cam) Trace
+	DrawDebugLine(World, CamStart, CamEnd, FColor::Cyan, false, Life, 0, 1.5f);
+	if (bCamHit)
+	{
+		DrawDebugPoint(World, CamImpact, 10.f, FColor::Cyan, false, Life);
+	}
+
+	// 총구(Muzzle) 최종 판정 Trace
+	DrawDebugLine(World, MuzzleStart, MuzzleEnd, bFinalHit ? FColor::Green : FColor::Red, false, Life, 0, 2.5f);
+	if (bFinalHit)
+	{
+		DrawDebugPoint(World, FinalImpact, 14.f, FColor::Green, false, Life);
+	}
+#endif // ENABLE_DRAW_DEBUG
+}
+

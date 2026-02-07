@@ -1,4 +1,9 @@
-﻿#include "UE5_Multi_Shooter/MosesPlayerState.h"
+﻿// ============================================================================
+// UE5_Multi_Shooter/MosesPlayerState.cpp  (FULL - FIXED)
+// ============================================================================
+
+#include "UE5_Multi_Shooter/MosesPlayerState.h"
+
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
 #include "UE5_Multi_Shooter/System/MosesAuthorityGuards.h"
 #include "UE5_Multi_Shooter/System/MosesLobbyLocalPlayerSubsystem.h"
@@ -14,9 +19,9 @@
 
 #include "Net/UnrealNetwork.h"
 #include "GameFramework/PlayerController.h"
-#include "GameFramework/GameStateBase.h"
 #include "Engine/LocalPlayer.h"
 #include "GameplayTagContainer.h"
+#include "TimerManager.h"
 
 AMosesPlayerState::AMosesPlayerState(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
@@ -58,11 +63,13 @@ void AMosesPlayerState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& Ou
 	DOREPLIFETIME(AMosesPlayerState, SelectedCharacterId);
 	DOREPLIFETIME(AMosesPlayerState, RoomId);
 	DOREPLIFETIME(AMosesPlayerState, bIsRoomHost);
+
 	DOREPLIFETIME(AMosesPlayerState, Deaths);
 	DOREPLIFETIME(AMosesPlayerState, Captures);
 	DOREPLIFETIME(AMosesPlayerState, ZombieKills);
 	DOREPLIFETIME(AMosesPlayerState, PvPKills);
 	DOREPLIFETIME(AMosesPlayerState, Headshots);
+
 	DOREPLIFETIME(AMosesPlayerState, bIsDead);
 	DOREPLIFETIME(AMosesPlayerState, RespawnEndServerTime);
 }
@@ -85,11 +92,13 @@ void AMosesPlayerState::CopyProperties(APlayerState* NewPlayerState)
 	NewPS->RoomId = RoomId;
 	NewPS->bIsRoomHost = bIsRoomHost;
 	NewPS->PawnData = PawnData;
+
 	NewPS->Deaths = Deaths;
 	NewPS->Captures = Captures;
 	NewPS->ZombieKills = ZombieKills;
 	NewPS->PvPKills = PvPKills;
 	NewPS->Headshots = Headshots;
+
 	NewPS->bIsDead = bIsDead;
 	NewPS->RespawnEndServerTime = RespawnEndServerTime;
 }
@@ -112,11 +121,13 @@ void AMosesPlayerState::OverrideWith(APlayerState* OldPlayerState)
 	RoomId = OldPS->RoomId;
 	bIsRoomHost = OldPS->bIsRoomHost;
 	PawnData = OldPS->PawnData;
+
 	Deaths = OldPS->Deaths;
 	Captures = OldPS->Captures;
 	ZombieKills = OldPS->ZombieKills;
 	PvPKills = OldPS->PvPKills;
 	Headshots = OldPS->Headshots;
+
 	bIsDead = OldPS->bIsDead;
 	RespawnEndServerTime = OldPS->RespawnEndServerTime;
 }
@@ -158,7 +169,6 @@ void AMosesPlayerState::TryInitASC(AActor* InAvatarActor)
 	UE_LOG(LogMosesGAS, Warning, TEXT("[GAS][PS] InitAbilityActorInfo Owner=%s Avatar=%s"),
 		*GetNameSafe(this), *GetNameSafe(InAvatarActor));
 
-	// 서버에서 초기 Attribute 확정
 	if (HasAuthority())
 	{
 		MosesAbilitySystemComponent->SetNumericAttributeBase(UMosesAttributeSet::GetMaxHealthAttribute(), 100.f);
@@ -173,20 +183,13 @@ void AMosesPlayerState::TryInitASC(AActor* InAvatarActor)
 
 	BindASCAttributeDelegates();
 
-	// ---- Initial Push (HUD Tick 금지, 첫 프레임 정합성) ----
 	BroadcastVitals_Initial();
 	BroadcastScore();
 	BroadcastDeaths();
 
 	BroadcastPlayerCaptures();
 	BroadcastPlayerZombieKills();
-
-	// ✅ [ADD] PvP 킬 "단독" 초기 브로드캐스트
 	BroadcastPlayerPvPKills();
-
-	// (원하면 헤드샷도 같이)
-	// BroadcastPlayerHeadshots();
-
 	BroadcastAmmoAndGrenade();
 }
 
@@ -287,7 +290,7 @@ void AMosesPlayerState::HandleMaxShieldChanged_Internal(const FOnAttributeChange
 }
 
 // ============================================================================
-// [MOD] AbilitySet Apply
+// AbilitySet Apply (Server only)
 // ============================================================================
 
 void AMosesPlayerState::ServerApplyCombatAbilitySetOnce(UMosesAbilitySet* InAbilitySet)
@@ -313,7 +316,7 @@ void AMosesPlayerState::ServerApplyCombatAbilitySetOnce(UMosesAbilitySet* InAbil
 }
 
 // ============================================================================
-// [MOD] Match default loadout: Rifle + 30/90
+// Match default loadout: Rifle + 30/90 (Server)
 // ============================================================================
 
 void AMosesPlayerState::ServerEnsureMatchDefaultLoadout()
@@ -347,7 +350,7 @@ void AMosesPlayerState::ServerEnsureMatchDefaultLoadout()
 }
 
 // ============================================================================
-// Lobby/Info server functions
+// Lobby / Info server functions
 // ============================================================================
 
 void AMosesPlayerState::EnsurePersistentId_Server()
@@ -474,11 +477,11 @@ void AMosesPlayerState::ServerAddDeath()
 	UE_LOG(LogMosesPlayer, Warning, TEXT("%s Deaths %d -> %d PS=%s"),
 		MOSES_TAG_SCORE_SV, OldDeaths, Deaths, *GetNameSafe(this));
 
-	OnRep_Deaths(); // 리슨서버 즉시 반영
+	OnRep_Deaths(); // ListenServer 즉시 반영
 }
 
 // ============================================================================
-// [SCORE][SV] Score SSOT
+// Score SSOT
 // ============================================================================
 
 void AMosesPlayerState::ServerAddScore(int32 Delta, const TCHAR* Reason)
@@ -490,12 +493,12 @@ void AMosesPlayerState::ServerAddScore(int32 Delta, const TCHAR* Reason)
 		return;
 	}
 
-	const int32 OldScore = FMath::RoundToInt(GetScore());     // ✅ float -> int 안정화
+	const int32 OldScore = FMath::RoundToInt(GetScore());
 	const int32 NewScore = OldScore + Delta;
 
-	SetScore(static_cast<float>(NewScore));                   // APlayerState Score(float) 반영
+	SetScore(static_cast<float>(NewScore));
 
-	// ✅ HUD는 이 델리게이트를 구독한다. (RepNotify만 믿지 말고 서버에서도 즉시 쏴준다.)
+	// 서버에서도 즉시 발행 (RepNotify 의존 X)
 	OnScoreChanged.Broadcast(NewScore);
 
 	UE_LOG(LogMosesPlayer, Warning, TEXT("[SCORE][SV] %s Old=%d -> New=%d Delta=%d PS=%s"),
@@ -509,10 +512,10 @@ void AMosesPlayerState::ServerAddScore(int32 Delta, const TCHAR* Reason)
 }
 
 // ============================================================================
-// [MOD] Match stats (Captures / ZombieKills) — Server Authority ONLY
+// Match stats (Server Authority ONLY)
 // ============================================================================
 
-void AMosesPlayerState::ServerAddCapture(int32 Delta /*=1*/)
+void AMosesPlayerState::ServerAddCapture(int32 Delta)
 {
 	MOSES_GUARD_AUTHORITY_VOID(this, "CAPTURE", TEXT("Client attempted ServerAddCapture"));
 
@@ -528,10 +531,10 @@ void AMosesPlayerState::ServerAddCapture(int32 Delta /*=1*/)
 	UE_LOG(LogMosesPlayer, Warning, TEXT("[CAPTURE][SV][PS] Captures %d -> %d Delta=%d PS=%s"),
 		Old, Captures, Delta, *GetNameSafe(this));
 
-	OnRep_Captures(); // 리슨서버 즉시 반영
+	OnRep_Captures(); // ListenServer 즉시 반영
 }
 
-void AMosesPlayerState::ServerAddZombieKill(int32 Delta /*=1*/)
+void AMosesPlayerState::ServerAddZombieKill(int32 Delta)
 {
 	MOSES_GUARD_AUTHORITY_VOID(this, "ZOMBIE", TEXT("Client attempted ServerAddZombieKill"));
 
@@ -547,216 +550,10 @@ void AMosesPlayerState::ServerAddZombieKill(int32 Delta /*=1*/)
 	UE_LOG(LogMosesPlayer, Warning, TEXT("[ZOMBIE][SV][PS] ZombieKills %d -> %d Delta=%d PS=%s"),
 		Old, ZombieKills, Delta, *GetNameSafe(this));
 
-	OnRep_ZombieKills(); // 리슨서버 즉시 반영
+	OnRep_ZombieKills(); // ListenServer 즉시 반영
 }
 
-// ============================================================================
-// RepNotifies
-// ============================================================================
-
-void AMosesPlayerState::OnRep_PersistentId()
-{
-	NotifyLobbyPlayerStateChanged_Local(TEXT("OnRep_PersistentId"));
-}
-
-void AMosesPlayerState::OnRep_LoggedIn()
-{
-	NotifyLobbyPlayerStateChanged_Local(TEXT("OnRep_LoggedIn"));
-}
-
-void AMosesPlayerState::OnRep_Ready()
-{
-	NotifyLobbyPlayerStateChanged_Local(TEXT("OnRep_Ready"));
-}
-
-void AMosesPlayerState::OnRep_SelectedCharacterId()
-{
-	BroadcastSelectedCharacterChanged(TEXT("OnRep_SelectedCharacterId"));
-	NotifyLobbyPlayerStateChanged_Local(TEXT("OnRep_SelectedCharacterId"));
-}
-
-void AMosesPlayerState::OnRep_Room()
-{
-	NotifyLobbyPlayerStateChanged_Local(TEXT("OnRep_Room"));
-}
-
-void AMosesPlayerState::OnRep_PlayerNickName()
-{
-	NotifyLobbyPlayerStateChanged_Local(TEXT("OnRep_PlayerNickName"));
-}
-
-void AMosesPlayerState::OnRep_Deaths()
-{
-	BroadcastDeaths();
-}
-
-void AMosesPlayerState::OnRep_Captures()
-{
-	BroadcastPlayerCaptures();
-}
-
-void AMosesPlayerState::OnRep_ZombieKills()
-{
-	BroadcastPlayerZombieKills();
-}
-
-// ============================================================================
-// Broadcast
-// ============================================================================
-
-void AMosesPlayerState::BroadcastSelectedCharacterChanged(const TCHAR* Reason)
-{
-	const int32 NewId = SelectedCharacterId;
-
-	OnSelectedCharacterChangedNative.Broadcast(NewId);
-	OnSelectedCharacterChangedBP.Broadcast(NewId);
-
-	UE_LOG(LogMosesPlayer, Verbose, TEXT("[PS] SelectedCharacterChanged Reason=%s Id=%d"),
-		Reason ? Reason : TEXT("None"), NewId);
-}
-
-void AMosesPlayerState::BroadcastAmmoAndGrenade()
-{
-	int32 Mag = 0;
-	int32 Reserve = 0;
-
-	if (CombatComponent)
-	{
-		Mag = CombatComponent->GetCurrentMagAmmo();
-		Reserve = CombatComponent->GetCurrentReserveAmmo();
-	}
-
-	OnAmmoChanged.Broadcast(Mag, Reserve);
-	OnGrenadeChanged.Broadcast(0);
-}
-
-void AMosesPlayerState::BroadcastScore()
-{
-	const int32 IntScore = FMath::RoundToInt(GetScore()); // ✅ float -> int 안정화
-	OnScoreChanged.Broadcast(IntScore);
-}
-
-void AMosesPlayerState::BroadcastDeaths()
-{
-	OnDeathsChanged.Broadcast(Deaths);
-}
-
-// ✅ [FIX][MOD]
-void AMosesPlayerState::BroadcastPlayerCaptures()
-{
-	OnPlayerCapturesChanged.Broadcast(Captures);
-
-	UE_LOG(LogMosesPlayer, Verbose, TEXT("[CAPTURE][CL][PS] BroadcastPlayerCaptures=%d PS=%s"),
-		Captures, *GetNameSafe(this));
-}
-
-// ✅ [FIX][MOD]
-void AMosesPlayerState::BroadcastPlayerZombieKills()
-{
-	OnPlayerZombieKillsChanged.Broadcast(ZombieKills);
-
-	UE_LOG(LogMosesPlayer, Verbose, TEXT("[ZOMBIE][CL][PS] BroadcastPlayerZombieKills=%d PS=%s"),
-		ZombieKills, *GetNameSafe(this));
-}
-
-// ============================================================================
-// Local notify
-// ============================================================================
-
-void AMosesPlayerState::NotifyLobbyPlayerStateChanged_Local(const TCHAR* Reason) const
-{
-	APlayerController* PC = Cast<APlayerController>(GetOwner());
-	if (!PC || !PC->IsLocalController())
-	{
-		return;
-	}
-
-	ULocalPlayer* LP = PC->GetLocalPlayer();
-	if (!LP)
-	{
-		return;
-	}
-
-	UMosesLobbyLocalPlayerSubsystem* LPS = LP->GetSubsystem<UMosesLobbyLocalPlayerSubsystem>();
-	if (!LPS)
-	{
-		return;
-	}
-
-	UE_LOG(LogMosesPlayer, Verbose, TEXT("[LPS][NotifyFromPS] Reason=%s PS=%s"),
-		Reason ? Reason : TEXT("None"),
-		*GetNameSafe(this));
-
-	LPS->NotifyPlayerStateChanged();
-}
-
-// ============================================================================
-// DoD log
-// ============================================================================
-
-void AMosesPlayerState::DOD_PS_Log(const UObject* Caller, const TCHAR* Phase) const
-{
-	const TCHAR* CallerName = Caller ? *Caller->GetName() : TEXT("None");
-	const TCHAR* PhaseStr = Phase ? Phase : TEXT("None");
-
-	UE_LOG(LogMosesPlayer, Warning,
-		TEXT("[PS][DOD][%s] PS=%s Caller=%s Nick=%s Pid=%s RoomId=%s Host=%d Ready=%d LoggedIn=%d SelChar=%d Deaths=%d Captures=%d ZombieKills=%d Score=%d"),
-		PhaseStr,
-		*GetNameSafe(this),
-		CallerName,
-		*PlayerNickName,
-		*PersistentId.ToString(EGuidFormats::DigitsWithHyphens),
-		*RoomId.ToString(EGuidFormats::DigitsWithHyphens),
-		bIsRoomHost ? 1 : 0,
-		bReady ? 1 : 0,
-		bLoggedIn ? 1 : 0,
-		SelectedCharacterId,
-		Deaths,
-		Captures,
-		ZombieKills,
-		FMath::RoundToInt(GetScore()));
-}
-
-void AMosesPlayerState::OnRep_PvPKills()
-{
-	BroadcastPlayerPvPKills();
-}
-
-void AMosesPlayerState::OnRep_Headshots()
-{
-	BroadcastPlayerHeadshots();
-}
-
-void AMosesPlayerState::OnRep_DeathState()
-{
-	BroadcastDeathState();
-}
-
-void AMosesPlayerState::BroadcastPlayerPvPKills()
-{
-	OnPlayerPvPKillsChanged.Broadcast(PvPKills);
-
-	UE_LOG(LogMosesPlayer, Verbose, TEXT("[PVP][CL][PS] Broadcast PvPKills=%d PS=%s"),
-		PvPKills, *GetNameSafe(this));
-}
-
-void AMosesPlayerState::BroadcastPlayerHeadshots()
-{
-	OnPlayerHeadshotsChanged.Broadcast(Headshots);
-
-	UE_LOG(LogMosesPlayer, Verbose, TEXT("[HEADSHOT][CL][PS] Broadcast Headshots=%d PS=%s"),
-		Headshots, *GetNameSafe(this));
-}
-
-void AMosesPlayerState::BroadcastDeathState()
-{
-	OnDeathStateChanged.Broadcast(bIsDead, RespawnEndServerTime);
-
-	UE_LOG(LogMosesSpawn, Warning, TEXT("[DEATH][CL] bIsDead=%d RespawnEndServerTime=%.2f PS=%s"),
-		bIsDead ? 1 : 0, RespawnEndServerTime, *GetNameSafe(this));
-}
-
-void AMosesPlayerState::ServerAddPvPKill(int32 Delta /*=1*/)
+void AMosesPlayerState::ServerAddPvPKill(int32 Delta)
 {
 	MOSES_GUARD_AUTHORITY_VOID(this, "PVP", TEXT("Client attempted ServerAddPvPKill"));
 
@@ -773,11 +570,10 @@ void AMosesPlayerState::ServerAddPvPKill(int32 Delta /*=1*/)
 	UE_LOG(LogMosesPlayer, Warning, TEXT("[PVP][SV][PS] PvPKills %d -> %d Delta=%d PS=%s"),
 		Old, PvPKills, Delta, *GetNameSafe(this));
 
-	// 리슨서버 즉시 반영(너 코드 스타일)
-	OnRep_PvPKills();
+	OnRep_PvPKills(); // ListenServer 즉시 반영
 }
 
-void AMosesPlayerState::ServerAddHeadshot(int32 Delta /*=1*/)
+void AMosesPlayerState::ServerAddHeadshot(int32 Delta)
 {
 	MOSES_GUARD_AUTHORITY_VOID(this, "HEADSHOT", TEXT("Client attempted ServerAddHeadshot"));
 
@@ -791,18 +587,99 @@ void AMosesPlayerState::ServerAddHeadshot(int32 Delta /*=1*/)
 	OnRep_Headshots(); // ListenServer 즉시
 }
 
+// ============================================================================
+// [FIX] Death / Respawn state (SSOT=PlayerState + CombatComponent)
+// ============================================================================
+
+void AMosesPlayerState::ServerNotifyDeathFromGAS()
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	if (bIsDead)
+	{
+		UE_LOG(LogMosesSpawn, Verbose, TEXT("[DEATH][SV][PS] SKIP AlreadyDead PS=%s"), *GetNameSafe(this));
+		return;
+	}
+
+	bIsDead = true;
+
+	// ✅ PS 단일진실(Combat SSOT)에도 즉시 반영 (상태만, 몽타주 ❌)
+	if (UMosesCombatComponent* Combat = GetCombatComponent())
+	{
+		Combat->ServerMarkDead();
+	}
+
+	// ✅ HUD용 "리스폰 종료 서버 시간" 확정 (네 프로젝트는 GM에서 10초)
+	const float Delay = 10.0f;
+	const float Now = (GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f);
+	RespawnEndServerTime = Now + Delay;
+
+	ForceNetUpdate();
+
+	// ListenServer 즉시 UI 갱신(RepNotify 의존 X)
+	OnRep_DeathState();
+
+	UE_LOG(LogMosesSpawn, Warning,
+		TEXT("[DEATH][SV][PS] MarkDead OK bIsDead=1 RespawnEnd=%.2f PS=%s Pawn=%s"),
+		RespawnEndServerTime,
+		*GetNameSafe(this),
+		*GetNameSafe(GetPawn()));
+
+	// ✅ GameMode에 리스폰 스케줄 요청
+	APawn* Pawn = GetPawn();
+	AController* Controller = Pawn ? Pawn->GetController() : nullptr;
+
+	if (Controller)
+	{
+		if (AMosesMatchGameMode* GM = GetWorld() ? GetWorld()->GetAuthGameMode<AMosesMatchGameMode>() : nullptr)
+		{
+			GM->ServerScheduleRespawn(Controller, Delay);
+
+			UE_LOG(LogMosesSpawn, Warning,
+				TEXT("[RESPAWN][SV] Schedule REQ Delay=%.2f Controller=%s Pawn=%s PS=%s"),
+				Delay,
+				*GetNameSafe(Controller),
+				*GetNameSafe(Pawn),
+				*GetNameSafe(this));
+		}
+	}
+}
+
 void AMosesPlayerState::ServerClearDeadAfterRespawn()
 {
 	MOSES_GUARD_AUTHORITY_VOID(this, "RESPAWN", TEXT("Client attempted ServerClearDeadAfterRespawn"));
 
+	if (!bIsDead)
+	{
+		return;
+	}
+
 	bIsDead = false;
-	RespawnEndServerTime = 0.f;
+	RespawnEndServerTime = 0.0f;
 
 	ForceNetUpdate();
+
+	// ListenServer 즉시 UI 갱신
 	OnRep_DeathState();
 
-	UE_LOG(LogMosesSpawn, Warning, TEXT("[RESPAWN][SV][PS] ClearDeadAfterRespawn OK PS=%s"), *GetNameSafe(this));
+	// ✅ Combat SSOT도 dead 해제
+	if (UMosesCombatComponent* Combat = GetCombatComponent())
+	{
+		Combat->ServerClearDeadAfterRespawn();
+	}
+
+	UE_LOG(LogMosesSpawn, Warning,
+		TEXT("[RESPAWN][SV][PS] ClearDead DONE bIsDead=0 PS=%s Pawn=%s"),
+		*GetNameSafe(this),
+		*GetNameSafe(GetPawn()));
 }
+
+// ============================================================================
+// Shield Regen
+// ============================================================================
 
 void AMosesPlayerState::ServerStartShieldRegen()
 {
@@ -872,40 +749,202 @@ void AMosesPlayerState::ServerStopShieldRegen()
 	}
 }
 
-void AMosesPlayerState::ServerNotifyDeathFromGAS()
-{
-	MOSES_GUARD_AUTHORITY_VOID(this, "DEATH", TEXT("Client attempted ServerNotifyDeathFromGAS"));
+// ============================================================================
+// RepNotifies
+// ============================================================================
 
-	// 중복 방지
-	if (bIsDead)
+void AMosesPlayerState::OnRep_PersistentId() { NotifyLobbyPlayerStateChanged_Local(TEXT("OnRep_PersistentId")); }
+void AMosesPlayerState::OnRep_LoggedIn() { NotifyLobbyPlayerStateChanged_Local(TEXT("OnRep_LoggedIn")); }
+void AMosesPlayerState::OnRep_Ready() { NotifyLobbyPlayerStateChanged_Local(TEXT("OnRep_Ready")); }
+
+void AMosesPlayerState::OnRep_SelectedCharacterId()
+{
+	BroadcastSelectedCharacterChanged(TEXT("OnRep_SelectedCharacterId"));
+	NotifyLobbyPlayerStateChanged_Local(TEXT("OnRep_SelectedCharacterId"));
+}
+
+void AMosesPlayerState::OnRep_Room() { NotifyLobbyPlayerStateChanged_Local(TEXT("OnRep_Room")); }
+void AMosesPlayerState::OnRep_PlayerNickName() { NotifyLobbyPlayerStateChanged_Local(TEXT("OnRep_PlayerNickName")); }
+
+void AMosesPlayerState::OnRep_Deaths() { BroadcastDeaths(); }
+void AMosesPlayerState::OnRep_Captures() { BroadcastPlayerCaptures(); }
+void AMosesPlayerState::OnRep_ZombieKills() { BroadcastPlayerZombieKills(); }
+
+void AMosesPlayerState::OnRep_PvPKills() { BroadcastPlayerPvPKills(); }
+void AMosesPlayerState::OnRep_Headshots() { BroadcastPlayerHeadshots(); }
+
+void AMosesPlayerState::OnRep_DeathState() { BroadcastDeathState(); }
+
+// ============================================================================
+// Broadcast
+// ============================================================================
+
+void AMosesPlayerState::BroadcastSelectedCharacterChanged(const TCHAR* Reason)
+{
+	const int32 NewId = SelectedCharacterId;
+
+	OnSelectedCharacterChangedNative.Broadcast(NewId);
+	OnSelectedCharacterChangedBP.Broadcast(NewId);
+
+	UE_LOG(LogMosesPlayer, Verbose, TEXT("[PS] SelectedCharacterChanged Reason=%s Id=%d"),
+		Reason ? Reason : TEXT("None"), NewId);
+}
+
+void AMosesPlayerState::BroadcastAmmoAndGrenade()
+{
+	int32 Mag = 0;
+	int32 Reserve = 0;
+
+	if (CombatComponent)
+	{
+		Mag = CombatComponent->GetCurrentMagAmmo();
+		Reserve = CombatComponent->GetCurrentReserveAmmo();
+	}
+
+	OnAmmoChanged.Broadcast(Mag, Reserve);
+	OnGrenadeChanged.Broadcast(0);
+}
+
+void AMosesPlayerState::BroadcastScore()
+{
+	const int32 IntScore = FMath::RoundToInt(GetScore());
+	OnScoreChanged.Broadcast(IntScore);
+}
+
+void AMosesPlayerState::BroadcastDeaths()
+{
+	OnDeathsChanged.Broadcast(Deaths);
+}
+
+void AMosesPlayerState::BroadcastPlayerCaptures()
+{
+	OnPlayerCapturesChanged.Broadcast(Captures);
+
+	UE_LOG(LogMosesPlayer, Verbose, TEXT("[CAPTURE][CL][PS] BroadcastPlayerCaptures=%d PS=%s"),
+		Captures, *GetNameSafe(this));
+}
+
+void AMosesPlayerState::BroadcastPlayerZombieKills()
+{
+	OnPlayerZombieKillsChanged.Broadcast(ZombieKills);
+
+	UE_LOG(LogMosesPlayer, Verbose, TEXT("[ZOMBIE][CL][PS] BroadcastPlayerZombieKills=%d PS=%s"),
+		ZombieKills, *GetNameSafe(this));
+}
+
+void AMosesPlayerState::BroadcastPlayerPvPKills()
+{
+	OnPlayerPvPKillsChanged.Broadcast(PvPKills);
+
+	UE_LOG(LogMosesPlayer, Verbose, TEXT("[PVP][CL][PS] Broadcast PvPKills=%d PS=%s"),
+		PvPKills, *GetNameSafe(this));
+
+	BroadcastTotalKills();
+}
+
+void AMosesPlayerState::BroadcastPlayerHeadshots()
+{
+	OnPlayerHeadshotsChanged.Broadcast(Headshots);
+
+	UE_LOG(LogMosesPlayer, Verbose, TEXT("[HEADSHOT][CL][PS] Broadcast Headshots=%d PS=%s"),
+		Headshots, *GetNameSafe(this));
+}
+
+void AMosesPlayerState::BroadcastDeathState()
+{
+	OnDeathStateChanged.Broadcast(bIsDead, RespawnEndServerTime);
+
+	UE_LOG(LogMosesSpawn, Warning, TEXT("[DEATH][CL] bIsDead=%d RespawnEndServerTime=%.2f PS=%s"),
+		bIsDead ? 1 : 0, RespawnEndServerTime, *GetNameSafe(this));
+}
+
+void AMosesPlayerState::BroadcastTotalKills()
+{
+	OnTotalKillsChanged.Broadcast(GetTotalKills());
+}
+
+void AMosesPlayerState::NotifyLobbyPlayerStateChanged_Local(const TCHAR* Reason) const
+{
+	APlayerController* PC = Cast<APlayerController>(GetOwner());
+	if (!PC || !PC->IsLocalController())
 	{
 		return;
 	}
 
-	bIsDead = true;
-
-	const AGameStateBase* GS = GetWorld() ? GetWorld()->GetGameState() : nullptr;
-	const float NowServerTime = GS ? GS->GetServerWorldTimeSeconds() : GetWorld()->GetTimeSeconds();
-
-	// DAY11 요구사항: 5초 리스폰 카운트다운
-	constexpr float RespawnDelay = 5.0f;
-	RespawnEndServerTime = NowServerTime + RespawnDelay;
-
-	ForceNetUpdate();
-	OnRep_DeathState();
-
-	// Death 카운트 증가(SSOT)
-	ServerAddDeath();
-
-	UE_LOG(LogMosesSpawn, Warning, TEXT("[DEATH][SV] MarkDead OK RespawnEnd=%.2f PS=%s"),
-		RespawnEndServerTime, *GetNameSafe(this));
-
-	// 실제 리스폰은 GameMode가 확정
-	AMosesMatchGameMode* GM = GetWorld() ? GetWorld()->GetAuthGameMode<AMosesMatchGameMode>() : nullptr;
-	AController* OwnerController = Cast<AController>(GetOwner());
-
-	if (GM && OwnerController)
+	ULocalPlayer* LP = PC->GetLocalPlayer();
+	if (!LP)
 	{
-		GM->ServerScheduleRespawn(OwnerController, RespawnDelay); // [MOD] 아래 GameMode에 추가
+		return;
 	}
+
+	UMosesLobbyLocalPlayerSubsystem* LPS = LP->GetSubsystem<UMosesLobbyLocalPlayerSubsystem>();
+	if (!LPS)
+	{
+		return;
+	}
+
+	UE_LOG(LogMosesPlayer, Verbose, TEXT("[LPS][NotifyFromPS] Reason=%s PS=%s"),
+		Reason ? Reason : TEXT("None"),
+		*GetNameSafe(this));
+
+	LPS->NotifyPlayerStateChanged();
+}
+
+// ============================================================================
+// DoD log
+// ============================================================================
+
+void AMosesPlayerState::DOD_PS_Log(const UObject* Caller, const TCHAR* Phase) const
+{
+	const TCHAR* CallerName = Caller ? *Caller->GetName() : TEXT("None");
+	const TCHAR* PhaseStr = Phase ? Phase : TEXT("None");
+
+	UE_LOG(LogMosesPlayer, Warning,
+		TEXT("[PS][DOD][%s] PS=%s Caller=%s Nick=%s Pid=%s RoomId=%s Host=%d Ready=%d LoggedIn=%d SelChar=%d Deaths=%d Captures=%d ZombieKills=%d Score=%d"),
+		PhaseStr,
+		*GetNameSafe(this),
+		CallerName,
+		*PlayerNickName,
+		*PersistentId.ToString(EGuidFormats::DigitsWithHyphens),
+		*RoomId.ToString(EGuidFormats::DigitsWithHyphens),
+		bIsRoomHost ? 1 : 0,
+		bReady ? 1 : 0,
+		bLoggedIn ? 1 : 0,
+		SelectedCharacterId,
+		Deaths,
+		Captures,
+		ZombieKills,
+		FMath::RoundToInt(GetScore()));
+}
+
+// ============================================================================
+// Vitals getters
+// ============================================================================
+
+float AMosesPlayerState::GetHealth_Current() const
+{
+	return MosesAbilitySystemComponent
+		? MosesAbilitySystemComponent->GetNumericAttribute(UMosesAttributeSet::GetHealthAttribute())
+		: 0.f;
+}
+
+float AMosesPlayerState::GetHealth_Max() const
+{
+	return MosesAbilitySystemComponent
+		? MosesAbilitySystemComponent->GetNumericAttribute(UMosesAttributeSet::GetMaxHealthAttribute())
+		: 0.f;
+}
+
+float AMosesPlayerState::GetShield_Current() const
+{
+	return MosesAbilitySystemComponent
+		? MosesAbilitySystemComponent->GetNumericAttribute(UMosesAttributeSet::GetShieldAttribute())
+		: 0.f;
+}
+
+float AMosesPlayerState::GetShield_Max() const
+{
+	return MosesAbilitySystemComponent
+		? MosesAbilitySystemComponent->GetNumericAttribute(UMosesAttributeSet::GetMaxShieldAttribute())
+		: 0.f;
 }

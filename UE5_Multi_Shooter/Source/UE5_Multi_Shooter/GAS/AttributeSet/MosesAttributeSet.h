@@ -89,5 +89,5 @@ private:
 	void ClampVitals();
 
 	// [MOD] Death 라우팅 (서버 전용)
-	void NotifyDeathIfNeeded_Server(UAbilitySystemComponent* ASC);
+	void NotifyDeathIfNeeded_Server(UAbilitySystemComponent* ASC, const FGameplayEffectModCallbackData& Data); 
 };

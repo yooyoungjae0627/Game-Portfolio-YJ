@@ -7,7 +7,7 @@
 #include "UE5_Multi_Shooter/Lobby/UI/CharacterSelect/MSCharacterCatalog.h"
 #include "UE5_Multi_Shooter/Experience/MosesExperienceManagerComponent.h"
 #include "UE5_Multi_Shooter/Experience/MosesExperienceDefinition.h"
-
+#include "UE5_Multi_Shooter/Match/Components/MosesCombatComponent.h"
 #include "UE5_Multi_Shooter/System/MosesAuthorityGuards.h"
 
 #include "UE5_Multi_Shooter/Match/GameState/MosesMatchGameState.h"
@@ -141,6 +141,21 @@ void AMosesMatchGameMode::PostLogin(APlayerController* NewPlayer)
 void AMosesMatchGameMode::Logout(AController* Exiting)
 {
 	ReleaseReservedStart(Exiting);
+
+	if (HasAuthority() && Exiting)
+	{
+		const TWeakObjectPtr<AController> WeakKey(Exiting);
+
+		if (FTimerHandle* Found = RespawnTimerHandlesByController.Find(WeakKey))
+		{
+			GetWorldTimerManager().ClearTimer(*Found);
+			RespawnTimerHandlesByController.Remove(WeakKey);
+
+			UE_LOG(LogMosesSpawn, Warning, TEXT("[RESPAWN][SV] Cleanup timer on Logout Controller=%s"),
+				*GetNameSafe(Exiting));
+		}
+	}
+
 	Super::Logout(Exiting);
 }
 
@@ -535,47 +550,122 @@ void AMosesMatchGameMode::Server_EnsureDefaultMatchLoadout(APlayerController* PC
 		*GetNameSafe(PS));
 }
 
-// ============================================================================
-// Respawn (DAY11)
-// ============================================================================
-
 void AMosesMatchGameMode::ServerScheduleRespawn(AController* Controller, float DelaySeconds)
 {
-	if (!HasAuthority() || !Controller)
+	MOSES_GUARD_AUTHORITY_VOID(this, "RESPAWN", TEXT("Client attempted ServerScheduleRespawn"));
+
+	if (!Controller)
 	{
+		UE_LOG(LogMosesSpawn, Warning, TEXT("[RESPAWN][SV] Schedule FAIL (Controller null)"));
 		return;
 	}
 
-	FTimerHandle Tmp;
-	GetWorldTimerManager().SetTimer(
-		Tmp,
-		FTimerDelegate::CreateUObject(this, &ThisClass::HandleRespawnTimerExpired, Controller),
-		FMath::Max(0.1f, DelaySeconds),
-		false);
+	DelaySeconds = FMath::Max(0.01f, DelaySeconds);
 
-	UE_LOG(LogMosesSpawn, Warning, TEXT("[RESPAWN][SV] Scheduled Delay=%.2f Controller=%s"),
-		DelaySeconds, *GetNameSafe(Controller));
+	const TWeakObjectPtr<AController> WeakKey(Controller);
+
+	// ✅ [FIX] 이전 타이머가 있으면 교체
+	if (FTimerHandle* OldHandle = RespawnTimerHandlesByController.Find(WeakKey))
+	{
+		GetWorldTimerManager().ClearTimer(*OldHandle);
+	}
+
+	UE_LOG(LogMosesSpawn, Warning, TEXT("[RESPAWN][SV] Schedule OK Delay=%.2f Controller=%s Pawn=%s"),
+		DelaySeconds,
+		*GetNameSafe(Controller),
+		*GetNameSafe(Controller->GetPawn()));
+
+	// ✅ [FIX] "맵에 저장된 핸들 레퍼런스"로 SetTimer 해야 안전
+	FTimerHandle& HandleRef = RespawnTimerHandlesByController.FindOrAdd(WeakKey);
+
+	GetWorldTimerManager().SetTimer(
+		HandleRef,
+		FTimerDelegate::CreateWeakLambda(this, [this, WeakC = TWeakObjectPtr<AController>(Controller)]()
+			{
+				if (!HasAuthority())
+				{
+					return;
+				}
+
+				AController* C = WeakC.Get();
+				if (!IsValid(C))
+				{
+					UE_LOG(LogMosesSpawn, Warning, TEXT("[RESPAWN][SV] Fire FAIL (Controller invalid)"));
+					return;
+				}
+
+				ServerExecuteRespawn(C);
+			}),
+		DelaySeconds,
+		false);
 }
 
-void AMosesMatchGameMode::HandleRespawnTimerExpired(AController* Controller)
+void AMosesMatchGameMode::ServerExecuteRespawn(AController* Controller)
 {
-	if (!HasAuthority() || !Controller)
+	MOSES_GUARD_AUTHORITY_VOID(this, "RESPAWN", TEXT("Client attempted ServerExecuteRespawn"));
+
+	if (!IsValid(Controller))
 	{
 		return;
 	}
+
+	// ✅ [FIX] Remove도 WeakKey로
+	RespawnTimerHandlesByController.Remove(TWeakObjectPtr<AController>(Controller));
+
+	AMosesPlayerState* PS = Controller->GetPlayerState<AMosesPlayerState>();
+	UMosesCombatComponent* Combat = PS ? PS->GetCombatComponent() : nullptr;
+
+	APawn* OldPawn = Controller->GetPawn();
+
+	UE_LOG(LogMosesSpawn, Warning,
+		TEXT("[RESPAWN][SV] EXEC ENTER Controller=%s PS=%s Combat=%s OldPawn=%s PS_Pawn=%s"),
+		*GetNameSafe(Controller),
+		*GetNameSafe(PS),
+		*GetNameSafe(Combat),
+		*GetNameSafe(OldPawn),
+		*GetNameSafe(PS ? PS->GetPawn() : nullptr));
+
+	ReleaseReservedStart(Controller);
+
+	if (IsValid(OldPawn))
+	{
+		Controller->UnPossess();
+		OldPawn->Destroy();
+		UE_LOG(LogMosesSpawn, Warning, TEXT("[RESPAWN][SV] OldPawn Destroyed Pawn=%s"), *GetNameSafe(OldPawn));
+	}
+
+	UE_LOG(LogMosesSpawn, Warning, TEXT("[RESPAWN][SV] RestartPlayer CALL Controller=%s"), *GetNameSafe(Controller));
 
 	RestartPlayer(Controller);
 
-	AMosesPlayerState* PS = Controller->GetPlayerState<AMosesPlayerState>();
+	APawn* NewPawn = Controller->GetPawn();
+
+	UE_LOG(LogMosesSpawn, Warning, TEXT("[RESPAWN][SV] RestartPlayer DONE Controller=%s NewPawn=%s PS_Pawn=%s"),
+		*GetNameSafe(Controller),
+		*GetNameSafe(NewPawn),
+		*GetNameSafe(PS ? PS->GetPawn() : nullptr));
+
+	if (!IsValid(NewPawn))
+	{
+		UE_LOG(LogMosesSpawn, Error, TEXT("[RESPAWN][SV] FAIL (NewPawn null) -> Check PlayerStart / SpawnGate / ChoosePlayerStart"));
+		return;
+	}
+
 	if (PS)
 	{
-		// NOTE:
-		// PS에 “bIsDead/RespawnEndServerTime”이 private이면 반드시 PS 함수로 클리어해야 한다.
-		// DAY11에서 PS에 아래 같은 함수를 하나 두는게 정답:
-		//   void ServerClearDeadAfterRespawn();
-		PS->ServerClearDeadAfterRespawn(); // [MOD] (PS에 구현 필요)
+		PS->ServerClearDeadAfterRespawn();
+	}
+	if (Combat)
+	{
+		Combat->ServerClearDeadAfterRespawn();
+	}
 
-		UE_LOG(LogMosesSpawn, Warning, TEXT("[RESPAWN][SV] Restart OK PS=%s"), *GetNameSafe(PS));
+	UE_LOG(LogMosesSpawn, Warning, TEXT("[RESPAWN][SV] ClearDead DONE PS=%s Combat=%s NewPawn=%s"),
+		*GetNameSafe(PS), *GetNameSafe(Combat), *GetNameSafe(NewPawn));
+
+	if (APlayerController* PC = Cast<APlayerController>(Controller))
+	{
+		Server_EnsureDefaultMatchLoadout(PC, TEXT("Respawn:AfterRestart"));
 	}
 }
 

@@ -105,6 +105,9 @@ public:
 	UFUNCTION(NetMulticast, Reliable)
 	void Multicast_PlayDeathMontage();
 
+	UFUNCTION(NetMulticast, Reliable)
+	void Multicast_PlayDeathMontage_WithPid(const FString& VictimPid); 
+
 private:
 	// =========================================================================
 	// Sprint
@@ -121,7 +124,6 @@ private:
 
 	UFUNCTION(NetMulticast, Unreliable)
 	void Multicast_PlaySprintMontage(bool bStart);
-
 private:
 	// =========================================================================
 	// Combat bind (RepNotify -> Delegate -> Cosmetic)

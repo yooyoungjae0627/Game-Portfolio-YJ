@@ -7,33 +7,52 @@
 
 UMosesAnimInstance::UMosesAnimInstance()
 {
-	// AnimInstance는 기본적으로 Tick과는 별개로 NativeUpdateAnimation이 호출된다.
 }
 
 void UMosesAnimInstance::NativeInitializeAnimation()
 {
 	Super::NativeInitializeAnimation();
 
-	// 초기 소유 Pawn 캐시
 	CacheOwner();
+	UpdateLocomotion();
 }
 
 void UMosesAnimInstance::NativeUpdateAnimation(float DeltaSeconds)
 {
 	Super::NativeUpdateAnimation(DeltaSeconds);
 
-	// 레벨 이동/리스폰 등으로 Pawn이 바뀔 수 있으니 null이면 재캐시
-	if (!OwnerPawn)
-	{
-		CacheOwner();
-	}
-
-	// 실제 Locomotion 값 업데이트
+	// 소유 Pawn이 교체될 수 있음(리스폰/SeamlessTravel)
+	CacheOwner();
 	UpdateLocomotion();
 }
 
+// ============================================================================
+// [ADD] Death setter
+// ============================================================================
+
+void UMosesAnimInstance::SetIsDead(bool bInDead)
+{
+	if (bIsDead == bInDead)
+	{
+		return;
+	}
+
+	bIsDead = bInDead;
+	// AnimBP는 bIsDead를 읽기만 한다.
+	// 여기서 Montage를 직접 재생하거나 로직을 넣지 않는다.
+}
+
+// ============================================================================
+// Internals
+// ============================================================================
+
 void UMosesAnimInstance::CacheOwner()
 {
+	if (OwnerPawn)
+	{
+		return;
+	}
+
 	OwnerPawn = TryGetPawnOwner();
 }
 
@@ -41,7 +60,6 @@ void UMosesAnimInstance::UpdateLocomotion()
 {
 	if (!OwnerPawn)
 	{
-		// 안전 초기화
 		Speed = 0.0f;
 		bIsInAir = false;
 		bIsSprinting = false;
@@ -49,39 +67,50 @@ void UMosesAnimInstance::UpdateLocomotion()
 		return;
 	}
 
-	// 1) Speed: 지면(XY) 속도만 계산
 	const FVector Velocity = OwnerPawn->GetVelocity();
-	Speed = FVector(Velocity.X, Velocity.Y, 0.0f).Size();
+	Speed = Velocity.Size2D();
 
-	// 2) InAir: CharacterMovement의 Falling 여부
 	const ACharacter* Char = Cast<ACharacter>(OwnerPawn);
-	const UCharacterMovementComponent* MoveComp = Char ? Char->GetCharacterMovement() : nullptr;
-	bIsInAir = MoveComp ? MoveComp->IsFalling() : false;
+	if (const UCharacterMovementComponent* MoveComp = Char ? Char->GetCharacterMovement() : nullptr)
+	{
+		bIsInAir = MoveComp->IsFalling();
+	}
+	else
+	{
+		bIsInAir = false;
+	}
 
-	// 3) Sprint: PlayerCharacter만 true 가능(Enemy는 false)
-	const APlayerCharacter* PlayerChar = Cast<APlayerCharacter>(OwnerPawn);
-	bIsSprinting = PlayerChar ? PlayerChar->IsSprinting() : false;
+	// bIsSprinting은 네 프로젝트에서 Pawn의 bIsSprinting(Rep) 또는
+	// Combat/Move 시스템의 값을 읽어야 함.
+	// 여기서는 "소유 Pawn에 IsSprinting()이 있으면" 읽는 방식이 가장 안전함.
+	// (OwnerPawn이 APlayerCharacter이면 IsSprinting() 제공)
+	if (const UObject* Obj = OwnerPawn)
+	{
+		// 캐스팅 비용은 미미. Tick이 아니라 AnimUpdate라서 괜찮고, 필요하면 캐시해도 됨.
+		const class APlayerCharacter* PC = Cast<class APlayerCharacter>(Obj);
+		bIsSprinting = PC ? PC->IsSprinting() : false;
+	}
 
-	// 4) Direction: KismetAnimationLibrary 없이 안전 계산
 	Direction = CalculateDirectionSafe(Velocity, OwnerPawn->GetActorRotation());
 }
 
 float UMosesAnimInstance::CalculateDirectionSafe(const FVector& Velocity, const FRotator& BaseRotation) const
 {
-	const FVector HorizontalVel(Velocity.X, Velocity.Y, 0.0f);
-	if (HorizontalVel.SizeSquared() < KINDA_SMALL_NUMBER)
+	const FVector Vel2D(Velocity.X, Velocity.Y, 0.f);
+	if (Vel2D.IsNearlyZero())
 	{
 		return 0.0f;
 	}
 
-	// 기준 회전에서 Forward/Right 축을 얻고, 속도 방향과 내적해서 각도를 만든다.
-	const FVector Forward = FRotationMatrix(BaseRotation).GetUnitAxis(EAxis::X);
-	const FVector Right = FRotationMatrix(BaseRotation).GetUnitAxis(EAxis::Y);
-	const FVector Dir = HorizontalVel.GetSafeNormal();
+	const FRotator YawRot(0.f, BaseRotation.Yaw, 0.f);
+	const FVector Forward = FRotationMatrix(YawRot).GetUnitAxis(EAxis::X);
+	const FVector Right = FRotationMatrix(YawRot).GetUnitAxis(EAxis::Y);
 
-	const float ForwardCos = FVector::DotProduct(Forward, Dir);
-	const float RightCos = FVector::DotProduct(Right, Dir);
+	const FVector NormVel = Vel2D.GetSafeNormal();
 
-	// atan2(right, forward) → -180 ~ 180
-	return FMath::RadiansToDegrees(FMath::Atan2(RightCos, ForwardCos));
+	const float ForwardDot = FVector::DotProduct(Forward, NormVel);
+	const float RightDot = FVector::DotProduct(Right, NormVel);
+
+	const float AngleRad = FMath::Atan2(RightDot, ForwardDot);
+	return FMath::RadiansToDegrees(AngleRad);
 }

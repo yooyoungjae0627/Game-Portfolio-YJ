@@ -7,7 +7,7 @@
 #include "UE5_Multi_Shooter/MosesPlayerState.h"
 #include "UE5_Multi_Shooter/System/MosesAuthorityGuards.h"
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
-
+#include "UE5_Multi_Shooter/Match/Characters/Animation/MosesAnimInstance.h"
 #include "UE5_Multi_Shooter/Match/Components/MosesInteractionComponent.h"
 #include "UE5_Multi_Shooter/Camera/MosesCameraComponent.h"
 
@@ -468,11 +468,7 @@ void APlayerCharacter::StartAutoFire_Local()
 
 void APlayerCharacter::StopAutoFire_Local()
 {
-	if (!bFireHeldLocal)
-	{
-		return;
-	}
-
+	// ✅ [MOD] bFireHeldLocal 여부와 무관하게 "무조건" 타이머 끊기
 	bFireHeldLocal = false;
 	GetWorldTimerManager().ClearTimer(AutoFireTimerHandle);
 
@@ -481,6 +477,13 @@ void APlayerCharacter::StopAutoFire_Local()
 
 void APlayerCharacter::HandleAutoFireTick_Local()
 {
+	APlayerController* PC = GetController<APlayerController>();
+	if (!PC || !PC->IsLocalController())
+	{
+		StopAutoFire_Local();
+		return;
+	}
+
 	if (!bFireHeldLocal)
 	{
 		return;
@@ -648,6 +651,13 @@ void APlayerCharacter::BindCombatComponent()
 	ApplyAttachmentPlan_Immediate(CachedCombatComponent->GetCurrentSlot());
 
 	HandleDeadChanged(CachedCombatComponent->IsDead());
+
+	UE_LOG(LogMosesWeapon, Warning, TEXT("[WEAPON][Bind][DBG] Pawn=%s BoundCombat=%s PS=%s PS_Pawn=%s"),
+		*GetNameSafe(this),
+		*GetNameSafe(CachedCombatComponent),
+		*GetNameSafe(GetPlayerState()),
+		*GetNameSafe(GetPlayerState() ? GetPlayerState()->GetPawn() : nullptr));
+
 }
 
 void APlayerCharacter::UnbindCombatComponent()
@@ -673,7 +683,8 @@ UMosesCombatComponent* APlayerCharacter::GetCombatComponent_Checked() const
 		return nullptr;
 	}
 
-	return PS->FindComponentByClass<UMosesCombatComponent>();
+	// ✅ [FIX] FindComponentByClass 금지. SSOT 포인터 직접 접근.
+	return PS->GetCombatComponent();
 }
 
 void APlayerCharacter::HandleEquippedChanged(int32 SlotIndex, FGameplayTag WeaponId)
@@ -698,17 +709,110 @@ void APlayerCharacter::HandleDeadChanged(bool bNewDead)
 		bNewDead ? 1 : 0,
 		*GetNameSafe(this));
 
+	// AnimBP 분기용 Dead 상태 전달 (Tick 금지: 상태 변경 시 1회)
+	if (USkeletalMeshComponent* MeshComp = GetMesh())
+	{
+		if (UAnimInstance* AnimInst = MeshComp->GetAnimInstance())
+		{
+			if (UMosesAnimInstance* MosesAnim = Cast<UMosesAnimInstance>(AnimInst))
+			{
+				MosesAnim->SetIsDead(bNewDead);
+			}
+		}
+	}
+
+	// ---------------------------------------------------------------------
+	// Dead 해제(리스폰): 입력/이동/몽타주 정리
+	// ---------------------------------------------------------------------
 	if (!bNewDead)
 	{
+		StopAutoFire_Local();
+
+		if (APlayerController* PC = GetController<APlayerController>())
+		{
+			if (PC->IsLocalController())
+			{
+				PC->SetIgnoreMoveInput(false);
+				PC->SetIgnoreLookInput(false);
+			}
+		}
+
+		if (UCharacterMovementComponent* MoveComp = GetCharacterMovement())
+		{
+			MoveComp->SetMovementMode(EMovementMode::MOVE_Walking);
+		}
+
+		if (GetNetMode() != NM_DedicatedServer)
+		{
+			if (USkeletalMeshComponent* MeshComp = GetMesh())
+			{
+				if (UAnimInstance* AnimInst = MeshComp->GetAnimInstance())
+				{
+					// ✅ 리스폰 시에는 전체 정리 OK
+					AnimInst->Montage_Stop(0.10f);
+				}
+			}
+		}
+
+		UE_LOG(LogMosesCombat, Log, TEXT("[DEAD][COS] Cleared -> Input/Move restored Pawn=%s"), *GetNameSafe(this));
 		return;
 	}
 
-	if (HasAuthority())
+	// ---------------------------------------------------------------------
+	// Dead 진입: 입력/오토파이어/이동 정지 + (중요) DeathMontage는 절대 끊지 않는다
+	// ---------------------------------------------------------------------
+	StopAutoFire_Local();
+
+	if (APlayerController* PC = GetController<APlayerController>())
 	{
-		Multicast_PlayDeathMontage();
+		if (PC->IsLocalController())
+		{
+			PC->SetIgnoreMoveInput(true);
+			PC->SetIgnoreLookInput(true);
+		}
+	}
+
+	// ✅ [FIX] 전체 Montage_Stop(0.0f) 금지
+	// - RepNotify(DeadChanged)가 Multicast(DeathMontage)보다 늦게 오면
+	//   여기서 DeathMontage까지 같이 끊겨서 “재생 로그는 찍히는데 화면에서 안 보이는” 현상이 난다.
+	if (GetNetMode() != NM_DedicatedServer)
+	{
+		if (USkeletalMeshComponent* MeshComp = GetMesh())
+		{
+			if (UAnimInstance* AnimInst = MeshComp->GetAnimInstance())
+			{
+				// DeathMontage는 보호하고, 나머지만 끊는다.
+				if (FireMontage && AnimInst->Montage_IsPlaying(FireMontage))
+				{
+					AnimInst->Montage_Stop(0.0f, FireMontage);
+				}
+				if (ReloadMontage && AnimInst->Montage_IsPlaying(ReloadMontage))
+				{
+					AnimInst->Montage_Stop(0.0f, ReloadMontage);
+				}
+				if (SwapMontage && AnimInst->Montage_IsPlaying(SwapMontage))
+				{
+					AnimInst->Montage_Stop(0.0f, SwapMontage);
+				}
+				if (HitReactMontage && AnimInst->Montage_IsPlaying(HitReactMontage))
+				{
+					AnimInst->Montage_Stop(0.0f, HitReactMontage);
+				}
+
+				// ✅ 혹시 DeathMontage가 이미 재생 중이면 절대 Stop 금지
+				if (DeathMontage && AnimInst->Montage_IsPlaying(DeathMontage))
+				{
+					UE_LOG(LogMosesCombat, Warning, TEXT("[DEAD][COS] DeathMontage already playing -> KEEP Pawn=%s"), *GetNameSafe(this));
+				}
+			}
+		}
 	}
 
 	ApplyDeadCosmetics_Local();
+
+	UE_LOG(LogMosesCombat, Warning, TEXT("[DEAD][COS] Locked input + stopped non-death montages Pawn=%s"), *GetNameSafe(this));
+
+	// DeathMontage는 서버 Multicast에서만 재생 (정책 유지)
 }
 
 void APlayerCharacter::HandleReloadingChanged(bool bReloading)
@@ -1123,22 +1227,65 @@ void APlayerCharacter::TryPlayMontage_Local(UAnimMontage* Montage, const TCHAR* 
 		return;
 	}
 
+	// [MOD] SSOT Dead 상태면 어떤 몽타주도 재생 금지(DeathMontage만 예외적으로 허용)
+	const bool bIsDeadSSOT = (CachedCombatComponent && CachedCombatComponent->IsDead());
+	if (bIsDeadSSOT)
+	{
+		// DeathMontage 자체는 허용 (Multicast_PlayDeathMontage에서만 재생)
+		if (Montage != DeathMontage)
+		{
+			UE_LOG(LogMosesCombat, Warning, TEXT("[ANIM][%s] SKIP (Dead) Montage=%s Pawn=%s"),
+				DebugTag ? DebugTag : TEXT("UNK"),
+				*GetNameSafe(Montage),
+				*GetNameSafe(this));
+			return;
+		}
+	}
+
 	if (!Montage)
 	{
+		UE_LOG(LogMosesCombat, Error, TEXT("[ANIM][%s] FAIL Montage=NULL Pawn=%s"),
+			DebugTag ? DebugTag : TEXT("UNK"),
+			*GetNameSafe(this));
 		return;
 	}
 
 	USkeletalMeshComponent* MeshComp = GetMesh();
 	if (!MeshComp)
 	{
+		UE_LOG(LogMosesCombat, Error, TEXT("[ANIM][%s] FAIL Mesh=NULL Pawn=%s"),
+			DebugTag ? DebugTag : TEXT("UNK"),
+			*GetNameSafe(this));
 		return;
 	}
 
 	UAnimInstance* AnimInst = MeshComp->GetAnimInstance();
 	if (!AnimInst)
 	{
+		UE_LOG(LogMosesCombat, Error, TEXT("[ANIM][%s] FAIL AnimInstance=NULL Mesh=%s Pawn=%s AnimClass=%s"),
+			DebugTag ? DebugTag : TEXT("UNK"),
+			*GetNameSafe(MeshComp),
+			*GetNameSafe(this),
+			*GetNameSafe(MeshComp->AnimClass));
 		return;
 	}
+
+	// [MOD] DeathMontage가 재생 중이면 다른 몽타주(특히 FIRE/RELOAD)가 덮어쓰지 못하게 차단
+	if (DeathMontage && AnimInst->Montage_IsPlaying(DeathMontage) && Montage != DeathMontage)
+	{
+		UE_LOG(LogMosesCombat, Warning, TEXT("[ANIM][%s] SKIP (DeathPlaying) Req=%s Death=%s Pawn=%s"),
+			DebugTag ? DebugTag : TEXT("UNK"),
+			*GetNameSafe(Montage),
+			*GetNameSafe(DeathMontage),
+			*GetNameSafe(this));
+		return;
+	}
+
+	UE_LOG(LogMosesCombat, Warning, TEXT("[ANIM][%s] PLAY Montage=%s AnimInst=%s Pawn=%s"),
+		DebugTag ? DebugTag : TEXT("UNK"),
+		*GetNameSafe(Montage),
+		*GetNameSafe(AnimInst),
+		*GetNameSafe(this));
 
 	if (AnimInst->Montage_IsPlaying(Montage))
 	{
@@ -1152,6 +1299,7 @@ void APlayerCharacter::TryPlayMontage_Local(UAnimMontage* Montage, const TCHAR* 
 		*GetNameSafe(Montage),
 		*GetNameSafe(this));
 }
+
 
 // ============================================================================
 // Fire AV - WeaponData 기반 (현재 장착 무기 = Hand mesh 기준)
@@ -1248,9 +1396,42 @@ void APlayerCharacter::ApplyDeadCosmetics_Local() const
 
 void APlayerCharacter::Multicast_PlayFireMontage_Implementation(FGameplayTag WeaponId)
 {
+	// Dedicated Server는 코스메틱 금지
+	if (GetNetMode() == NM_DedicatedServer)
+	{
+		return;
+	}
+
+	// [MOD] SSOT Dead면 Fire 코스메틱 절대 재생 금지
+	if (CachedCombatComponent && CachedCombatComponent->IsDead())
+	{
+		UE_LOG(LogMosesCombat, Warning, TEXT("[ANIM][FIRE] SKIP (Dead) Pawn=%s"), *GetNameSafe(this));
+		return;
+	}
+
+	USkeletalMeshComponent* MeshComp = GetMesh();
+	if (!MeshComp)
+	{
+		return;
+	}
+
+	UAnimInstance* AnimInst = MeshComp->GetAnimInstance();
+	if (!AnimInst)
+	{
+		return;
+	}
+
+	// [MOD] DeathMontage가 재생 중이면 Fire가 덮어쓰지 못하게 차단
+	if (DeathMontage && AnimInst->Montage_IsPlaying(DeathMontage))
+	{
+		UE_LOG(LogMosesCombat, Warning, TEXT("[ANIM][FIRE] SKIP (DeathPlaying) Pawn=%s"), *GetNameSafe(this));
+		return;
+	}
+
 	TryPlayMontage_Local(FireMontage, TEXT("FIRE"));
 	PlayFireAV_Local(WeaponId);
 }
+
 
 void APlayerCharacter::Multicast_PlayHitReactMontage_Implementation()
 {
@@ -1259,6 +1440,70 @@ void APlayerCharacter::Multicast_PlayHitReactMontage_Implementation()
 
 void APlayerCharacter::Multicast_PlayDeathMontage_Implementation()
 {
-	TryPlayMontage_Local(DeathMontage, TEXT("DEATH"));
+	UE_LOG(LogMosesCombat, Warning,
+		TEXT("[ANIM][DEATH][MC] THIS=%s NetMode=%d World=%s"),
+		*GetNameSafe(this),
+		(int32)GetNetMode(),
+		*GetNameSafe(GetWorld()));
+
+
+	if (GetNetMode() == NM_DedicatedServer)
+	{
+		return;
+	}
+
+	if (!DeathMontage)
+	{
+		UE_LOG(LogMosesCombat, Warning, TEXT("[ANIM][DEATH] SKIP (NoDeathMontage) Pawn=%s"), *GetNameSafe(this));
+		return;
+	}
+
+	USkeletalMeshComponent* MeshComp = GetMesh();
+	if (!MeshComp)
+	{
+		UE_LOG(LogMosesCombat, Warning, TEXT("[ANIM][DEATH] SKIP (NoMesh) Pawn=%s"), *GetNameSafe(this));
+		return;
+	}
+
+	UAnimInstance* AnimInst = MeshComp->GetAnimInstance();
+	if (!AnimInst)
+	{
+		UE_LOG(LogMosesCombat, Warning, TEXT("[ANIM][DEATH] SKIP (NoAnimInst) Pawn=%s"), *GetNameSafe(this));
+		return;
+	}
+
+	// ✅ 죽음은 최우선: 모든 몽타주 즉시 정지
+	AnimInst->Montage_Stop(0.0f);
+
+	AnimInst->Montage_Play(DeathMontage);
+
+	UE_LOG(LogMosesCombat, Warning,
+		TEXT("[ANIM][DEATH] PLAY Montage=%s AnimInst=%s Pawn=%s"),
+		*GetNameSafe(DeathMontage),
+		*GetNameSafe(AnimInst),
+		*GetNameSafe(this));
+
+	// 이동 정지(코스메틱)
 	ApplyDeadCosmetics_Local();
+
+	UE_LOG(LogMosesCombat, Warning, TEXT("[ANIM][DEATH][DBG] Pawn=%s NetMode=%d World=%s"),
+		*GetNameSafe(this), (int32)GetNetMode(), *GetNameSafe(GetWorld()));
+}
+
+void APlayerCharacter::Multicast_PlayDeathMontage_WithPid_Implementation(const FString& VictimPid)
+{
+	if (GetNetMode() == NM_DedicatedServer) return;
+
+	const AMosesPlayerState* PS = GetPlayerState<AMosesPlayerState>();
+	const FString MyPid = PS ? PS->GetPersistentId().ToString(EGuidFormats::DigitsWithHyphens) : TEXT("");
+
+	if (!VictimPid.IsEmpty() && MyPid != VictimPid)
+	{
+		UE_LOG(LogMosesCombat, Verbose, TEXT("[ANIM][DEATH] SKIP (PidMismatch) Req=%s My=%s Pawn=%s"),
+			*VictimPid, *MyPid, *GetNameSafe(this));
+		return;
+	}
+
+	// 기존 Multicast_PlayDeathMontage 내용 그대로 수행
+	Multicast_PlayDeathMontage_Implementation();
 }

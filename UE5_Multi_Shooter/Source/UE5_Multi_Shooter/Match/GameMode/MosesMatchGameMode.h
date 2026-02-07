@@ -1,4 +1,8 @@
-﻿#pragma once
+﻿// ============================================================================
+// UE5_Multi_Shooter/Match/GameMode/MosesMatchGameMode.h  (FULL - UPDATED)
+// ============================================================================
+
+#pragma once
 
 #include "CoreMinimal.h"
 #include "UE5_Multi_Shooter/MosesGameModeBase.h"
@@ -101,21 +105,27 @@ private:
 	// -------------------------------------------------------------------------
 	void Server_EnsureDefaultMatchLoadout(APlayerController* PC, const TCHAR* FromWhere);
 
-private:
+public:
 	// -------------------------------------------------------------------------
 	// DAY11 [MOD] Respawn schedule (Server only)
 	// - PlayerState(GAS Death 확정) -> GameMode가 RestartPlayer를 확정한다.
+	// - [FIX] OldPawn을 UnPossess + Destroy 하지 않으면
+	//         PS↔Pawn 매핑이 흔들리며(로그에서 PS가 다른 Pawn으로 붙음)
+	//         죽음 애니/DeadChanged가 엉뚱한 Pawn에서 터진다.
 	// -------------------------------------------------------------------------
-public:
 	void ServerScheduleRespawn(AController* Controller, float DelaySeconds);
 
 private:
-	void HandleRespawnTimerExpired(AController* Controller);
+	// [MOD] Respawn 타이머를 Controller별로 보관하여 중복 스케줄/핸들 누수를 방지한다.
+	UPROPERTY()
+	TMap<TWeakObjectPtr<AController>, FTimerHandle> RespawnTimerHandlesByController;
 
+	// [MOD] 실제 리스폰 수행(타이머 콜백에서 호출)
+	void ServerExecuteRespawn(AController* Controller);
+
+private:
 	// -------------------------------------------------------------------------
-	// DAY11 [MOD] Result decide (Server only)
-	// - Combat -> Result 진입 시 서버가 승패 확정
-	// - Captures -> PvPKills -> ZombieKills -> Headshots -> Draw
+	// Result decide (Server only)
 	// -------------------------------------------------------------------------
 	void ServerDecideResult_OnEnterResultPhase();
 

@@ -1,4 +1,9 @@
-﻿#include "MosesLobbyGameMode.h"
+﻿// ============================================================================
+// UE5_Multi_Shooter/Lobby/GameMode/MosesLobbyGameMode.cpp  (FULL - UPDATED)
+// - [ADD] Travel 1회 보장 가드 + URL 단일화 + 증거 로그
+// ============================================================================
+
+#include "MosesLobbyGameMode.h"
 
 #include "UE5_Multi_Shooter/MosesPlayerController.h"
 #include "UE5_Multi_Shooter/MosesPlayerState.h"
@@ -23,6 +28,7 @@ AMosesLobbyGameMode::AMosesLobbyGameMode()
 
 	DefaultPawnClass = nullptr;
 
+	// [MOD] BeginPlay에서도 다시 한번 맞춰준다.
 	bUseSeamlessTravel = bUseSeamlessTravelToMatch;
 }
 
@@ -49,9 +55,13 @@ void AMosesLobbyGameMode::BeginPlay()
 
 	bUseSeamlessTravel = bUseSeamlessTravelToMatch;
 
-	UE_LOG(LogMosesSpawn, Warning, TEXT("[LobbyGM] BeginPlay Seamless=%d MatchLevel=%s"),
+	UE_LOG(LogMosesSpawn, Warning, TEXT("[LobbyGM] BeginPlay Seamless=%d MatchLevel=%s RootPath=%s"),
 		bUseSeamlessTravel ? 1 : 0,
-		*MatchLevelName.ToString());
+		*MatchLevelName.ToString(),
+		*MatchMapRootPath);
+
+	// [ADD] 런타임 중복 호출 방지 상태 초기화
+	bTravelToMatchStarted = false;
 }
 
 void AMosesLobbyGameMode::HandleDoD_AfterExperienceReady(const UMosesExperienceDefinition* CurrentExperience)
@@ -87,7 +97,6 @@ void AMosesLobbyGameMode::GenericPlayerInitialization(AController* C)
 	PS->ServerSetLoggedIn(false);
 
 	// [ADD] SeamlessTravel로 따라온 플레이어도 여기서 DevNick 보장
-	//      (단, LoggedIn은 false 유지)
 	EnsureDevNickname_Server(PS);
 
 	UE_LOG(LogMosesSpawn, Log, TEXT("[LobbyGM][GPI] OK PC=%s Pid=%s Nick='%s' LoggedIn=%d"),
@@ -138,11 +147,20 @@ void AMosesLobbyGameMode::PostLogin(APlayerController* NewPlayer)
 // =========================================================
 // Start Game (서버 최종 판정 + Travel)
 // =========================================================
+
 void AMosesLobbyGameMode::HandleStartMatchRequest(AMosesPlayerState* HostPS)
 {
-	// [MOD] 매치 시작은 Warmup Experience로 진입하도록 옵션 포함
 	if (!HasAuthority() || !HostPS)
 	{
+		return;
+	}
+
+	// ✅ [ADD] Travel 중복 방지 + 증거 로그
+	LogTravelCall_Evidence(TEXT("HandleStartMatchRequest"));
+
+	if (bTravelToMatchStarted)
+	{
+		UE_LOG(LogMosesSpawn, Warning, TEXT("[LobbyGM] StartMatch SKIP (AlreadyTraveling)"));
 		return;
 	}
 
@@ -159,14 +177,23 @@ void AMosesLobbyGameMode::HandleStartMatchRequest(AMosesPlayerState* HostPS)
 		return;
 	}
 
-	// ✅ [MOD] Warmup Experience로 시작
-	// - 너 GameModeBase는 OptionsString에서 Experience를 파싱해 FPrimaryAssetId("Experience", Name)로 만든다.
-	// - 따라서 여기 옵션은 "Exp_Match_Warmup" 같은 '이름'만 넣으면 된다.
-	const FString MapPath = TEXT("/Game/Map/MatchLevel?listen?Experience=Exp_Match_Warmup"); // [MOD]
+	// ✅ [ADD] 여기서부터는 단 1회만 허용
+	bTravelToMatchStarted = true;
+
+	// ✅ [MOD] URL은 BuildMatchTravelURL에서 단일 생성
+	const FString MapPath = BuildMatchTravelURL();
 
 	UE_LOG(LogMosesSpawn, Warning, TEXT("[LobbyGM] ServerTravel -> %s"), *MapPath);
 
-	GetWorld()->ServerTravel(MapPath, /*bAbsolute*/ true);
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		UE_LOG(LogMosesSpawn, Error, TEXT("[LobbyGM] ServerTravel FAIL (World NULL)"));
+		bTravelToMatchStarted = false;
+		return;
+	}
+
+	World->ServerTravel(MapPath, /*bAbsolute*/ true);
 }
 
 void AMosesLobbyGameMode::TravelToMatch()
@@ -176,33 +203,76 @@ void AMosesLobbyGameMode::TravelToMatch()
 		return;
 	}
 
-	UE_LOG(LogMosesSpawn, Warning, TEXT("[LobbyGM] TravelToMatch (Debug/Exec)"));
+	// ✅ [ADD] Debug/Exec Travel도 같은 가드/URL 사용
+	LogTravelCall_Evidence(TEXT("TravelToMatch(Exec)"));
+
+	if (bTravelToMatchStarted)
+	{
+		UE_LOG(LogMosesSpawn, Warning, TEXT("[LobbyGM] ExecTravel SKIP (AlreadyTraveling)"));
+		return;
+	}
+
 	ServerTravelToMatch();
 }
 
 // =========================================================
 // Travel (server single function)
 // =========================================================
+
 void AMosesLobbyGameMode::ServerTravelToMatch()
 {
-	// [MOD] 디버그 Travel도 Warmup Experience로 들어가도록 통일
 	UWorld* World = GetWorld();
 	if (!World)
 	{
 		return;
 	}
 
+	// ✅ [ADD] 가드
+	if (bTravelToMatchStarted)
+	{
+		UE_LOG(LogMosesSpawn, Warning, TEXT("[LobbyGM] ServerTravelToMatch SKIP (AlreadyTraveling)"));
+		return;
+	}
+	bTravelToMatchStarted = true;
+
 	bUseSeamlessTravel = bUseSeamlessTravelToMatch;
 
-	// [MOD] ?listen + ?Experience=Exp_Match_Warmup
-	const FString MapPath = FString::Printf(TEXT("/Game/Maps/%s?listen?Experience=Exp_Match_Warmup"),
-		*MatchLevelName.ToString());
+	const FString MapPath = BuildMatchTravelURL();
 
 	UE_LOG(LogMosesSpawn, Warning, TEXT("[LobbyGM] ServerTravel -> %s (Seamless=%d)"),
 		*MapPath,
 		bUseSeamlessTravel ? 1 : 0);
 
 	World->ServerTravel(MapPath, /*bAbsolute*/ true);
+}
+
+FString AMosesLobbyGameMode::BuildMatchTravelURL() const
+{
+	// ✅ [FIX] URL 생성은 여기 하나로 통일
+	// - /Game/Map/ vs /Game/Maps/ 혼용 금지
+	// - Experience 옵션도 여기서만 관리
+
+	const FString Root = MatchMapRootPath.IsEmpty() ? TEXT("/Game/Map/") : MatchMapRootPath;
+
+	// MatchLevelName = "MatchLevel" -> "/Game/Map/MatchLevel"
+	const FString MapAssetPath = FString::Printf(TEXT("%s%s"), *Root, *MatchLevelName.ToString());
+
+	// 네 요구사항: Warmup Experience로 진입
+	return FString::Printf(TEXT("%s?listen?Experience=Exp_Match_Warmup"), *MapAssetPath);
+}
+
+void AMosesLobbyGameMode::LogTravelCall_Evidence(const TCHAR* From) const
+{
+	const UWorld* World = GetWorld();
+
+	UE_LOG(LogMosesSpawn, Error,
+		TEXT("[LobbyGM][TRAVEL_CALL] From=%s Time=%.3f World=%s NetMode=%d Started=%d Seamless=%d"),
+		From ? From : TEXT("None"),
+		World ? World->GetTimeSeconds() : -1.f,
+		*GetNameSafe(World),
+		World ? (int32)World->GetNetMode() : -1,
+		bTravelToMatchStarted ? 1 : 0,
+		bUseSeamlessTravelToMatch ? 1 : 0);
 }
 
 // =========================================================
@@ -323,6 +393,10 @@ int32 AMosesLobbyGameMode::ResolveCharacterId(const FName CharacterId) const
 	return -1;
 }
 
+// =========================================================
+// Dev nickname
+// =========================================================
+
 void AMosesLobbyGameMode::EnsureDevNickname_Server(AMosesPlayerState* PS) const
 {
 	check(HasAuthority());
@@ -338,13 +412,10 @@ void AMosesLobbyGameMode::EnsureDevNickname_Server(AMosesPlayerState* PS) const
 		return;
 	}
 
-	// [MOD] 요구사항: 닉 없으면 Dev_Moses_* 주입
 	const int32 Id = PS->GetPlayerId();
 	const FString FinalNick = FString::Printf(TEXT("Dev_Moses_%d"), Id);
 
 	PS->ServerSetPlayerNickName(FinalNick);
-
-	// [MOD] "로비 진입만으로 로그인 금지" 정책 유지
 	PS->ServerSetLoggedIn(false);
 
 	UE_LOG(LogMosesSpawn, Warning, TEXT("[LobbyGM][DevNick] Applied Nick='%s' (LoggedIn=false) PS=%s"),

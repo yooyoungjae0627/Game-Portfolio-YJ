@@ -1,116 +1,106 @@
 ﻿// ============================================================================
-// MosesLobbyGameMode.h
+// UE5_Multi_Shooter/Lobby/GameMode/MosesLobbyGameMode.h  (FULL - UPDATED)
+// - [ADD] Travel 1회 보장 가드 + URL 단일화
 // ============================================================================
 
 #pragma once
 
 #include "CoreMinimal.h"
-#include "UE5_Multi_Shooter/MosesGameModeBase.h"
+#include "GameFramework/GameModeBase.h"
 #include "MosesLobbyGameMode.generated.h"
 
-class APlayerController;
 class AMosesPlayerController;
 class AMosesPlayerState;
 class AMosesLobbyGameState;
 class UMSCharacterCatalog;
 class UMosesExperienceDefinition;
 
-/**
- * Lobby GM
- * - Experience 시스템 기반(SpawnGate 포함) 프로젝트이므로 AMosesGameModeBase를 상속한다.
- * - InitGame에서 ?Experience=Exp_Lobby를 강제해 로비에선 항상 Exp_Lobby가 적용되게 만든다.
- * - Host Start 승인 시 MatchLevel로 ServerTravel 하되, ?Experience=Exp_Match 옵션을 붙인다.
- *
- * [DIALOGUE/VOICE DISABLED]
- * - CommandCooldownSec 등 대화/커맨드 게이트류는 본 정리본에서는 비활성 처리
- */
 UCLASS()
-class UE5_MULTI_SHOOTER_API AMosesLobbyGameMode : public AMosesGameModeBase
+class UE5_MULTI_SHOOTER_API AMosesLobbyGameMode : public AGameModeBase
 {
 	GENERATED_BODY()
 
 public:
 	AMosesLobbyGameMode();
 
-public:
-	/*====================================================
-	= Start Game (Entry)
-	====================================================*/
+	// ---------------------------------------------------------------------
+	// Engine
+	// ---------------------------------------------------------------------
+	virtual void InitGame(const FString& MapName, const FString& Options, FString& ErrorMessage) override;
+	virtual void BeginPlay() override;
+
+	virtual void HandleDoD_AfterExperienceReady(const UMosesExperienceDefinition* CurrentExperience);
+
+	virtual void GenericPlayerInitialization(AController* C) override;
+	virtual void PostLogin(APlayerController* NewPlayer) override;
+
+	// ---------------------------------------------------------------------
+	// Start Game (서버 최종 판정 + Travel)
+	// ---------------------------------------------------------------------
 	void HandleStartMatchRequest(AMosesPlayerState* HostPS);
+
+	// Debug/Exec endpoint
+	UFUNCTION(Exec)
 	void TravelToMatch();
 
-public:
-	/*====================================================
-	= Character Select (Server authoritative → PS single truth)
-	====================================================*/
+protected:
+	// ---------------------------------------------------------------------
+	// Character Select (Server authoritative → PS single truth)
+	// ---------------------------------------------------------------------
 	void HandleSelectCharacterRequest(AMosesPlayerController* RequestPC, const FName CharacterId);
 
-public:
 	virtual APawn* SpawnDefaultPawnFor_Implementation(AController* NewPlayer, AActor* StartSpot) override; // [FIX]
 
-protected:
-	/*====================================================
-	= Engine
-	====================================================*/
-	virtual void BeginPlay() override;
-	virtual void PostLogin(APlayerController* NewPlayer) override;
-	virtual void InitGame(const FString& MapName, const FString& Options, FString& ErrorMessage) override;
-	virtual void HandleDoD_AfterExperienceReady(const UMosesExperienceDefinition* CurrentExperience) override;
-	virtual void GenericPlayerInitialization(AController* C) override;
+private:
+	// ---------------------------------------------------------------------
+	// Travel (server single function)
+	// ---------------------------------------------------------------------
+	void ServerTravelToMatch();
+
+	// ✅ [ADD] URL 단일화(여기서만 URL 만들고 전부 재사용)
+	FString BuildMatchTravelURL() const;
+
+	// ✅ [ADD] 중복 호출 증거 로그(원인 검증용)
+	void LogTravelCall_Evidence(const TCHAR* From) const;
 
 private:
-	/*====================================================
-	= Helpers (checked getters)
-	====================================================*/
+	// ---------------------------------------------------------------------
+	// Helpers (checked getters)
+	// ---------------------------------------------------------------------
 	AMosesLobbyGameState* GetLobbyGameStateChecked_Log(const TCHAR* Caller) const;
 	AMosesPlayerState* GetMosesPlayerStateChecked_Log(AMosesPlayerController* PC, const TCHAR* Caller) const;
 
 private:
-	/*====================================================
-	= Travel (server single function)
-	====================================================*/
-	void ServerTravelToMatch();
-
-private:
-	/*====================================================
-	= Character catalog resolve
-	====================================================*/
+	// ---------------------------------------------------------------------
+	// Character catalog resolve
+	// ---------------------------------------------------------------------
 	int32 ResolveCharacterId(const FName CharacterId) const;
 
 private:
-	// ----------------------------
-	// Dev Nick Policy (Server-only)
-	// ----------------------------
+	// ---------------------------------------------------------------------
+	// Dev nickname
+	// ---------------------------------------------------------------------
 	void EnsureDevNickname_Server(AMosesPlayerState* PS) const;
 
 private:
-	/*====================================================
-	= Config / Assets
-	====================================================*/
-	UPROPERTY(EditDefaultsOnly, Category = "CharacterSelect")
-	TObjectPtr<UMSCharacterCatalog> CharacterCatalog = nullptr;
-
-	UPROPERTY(EditDefaultsOnly, Category = "Travel")
-	FName MatchLevelName = TEXT("MatchLevel");
-
-	UPROPERTY(EditDefaultsOnly, Category = "Travel")
+	// ---------------------------------------------------------------------
+	// Tunables
+	// ---------------------------------------------------------------------
+	UPROPERTY(EditDefaultsOnly, Category = "Moses|Lobby|Travel")
 	bool bUseSeamlessTravelToMatch = true;
 
-private:
-	/*====================================================
-	= Anti-spam (example placeholders - 유지)
-	====================================================*/
-	UPROPERTY(Transient)
-	TMap<TWeakObjectPtr<APlayerController>, uint16> LastAcceptedClientSeqByPC;
+	UPROPERTY(EditDefaultsOnly, Category = "Moses|Lobby|Travel")
+	FName MatchLevelName = TEXT("MatchLevel");
 
-	UPROPERTY(Transient)
-	TMap<TWeakObjectPtr<APlayerController>, float> LastAcceptedTimeByPC;
+	// 프로젝트에서 실제 맵이 /Game/Map/MatchLevel 인지 /Game/Maps/MatchLevel 인지 혼용 방지용
+	UPROPERTY(EditDefaultsOnly, Category = "Moses|Lobby|Travel")
+	FString MatchMapRootPath = TEXT("/Game/Map/"); // [MOD] 너 프로젝트 로그 기준 기본값
+
+	UPROPERTY(EditDefaultsOnly, Category = "Moses|Lobby|Character")
+	TObjectPtr<UMSCharacterCatalog> CharacterCatalog = nullptr;
 
 private:
-	// ----------------------------
-	// Tunables
-	// ----------------------------
-	/** 닉네임이 비어있을 때 강제 주입할 기본 닉네임 */
-	UPROPERTY(EditDefaultsOnly, Category = "Lobby|Dev")
-	FString DevFallbackNickname = TEXT("Dev_Moses");
+	// ✅ [ADD] Travel 1회 보장 (중복 ServerTravel 차단)
+	UPROPERTY(Transient)
+	bool bTravelToMatchStarted = false;
 };

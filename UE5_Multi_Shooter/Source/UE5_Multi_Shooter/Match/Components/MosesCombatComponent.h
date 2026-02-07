@@ -140,12 +140,31 @@ public:
 	// Dead Hook (서버에서만 확정)
 	// =========================================================================
 	void ServerMarkDead();
+	void ServerClearDeadAfterRespawn();
 
 	void BroadcastSlotsStateChanged(int32 ChangedSlotOr0ForAll, const TCHAR* ContextTag);
 
 	// [ADD][AMMO_TAG] PickupAmmo가 Tag 기반일 때 호출 (내부에서 enum으로 매핑해서 기존 로직 재사용)
 	void ServerAddAmmoByTag(FGameplayTag AmmoTypeId, int32 ReserveMaxDelta, int32 ReserveFillDelta);
 
+
+	// ============================================================================
+	// [MOD][DEBUG] Trace Debug (Server -> All Clients)
+	// - 서버에서 계산한 CamTrace / MuzzleTrace 결과를 멀티캐스트로 뿌려서
+	//   "클라 창에서도" 반드시 보이게 만든다.
+	// ============================================================================
+
+	UFUNCTION(NetMulticast, Unreliable)
+	void Multicast_DrawFireTraceDebug(
+		const FVector& CamStart,
+		const FVector& CamEnd,
+		bool bCamHit,
+		const FVector& CamImpact,
+		const FVector& MuzzleStart,
+		const FVector& MuzzleEnd,
+		bool bFinalHit,
+		const FVector& FinalImpact
+	);
 
 protected:
 	virtual void BeginPlay() override;

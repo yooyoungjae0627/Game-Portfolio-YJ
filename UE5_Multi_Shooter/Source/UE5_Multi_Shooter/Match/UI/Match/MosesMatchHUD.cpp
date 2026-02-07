@@ -19,6 +19,7 @@
 #include "UE5_Multi_Shooter/Match/Flag/MosesCaptureComponent.h"
 #include "UE5_Multi_Shooter/Match/Flag/MosesFlagSpot.h"
 #include "UE5_Multi_Shooter/Match/UI/Match/MosesCaptureProgressWidget.h"
+#include "UE5_Multi_Shooter/Match/Components/MosesCombatComponent.h"
 
 #include "Components/ProgressBar.h"
 #include "Components/TextBlock.h"
@@ -335,13 +336,25 @@ void UMosesMatchHUD::BindToPlayerState()
 		return;
 	}
 
+	// 같은 PS면, 하위 컴포넌트만 재확인
 	if (CachedPlayerState.Get() == PS)
 	{
 		BindToCombatComponent_FromPlayerState();
 		BindToCaptureComponent_FromPlayerState();
+
+		// ✅ [FIX] 같은 PS여도 스냅샷을 한번 더 강제 (Late bind / GF 재부착 대비)
+		HandleHealthChanged(PS->GetHealth_Current(), PS->GetHealth_Max());
+		HandleShieldChanged(PS->GetShield_Current(), PS->GetShield_Max());
+		HandleScoreChanged(FMath::RoundToInt(PS->GetScore()));
+		HandlePvPKillsChanged(PS->GetPvPKills());
+		HandleCapturesChanged(PS->GetCaptures());
+		HandleZombieKillsChanged(PS->GetZombieKills());
+		HandleAmmoChanged_FromPS(0, 0); // PS->BroadcastAmmoAndGrenade()가 늦을 수 있으니 최소 방어
+
 		return;
 	}
 
+	// 이전 PS 해제
 	if (AMosesPlayerState* OldPS = CachedPlayerState.Get())
 	{
 		OldPS->OnHealthChanged.RemoveAll(this);
@@ -358,6 +371,7 @@ void UMosesMatchHUD::BindToPlayerState()
 
 	CachedPlayerState = PS;
 
+	// 델리게이트 바인딩
 	PS->OnHealthChanged.AddUObject(this, &ThisClass::HandleHealthChanged);
 	PS->OnShieldChanged.AddUObject(this, &ThisClass::HandleShieldChanged);
 	PS->OnScoreChanged.AddUObject(this, &ThisClass::HandleScoreChanged);
@@ -370,12 +384,30 @@ void UMosesMatchHUD::BindToPlayerState()
 
 	UE_LOG(LogMosesHUD, Warning, TEXT("[HUD][CL] Bound PlayerState delegates PS=%s"), *GetNameSafe(PS));
 
+	// ✅ [FIX][핵심] Bind 직후 “즉시 스냅샷” 강제 적용 (Delegate/Rep 타이밍 의존 제거)
+	{
+		const float CurHP = PS->GetHealth_Current();
+		const float MaxHP = PS->GetHealth_Max();
+		const float CurShield = PS->GetShield_Current();
+		const float MaxShield = PS->GetShield_Max();
+
+		HandleHealthChanged(CurHP, MaxHP);
+		HandleShieldChanged(CurShield, MaxShield);
+
+		HandleScoreChanged(FMath::RoundToInt(PS->GetScore()));
+		HandleCapturesChanged(PS->GetCaptures());
+		HandleZombieKillsChanged(PS->GetZombieKills());
+		HandlePvPKillsChanged(PS->GetPvPKills());
+	}
+
+	// 하위 컴포넌트 바인딩
 	BindToCombatComponent_FromPlayerState();
 	BindToCaptureComponent_FromPlayerState();
-	HandleCapturesChanged(PS->GetCaptures());
-	HandleZombieKillsChanged(PS->GetZombieKills());
-	HandlePvPKillsChanged(PS->GetPvPKills());
+
+	// Aim UI 즉시 동기화
+	UpdateAimWidgets_Immediate();
 }
+
 
 void UMosesMatchHUD::BindToCombatComponent_FromPlayerState()
 {
@@ -498,17 +530,33 @@ void UMosesMatchHUD::ApplySnapshotFromMatchGameState()
 
 void UMosesMatchHUD::RefreshInitial()
 {
-	HandleScoreChanged(0);
-	HandlePvPKillsChanged(0);
-	HandleCapturesChanged(0);
-	HandleZombieKillsChanged(0);
+	// ✅ [FIX] 더미 값(100/100 등)을 강제로 박지 않는다.
+	// - Bind 이후 스냅샷(PS/GS/Combat)으로만 초기 정합을 맞춘다.
 
-	HandleAmmoChanged_FromPS(0, 0);
-	HandleGrenadeChanged(0);
+	AMosesPlayerState* PS = CachedPlayerState.Get();
+	if (PS)
+	{
+		HandleScoreChanged(FMath::RoundToInt(PS->GetScore()));
+		HandlePvPKillsChanged(PS->GetPvPKills());
+		HandleCapturesChanged(PS->GetCaptures());
+		HandleZombieKillsChanged(PS->GetZombieKills());
 
-	HandleHealthChanged(100.f, 100.f);
-	HandleShieldChanged(100.f, 100.f);
+		HandleHealthChanged(PS->GetHealth_Current(), PS->GetHealth_Max());
+		HandleShieldChanged(PS->GetShield_Current(), PS->GetShield_Max());
+	}
+	else
+	{
+		// PS가 아직 없으면 최소 안전값만
+		HandleScoreChanged(0);
+		HandlePvPKillsChanged(0);
+		HandleCapturesChanged(0);
+		HandleZombieKillsChanged(0);
 
+		HandleHealthChanged(0.f, 0.f);
+		HandleShieldChanged(0.f, 0.f);
+	}
+
+	// Ammo/Grenade는 Combat snapshot 쪽이 더 정확하므로 ApplySnapshot이 우선
 	ApplySnapshotFromMatchGameState();
 
 	if (CaptureProgress)
@@ -516,9 +564,9 @@ void UMosesMatchHUD::RefreshInitial()
 		CaptureProgress->SetVisibility(ESlateVisibility::Collapsed);
 	}
 
-	// [MOD] 초기에도 Aim UI는 규칙대로 고정
-	UpdateAimWidgets_Immediate(); // [MOD]
+	UpdateAimWidgets_Immediate();
 }
+
 
 // ============================================================================
 // Crosshair Update (표시 전용)
