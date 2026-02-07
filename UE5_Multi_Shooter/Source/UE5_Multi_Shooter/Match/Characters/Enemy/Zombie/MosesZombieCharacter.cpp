@@ -138,7 +138,7 @@ void AMosesZombieCharacter::AttachAttackHitBoxesToHandSockets()
 	static const FName LeftSocketName(TEXT("LeftHandSocket"));
 	static const FName RightSocketName(TEXT("RightHandSocket"));
 
-	auto AttachIfSocketExists = [this, MeshComp](UBoxComponent* HitBox, const FName SocketName, const TCHAR* SideLabel)
+	auto AttachOne = [this, MeshComp](UBoxComponent* HitBox, const FName SocketName, const TCHAR* SideLabel)
 		{
 			if (!HitBox)
 			{
@@ -153,14 +153,35 @@ void AMosesZombieCharacter::AttachAttackHitBoxesToHandSockets()
 				return;
 			}
 
-			HitBox->AttachToComponent(MeshComp, FAttachmentTransformRules::KeepRelativeTransform, SocketName);
+			// ✅ 핵심: Snap으로 소켓에 "정확히" 붙인다 (기존 상대 오프셋 제거)
+			HitBox->AttachToComponent(
+				MeshComp,
+				FAttachmentTransformRules::SnapToTargetNotIncludingScale,
+				SocketName
+			);
 
-			UE_LOG(LogMosesZombie, Log, TEXT("[ZOMBIE][HITBOX] %s Attached Socket=%s Zombie=%s"),
+			// ✅ 안전: 상대 트랜스폼 강제 0 (에디터/이전 값 꼬임 제거)
+			HitBox->SetRelativeLocation(FVector::ZeroVector);
+			HitBox->SetRelativeRotation(FRotator::ZeroRotator);
+
+			UE_LOG(LogMosesZombie, Warning, TEXT("[ZOMBIE][HITBOX] %s Attached(SNAP) Socket=%s Zombie=%s"),
 				SideLabel, *SocketName.ToString(), *GetName());
+
+			// ✅ 증거 로그: 진짜 소켓 위치와 박스 위치가 붙었는지 확인
+			const FVector SocketLoc = MeshComp->GetSocketLocation(SocketName);
+			const FVector BoxLoc = HitBox->GetComponentLocation();
+
+			UE_LOG(LogMosesZombie, Warning,
+				TEXT("[ZOMBIE][HITBOX][ATTACH_DBG] %s SocketLoc=%s BoxLoc=%s Parent=%s"),
+				SideLabel,
+				*SocketLoc.ToString(),
+				*BoxLoc.ToString(),
+				*GetNameSafe(HitBox->GetAttachParent())
+			);
 		};
 
-	AttachIfSocketExists(AttackHitBox_L, LeftSocketName, TEXT("L"));
-	AttachIfSocketExists(AttackHitBox_R, RightSocketName, TEXT("R"));
+	AttachOne(AttackHitBox_L, LeftSocketName, TEXT("L"));
+	AttachOne(AttackHitBox_R, RightSocketName, TEXT("R"));
 }
 
 void AMosesZombieCharacter::InitializeAttributes_Server()
@@ -276,6 +297,12 @@ void AMosesZombieCharacter::ServerStartAttack()
 
 void AMosesZombieCharacter::ServerSetMeleeAttackWindow(EMosesZombieAttackHand Hand, bool bEnabled, bool bResetHitActorsOnBegin)
 {
+	UE_LOG(LogMosesZombie, Warning, TEXT("[ZOMBIE][HITBOX][SV] Window Hand=%d Enabled=%d Reset=%d L=%d R=%d"),
+		(int32)Hand, bEnabled ? 1 : 0, bResetHitActorsOnBegin ? 1 : 0,
+		AttackHitBox_L ? (int32)AttackHitBox_L->GetCollisionEnabled() : -1,
+		AttackHitBox_R ? (int32)AttackHitBox_R->GetCollisionEnabled() : -1);
+
+
 	if (!HasAuthority() || bIsDying_Server)
 	{
 		return;
@@ -389,6 +416,10 @@ void AMosesZombieCharacter::OnAttackHitOverlapBegin(
 	bool /*bFromSweep*/,
 	const FHitResult& /*SweepResult*/)
 {
+	UE_LOG(LogMosesZombie, Warning, TEXT("[ZOMBIE][HIT][SV] Overlap Comp=%s Other=%s"),
+		*GetNameSafe(OverlappedComp),
+		*GetNameSafe(OtherActor));
+
 	if (!HasAuthority() || bIsDying_Server)
 	{
 		return;
