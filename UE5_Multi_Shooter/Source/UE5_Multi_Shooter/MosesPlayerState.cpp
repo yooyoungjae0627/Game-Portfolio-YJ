@@ -608,6 +608,9 @@ void AMosesPlayerState::ServerNotifyDeathFromGAS()
 		return;
 	}
 
+	// ---------------------------------------------------------------------
+	// 1) Dead state (SSOT)
+	// ---------------------------------------------------------------------
 	bIsDead = true;
 
 	if (UMosesCombatComponent* Combat = GetCombatComponent())
@@ -616,23 +619,16 @@ void AMosesPlayerState::ServerNotifyDeathFromGAS()
 	}
 
 	// ---------------------------------------------------------------------
-	// ✅ [MOD] Player respawn delay (5 seconds)
+	// 2) Respawn time (5 seconds)
 	// ---------------------------------------------------------------------
-	const float Delay = 5.0f; // ✅ [MOD] 10.0f -> 5.0f
+	const float Delay = 5.0f; // ✅ [MOD] 10 -> 5
 	const float Now = (GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f);
 	RespawnEndServerTime = Now + Delay;
 
-	// ---------------------------------------------------------------------
-	// ✅ [MOD] Death announcement (1 sec) - "5초 뒤에 리스폰 됩니다."
-	// ---------------------------------------------------------------------
-	if (AMosesMatchGameState* MGS = GetWorld() ? GetWorld()->GetGameState<AMosesMatchGameState>() : nullptr)
-	{
-		MGS->ServerStartAnnouncementText(FText::FromString(TEXT("5초 뒤에 리스폰 됩니다.")), 1);
-		UE_LOG(LogMosesPhase, Warning, TEXT("[ANN][SV] DeathRespawnNotice Fired Delay=%.0f PS=%s"), Delay, *GetNameSafe(this));
-	}
-
 	ForceNetUpdate();
-	OnRep_DeathState(); // ListenServer immediate UI update
+
+	// ListenServer 즉시 UI 갱신
+	OnRep_DeathState();
 
 	UE_LOG(LogMosesSpawn, Warning,
 		TEXT("[DEATH][SV][PS] MarkDead OK bIsDead=1 RespawnEnd=%.2f Delay=%.2f PS=%s Pawn=%s"),
@@ -641,6 +637,24 @@ void AMosesPlayerState::ServerNotifyDeathFromGAS()
 		*GetNameSafe(this),
 		*GetNameSafe(GetPawn()));
 
+	// ---------------------------------------------------------------------
+	// 3) Announcement (Server -> Rep to all clients)
+	// - "5초 뒤에 리스폰됩니다."를 5초 동안 표시
+	// ---------------------------------------------------------------------
+	if (UWorld* World = GetWorld())
+	{
+		if (AMosesMatchGameState* MGS = World->GetGameState<AMosesMatchGameState>())
+		{
+			// ✅ [MOD] 너가 원하는 한글 고정 문구
+			//MGS->ServerStartAnnouncementText(FText::FromString(TEXT("잠시 후 리스폰됩니다.")), 5);
+
+			UE_LOG(LogMosesPhase, Warning, TEXT("[ANN][SV] DeathRespawnNotice -> 5 sec PS=%s"), *GetNameSafe(this));
+		}
+	}
+
+	// ---------------------------------------------------------------------
+	// 4) Ask GameMode to schedule respawn
+	// ---------------------------------------------------------------------
 	APawn* Pawn = GetPawn();
 	AController* Controller = Pawn ? Pawn->GetController() : nullptr;
 
