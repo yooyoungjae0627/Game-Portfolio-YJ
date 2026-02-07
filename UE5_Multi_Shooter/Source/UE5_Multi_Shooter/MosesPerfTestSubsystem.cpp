@@ -1,4 +1,7 @@
-// MosesPerfTestSubsystem.cpp
+// ============================================================================
+// UE5_Multi_Shooter/Perf/MosesPerfTestSubsystem.cpp  (FULL - UPDATED)
+// ============================================================================
+
 #include "MosesPerfTestSubsystem.h"
 
 #include "MosesPerfSpawner.h"
@@ -42,14 +45,13 @@ void UMosesPerfTestSubsystem::SetPerfMode(EMosesPerfMode NewMode)
 	UE_LOG(LogMosesPhase, Warning, TEXT("[PERF][MODE] %d -> %d"), (int32)Prev, (int32)NewMode);
 
 	// DAY1: “연결만”
-	// DAY6+: 여기서 Render/Anim/Net 정책 Subsystem들에게 브로드캐스트하면 된다.
 }
 
 void UMosesPerfTestSubsystem::SetPerfSpawner(AMosesPerfSpawner* InSpawner)
 {
 	PerfSpawner = InSpawner;
 
-	UE_LOG(LogMosesPhase, Warning, TEXT("[PERF][BIND] PerfSpawner=%s"),
+	UE_LOG(LogMosesPhase, Warning, TEXT("[PERF][BOOT] SetSpawner=%s"),
 		InSpawner ? *InSpawner->GetName() : TEXT("null"));
 }
 
@@ -136,20 +138,20 @@ void UMosesPerfTestSubsystem::TeleportLocalCameraToMarker(EMosesPerfMarkerId Mar
 		return;
 	}
 
-	APawn* Pawn = PC->GetPawn();
-	if (!Pawn)
-	{
-		UE_LOG(LogMosesPhase, Warning, TEXT("[PERF][MARKER] Pawn=null (spectator?)"));
-		// Pawn이 없으면 ViewTarget만 옮겨도 됨. 여기선 단순화:
-		PC->SetControlRotation(Marker->GetActorRotation());
-		return;
-	}
-
-	Pawn->TeleportTo(Marker->GetActorLocation(), Marker->GetActorRotation());
+	// ---------------------------------------------------------------------
+	// [MOD] “카메라 고정 마커” 목적:
+	// - Pawn Teleport 대신 ViewTarget을 Marker로 고정
+	// - 실험 중 충돌/이동/AI 반응 변수를 최소화
+	// ---------------------------------------------------------------------
+	PC->SetViewTarget(Marker);
 	PC->SetControlRotation(Marker->GetActorRotation());
 
-	UE_LOG(LogMosesPhase, Warning, TEXT("[PERF][MARKER] Teleport Id=%d Loc=%s Rot=%s"),
+	UE_LOG(
+		LogMosesPhase,
+		Warning,
+		TEXT("[PERF][MARKER] ViewTarget=Marker Id=%d Loc=%s Rot=%s"),
 		(int32)MarkerId,
 		*Marker->GetActorLocation().ToString(),
-		*Marker->GetActorRotation().ToString());
+		*Marker->GetActorRotation().ToString()
+	);
 }

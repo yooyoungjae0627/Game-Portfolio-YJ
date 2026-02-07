@@ -302,3 +302,18 @@ void UMosesAIPolicyComponent::ApplyTier(EMosesAITickTier NewTier, const TCHAR* R
 		TEXT("[AI][POLICY][SV] ApplyTier=%d Reason=%s Decision=%.2f Perception=%.2f RepathCD=%.2f Owner=%s"),
 		(int32)CurrentTier, Reason, P.DecisionIntervalSec, P.PerceptionPollIntervalSec, P.NavRepathCooldownSec, *GetOwner()->GetName());
 }
+
+void UMosesAIPolicyComponent::ForceSetTargetActor_Server(AActor* NewTarget)
+{
+	if (!GetOwner() || !GetOwner()->HasAuthority())
+	{
+		UE_LOG(LogMosesAI, Warning, TEXT("[AI][POLICY][GUARD] ForceSetTargetActor_Server denied: NotAuthority Owner=%s"),
+			GetOwner() ? *GetOwner()->GetName() : TEXT("null"));
+		return;
+	}
+
+	ForcedTargetActor = NewTarget;
+
+	UE_LOG(LogMosesAI, Warning, TEXT("[AI][POLICY][SV] ForcedTarget=%s"),
+		NewTarget ? *NewTarget->GetName() : TEXT("null"));
+}

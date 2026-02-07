@@ -37,6 +37,12 @@ public:
 	UFUNCTION(BlueprintCallable, Category="Moses|AI|Policy")
 	void MarkRepathRequested();
 
+	UFUNCTION(BlueprintCallable, Category = "Moses|AI|Policy")
+	void ForceSetTargetActor_Server(AActor* NewTarget);
+
+	UFUNCTION(BlueprintPure, Category = "Moses|AI|Policy")
+	AActor* GetForcedTargetActor() const { return ForcedTargetActor.Get(); }
+
 protected:
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
@@ -66,6 +72,9 @@ private:
 	UPROPERTY(EditAnywhere, Category="Moses|AI|Policy")
 	float PolicyTickIntervalSec = 0.5f; // Tier 평가 자체는 너무 자주 할 필요 없음
 
+	UPROPERTY(Transient)
+	TWeakObjectPtr<AActor> ForcedTargetActor;
+
 	// ---------- Runtime ----------
 	EMosesAITickTier CurrentTier = EMosesAITickTier::C;
 
@@ -80,4 +89,5 @@ private:
 	float NextAllowedRepathServerTime = 0.0f;
 
 	FTimerHandle TimerHandle_PolicyTick;
+
 };
