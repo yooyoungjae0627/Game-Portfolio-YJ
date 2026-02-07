@@ -6,7 +6,8 @@
 
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
 #include "UE5_Multi_Shooter/MosesPlayerState.h"
-#include "UE5_Multi_Shooter/Match/Characters/Player/PlayerCharacter.h" // for APlayerCharacter
+#include "UE5_Multi_Shooter/Match/Characters/Player/PlayerCharacter.h" 
+#include "UE5_Multi_Shooter/MosesPlayerController.h" 
 
 #include "Net/UnrealNetwork.h"
 #include "AbilitySystemComponent.h"
@@ -237,39 +238,37 @@ void UMosesAttributeSet::NotifyDeathIfNeeded_Server(
 		return;
 	}
 
+	// ---------------------------------------------------------------------
+	// Headshot 판정: EffectContext HitResult BoneName
+	// (CombatComponent에서 Ctx.AddHitResult(Hit,true) 필수)
+	// ---------------------------------------------------------------------
+	const FGameplayEffectContextHandle Ctx = Data.EffectSpec.GetEffectContext();
+
+	bool bIsHeadshot = false;
+	if (const FHitResult* HR = Ctx.GetHitResult())
+	{
+		const FString BoneLower = HR->BoneName.ToString().ToLower();
+		bIsHeadshot = BoneLower.Contains(TEXT("head"));
+	}
+
 	UE_LOG(LogMosesHP, Warning,
-		TEXT("[DEATH][SV] DeathConfirmed HP=%.1f VictimPS=%s"),
-		CurHP,
-		*GetNameSafe(VictimPS));
+		TEXT("[DEATH][SV] DeathConfirmed HP=%.1f VictimPS=%s Headshot=%d"),
+		CurHP, *GetNameSafe(VictimPS), bIsHeadshot ? 1 : 0);
+
+	// Victim Deaths++
+	VictimPS->ServerAddDeath();
 
 	// 1) SSOT Death 확정(상태/리스폰 스케줄)
 	VictimPS->ServerNotifyDeathFromGAS();
 
-	// 2) ✅ Victim Pawn 해상도 강화 -> VictimChar에서만 DeathMontage 멀티캐스트
+	// 2) Death Montage
 	APawn* VictimPawn = MosesAttr_Private::ResolveVictimPawn_Strong(Data, VictimPS);
 	if (APlayerCharacter* VictimChar = Cast<APlayerCharacter>(VictimPawn))
 	{
-		UE_LOG(LogMosesCombat, Warning,
-			TEXT("[ANIM][DEATH][SV] Multicast Death VictimPS=%s Pawn=%s Avatar=%s"),
-			*GetNameSafe(VictimPS),
-			*GetNameSafe(VictimChar),
-			Data.Target.AbilityActorInfo.IsValid()
-			? *GetNameSafe(Data.Target.AbilityActorInfo->AvatarActor.Get())
-			: TEXT("None"));
-
-		// ✅ Pid 필터 제거 (제일 안전)
 		VictimChar->Multicast_PlayDeathMontage();
 	}
-	else
-	{
-		UE_LOG(LogMosesCombat, Warning,
-			TEXT("[ANIM][DEATH][SV] SKIP (VictimPawn invalid) VictimPS=%s Pawn=%s"),
-			*GetNameSafe(VictimPS),
-			*GetNameSafe(VictimPawn));
-	}
 
-	// 3) Killer PvP Kill 처리 (자살/환경사 제외)
-	const FGameplayEffectContextHandle Ctx = Data.EffectSpec.GetEffectContext();
+	// 3) Killer
 	AController* InstigatorController = MosesAttr_Private::ResolveInstigatorController(Ctx);
 
 	AMosesPlayerState* KillerPS =
@@ -277,23 +276,33 @@ void UMosesAttributeSet::NotifyDeathIfNeeded_Server(
 		? InstigatorController->GetPlayerState<AMosesPlayerState>()
 		: nullptr;
 
+	AMosesPlayerController* KillerPC =
+		InstigatorController
+		? Cast<AMosesPlayerController>(InstigatorController)
+		: nullptr;
+
 	if (KillerPS && KillerPS != VictimPS)
 	{
 		KillerPS->ServerAddPvPKill(1);
 
 		UE_LOG(LogMosesPlayer, Warning,
-			TEXT("[PVP][SV] KillAwarded KillerPS=%s VictimPS=%s"),
+			TEXT("[PVP][SV] KillAwarded KillerPS=%s VictimPS=%s Headshot=%d"),
 			*GetNameSafe(KillerPS),
-			*GetNameSafe(VictimPS));
-	}
-	else
-	{
-		UE_LOG(LogMosesPlayer, Warning,
-			TEXT("[PVP][SV] KillAward SKIP KillerPS=%s VictimPS=%s"),
-			*GetNameSafe(KillerPS),
-			*GetNameSafe(VictimPS));
+			*GetNameSafe(VictimPS),
+			bIsHeadshot ? 1 : 0);
+
+		if (bIsHeadshot)
+		{
+			KillerPS->ServerAddHeadshot(1);
+
+			if (KillerPC)
+			{
+				KillerPC->Client_ShowHeadshotToast_OwnerOnly(FText::FromString(TEXT("헤드샷!")), 2.0f);
+			}
+		}
 	}
 }
+
 
 void UMosesAttributeSet::OnRep_Health(const FGameplayAttributeData& OldValue)
 {

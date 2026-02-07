@@ -698,83 +698,72 @@ void AMosesMatchGameMode::ServerDecideResult_OnEnterResultPhase()
 		}
 	}
 
+	// ---------------------------------------------------------------------
+	// [MOD] Result 진입 순간 1회 점수 계산/저장
+	// TotalScore = PvPKills*10 + Captures*20 + ZombieKills
+	// ---------------------------------------------------------------------
+	int32 MaxScore = INT32_MIN;
+	int32 MaxCount = 0;
 	AMosesPlayerState* WinnerPS = nullptr;
-	EMosesResultReason Reason = EMosesResultReason::None;
 
-	// WinnerPid는 TryChoose에서 채우되, 실제 WinnerPS도 잡아준다.
-	FString WinnerPid;
-	const bool bHasWinner = TryChooseWinnerByReason_Server(Players, WinnerPid, Reason);
-
-	if (bHasWinner)
+	for (AMosesPlayerState* PS : Players)
 	{
-		for (AMosesPlayerState* PS : Players)
+		if (!PS)
 		{
-			if (!PS)
-			{
-				continue;
-			}
+			continue;
+		}
 
-			const FString Pid = PS->GetPersistentId().ToString(EGuidFormats::DigitsWithHyphens);
-			if (Pid == WinnerPid)
-			{
-				WinnerPS = PS;
-				break;
-			}
+		const int32 Total =
+			(PS->GetPvPKills() * 10) +
+			(PS->GetCaptures() * 20) +
+			(PS->GetZombieKills() * 1);
+
+		PS->ServerSetTotalScore(Total);
+
+		UE_LOG(LogMosesPhase, Warning, TEXT("[RESULT][SV] ComputeScore PS=%s K=%d C=%d Z=%d Total=%d"),
+			*GetNameSafe(PS), PS->GetPvPKills(), PS->GetCaptures(), PS->GetZombieKills(), Total);
+
+		if (Total > MaxScore)
+		{
+			MaxScore = Total;
+			MaxCount = 1;
+			WinnerPS = PS;
+		}
+		else if (Total == MaxScore)
+		{
+			MaxCount++;
 		}
 	}
-
-	// Reason -> String 변환(저장/표시용)
-	auto ReasonToString = [](EMosesResultReason InReason) -> FString
-		{
-			switch (InReason)
-			{
-			case EMosesResultReason::Captures:    return TEXT("Captures");
-			case EMosesResultReason::PvPKills:    return TEXT("PvPKills");
-			case EMosesResultReason::ZombieKills: return TEXT("ZombieKills");
-			case EMosesResultReason::Headshots:   return TEXT("Headshots");
-			case EMosesResultReason::Draw:        return TEXT("Draw");
-			default:                               return TEXT("None");
-			}
-		};
 
 	FMosesMatchResultState RS;
 	RS.bIsResult = true;
 
-	if (!bHasWinner || !WinnerPS)
+	if (!WinnerPS || MaxCount != 1)
 	{
 		RS.bIsDraw = true;
 		RS.WinnerPersistentId = TEXT("");
 		RS.WinnerNickname = TEXT("");
 		RS.ResultReason = TEXT("Draw");
 
-		UE_LOG(LogMosesPhase, Warning, TEXT("[RESULT][SV] DRAW (All tied or WinnerPS missing)"));
+		UE_LOG(LogMosesPhase, Warning, TEXT("[RESULT][SV] DRAW MaxScore=%d Count=%d"), MaxScore, MaxCount);
 	}
 	else
 	{
 		RS.bIsDraw = false;
-		RS.WinnerPersistentId = WinnerPid;
+		RS.WinnerPersistentId = WinnerPS->GetPersistentId().ToString(EGuidFormats::DigitsWithHyphens);
 		RS.WinnerNickname = WinnerPS->GetPlayerNickName();
-		RS.ResultReason = ReasonToString(Reason);
+		RS.ResultReason = TEXT("TotalScore");
 
-		UE_LOG(LogMosesPhase, Warning, TEXT("[RESULT][SV] WinnerPid=%s Nick=%s Reason=%s"),
-			*RS.WinnerPersistentId,
-			*RS.WinnerNickname,
-			*RS.ResultReason);
+		UE_LOG(LogMosesPhase, Warning, TEXT("[RESULT][SV] Winner PS=%s Nick=%s Total=%d"),
+			*GetNameSafe(WinnerPS), *RS.WinnerNickname, WinnerPS->GetTotalScore());
 	}
 
 	MGS->ServerSetResultState(RS);
 
 	// 중앙 방송(데모)
-	if (RS.bIsDraw)
-	{
-		MGS->ServerPushAnnouncement(TEXT("DRAW"), 4.0f);
-	}
-	else
-	{
-		MGS->ServerPushAnnouncement(TEXT("RESULT"), 4.0f);
-	}
+	MGS->ServerPushAnnouncement(RS.bIsDraw ? TEXT("DRAW") : TEXT("RESULT"), 4.0f);
 
-	// ✅ [PERSIST][SV] Result 진입 순간 저장 1회 (반드시 여기서 호출)
+	// Persist 저장 1회(기존 유지)
 	ServerSaveRecord_Once_OnEnterResult();
 }
 

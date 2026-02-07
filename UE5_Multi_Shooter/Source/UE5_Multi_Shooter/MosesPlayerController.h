@@ -1,5 +1,5 @@
 ﻿// ============================================================================
-// UE5_Multi_Shooter/MosesPlayerController.h (FULL)
+// UE5_Multi_Shooter/MosesPlayerController.h (FULL)  [MOD]
 // ============================================================================
 
 #pragma once
@@ -101,6 +101,12 @@ public:
 	void Client_ShowPickupToast_OwnerOnly(const FText& Text, float DurationSec);
 
 	/*====================================================
+	= Headshot Toast (Owner Only)  [MOD]
+	====================================================*/
+	UFUNCTION(Client, Reliable)
+	void Client_ShowHeadshotToast_OwnerOnly(const FText& Text, float DurationSec);
+
+	/*====================================================
 	= Local helpers (UI)
 	====================================================*/
 	UFUNCTION(BlueprintCallable, Category = "Lobby")
@@ -182,6 +188,12 @@ private:
 	void ReapplyStartInputMode_NextTick_LocalOnly();
 
 private:
+	// [MOD] HUD가 아직 없을 때 재시도하기 위한 타이머/루프
+	void StartPickupToastRetryTimer_Local();
+	void StopPickupToastRetryTimer_Local();
+	void HandlePickupToastRetryTimer_Local();
+
+private:
 	/*====================================================
 	= Shared getters (null/log guard)
 	====================================================*/
@@ -194,6 +206,11 @@ private:
 	====================================================*/
 	void TryFlushPendingPickupToast_Local();
 	UMosesMatchHUD* FindMatchHUD_Local();
+
+	/*====================================================
+	= Headshot Toast pending (HUD 교체 타이밍 대비)  [MOD]
+	====================================================*/
+	void TryFlushPendingHeadshotToast_Local();
 
 private:
 	/*====================================================
@@ -278,6 +295,19 @@ private:
 
 private:
 	/*====================================================
+	= Pending Headshot Toast  [MOD]
+	====================================================*/
+	UPROPERTY(Transient)
+	bool bPendingHeadshotToast = false;
+
+	UPROPERTY(Transient)
+	FText PendingHeadshotToastText;
+
+	UPROPERTY(Transient)
+	float PendingHeadshotToastDuration = 0.f;
+
+private:
+	/*====================================================
 	= [SCOPE] Local cosmetic state
 	====================================================*/
 	UPROPERTY(EditDefaultsOnly, Category = "Scope|Policy")
@@ -294,4 +324,13 @@ private:
 
 	bool bScopeActive_Local = false;
 	FTimerHandle ScopeBlurTimerHandle;
+
+	// [MOD] Retry timer state
+	FTimerHandle TimerHandle_PickupToastRetry;
+	int32 PickupToastRetryCount = 0;
+
+	// [MOD] 안전장치 (무한 루프 방지)
+	static constexpr int32 MaxPickupToastRetryCount = 60;     // 60 * 0.1s = 6초
+	static constexpr float PickupToastRetryIntervalSec = 0.1f;
+
 };

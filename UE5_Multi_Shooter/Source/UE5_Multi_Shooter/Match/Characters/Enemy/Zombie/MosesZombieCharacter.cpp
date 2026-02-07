@@ -9,6 +9,7 @@
 #include "UE5_Multi_Shooter/GAS/Components/MosesAbilitySystemComponent.h"
 #include "UE5_Multi_Shooter/GAS/MosesGameplayTags.h"
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
+#include "UE5_Multi_Shooter/MosesPlayerController.h" 
 
 #include "Components/BoxComponent.h"
 #include "Components/SkeletalMeshComponent.h"
@@ -29,7 +30,7 @@ AMosesZombieCharacter::AMosesZombieCharacter()
 
 	AutoPossessAI = EAutoPossessAI::PlacedInWorldOrSpawned;
 
-	HeadBoneName = TEXT("head");
+	HeadBoneName = TEXT("Head");
 	LastDamageKillerPS = nullptr;
 	bLastDamageHeadshot = false;
 
@@ -542,15 +543,28 @@ void AMosesZombieCharacter::HandleDeath_Server()
 
 	bIsDying_Server = true;
 
-	// ✅ [MOD] 여기서 “킬 수”를 서버 권위로 확정 (SSOT=PlayerState)
+	// ✅ [MOD] 여기서 “킬 수/헤드샷”을 서버 권위로 확정 (SSOT=PlayerState)
 	if (LastDamageKillerPS)
 	{
 		LastDamageKillerPS->ServerAddZombieKill(1);
 
 		UE_LOG(LogMosesZombie, Warning,
-			TEXT("[ZOMBIE][KILL][SV] +1 ZombieKill KillerPS=%s Zombie=%s"),
+			TEXT("[ZOMBIE][KILL][SV] +1 ZombieKill KillerPS=%s Zombie=%s Headshot=%d"),
 			*GetNameSafe(LastDamageKillerPS),
-			*GetNameSafe(this));
+			*GetNameSafe(this),
+			bLastDamageHeadshot ? 1 : 0);
+
+		// ✅ [MOD] Headshot이면 Headshots++ + 발사자(나)만 2초 토스트
+		if (bLastDamageHeadshot)
+		{
+			LastDamageKillerPS->ServerAddHeadshot(1);
+
+			// PlayerState의 Owner는 서버에서 PlayerController
+			if (AMosesPlayerController* KillerPC = Cast<AMosesPlayerController>(LastDamageKillerPS->GetOwner()))
+			{
+				KillerPC->Client_ShowHeadshotToast_OwnerOnly(FText::FromString(TEXT("헤드샷!")), 2.0f);
+			}
+		}
 	}
 	else
 	{
@@ -608,6 +622,7 @@ void AMosesZombieCharacter::HandleDeath_Server()
 			AnimInst->Montage_SetEndDelegate(EndDel, DeathMontage);
 		}
 
+		// 기존 함수 재사용(공격/죽음 둘다 몽타주 재생)
 		Multicast_PlayAttackMontage(DeathMontage);
 	}
 	else
@@ -620,6 +635,7 @@ void AMosesZombieCharacter::HandleDeath_Server()
 		SetLifeSpan(DestroyDelayAfterDeathMontageSeconds);
 	}
 }
+
 
 void AMosesZombieCharacter::OnDeathMontageEnded_Server(UAnimMontage* Montage, bool bInterrupted)
 {

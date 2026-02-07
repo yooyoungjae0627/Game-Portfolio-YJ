@@ -78,6 +78,7 @@ void AMosesPlayerState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& Ou
 
 	DOREPLIFETIME(AMosesPlayerState, bIsDead);
 	DOREPLIFETIME(AMosesPlayerState, RespawnEndServerTime);
+	DOREPLIFETIME(AMosesPlayerState, TotalScore); 
 }
 
 void AMosesPlayerState::CopyProperties(APlayerState* NewPlayerState)
@@ -674,6 +675,29 @@ void AMosesPlayerState::ServerNotifyDeathFromGAS()
 	}
 }
 
+void AMosesPlayerState::ServerSetTotalScore(int32 NewTotalScore)
+{
+	MOSES_GUARD_AUTHORITY_VOID(this, "RESULT", TEXT("Client attempted ServerSetTotalScore"));
+
+	NewTotalScore = FMath::Max(0, NewTotalScore);
+
+	if (TotalScore == NewTotalScore)
+	{
+		return;
+	}
+
+	const int32 Old = TotalScore;
+	TotalScore = NewTotalScore;
+
+	ForceNetUpdate();
+
+	UE_LOG(LogMosesPhase, Warning, TEXT("[RESULT][SV][PS] TotalScore %d -> %d PS=%s"),
+		Old, TotalScore, *GetNameSafe(this));
+
+	OnRep_TotalScore(); // ListenServer 즉시 반영 패턴
+}
+
+
 void AMosesPlayerState::ServerClearDeadAfterRespawn()
 {
 	MOSES_GUARD_AUTHORITY_VOID(this, "RESPAWN", TEXT("Client attempted ServerClearDeadAfterRespawn"));
@@ -798,6 +822,11 @@ void AMosesPlayerState::OnRep_Headshots() { BroadcastPlayerHeadshots(); }
 
 void AMosesPlayerState::OnRep_DeathState() { BroadcastDeathState(); }
 
+void AMosesPlayerState::OnRep_TotalScore()
+{
+	BroadcastTotalScore();
+}
+
 // ============================================================================
 // Broadcast
 // ============================================================================
@@ -884,6 +913,14 @@ void AMosesPlayerState::BroadcastDeathState()
 void AMosesPlayerState::BroadcastTotalKills()
 {
 	OnTotalKillsChanged.Broadcast(GetTotalKills());
+}
+
+void AMosesPlayerState::BroadcastTotalScore()
+{
+	OnTotalScoreChanged.Broadcast(TotalScore);
+
+	UE_LOG(LogMosesPhase, Verbose, TEXT("[RESULT][CL][PS] Broadcast TotalScore=%d PS=%s"),
+		TotalScore, *GetNameSafe(this));
 }
 
 void AMosesPlayerState::NotifyLobbyPlayerStateChanged_Local(const TCHAR* Reason) const

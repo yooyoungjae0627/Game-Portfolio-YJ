@@ -239,7 +239,13 @@ private:
 
 	void Server_SpawnGrenadeProjectile(const UMosesWeaponData* WeaponData, const FVector& SpawnLoc, const FVector& FireDir, AController* InstigatorController, APawn* OwnerPawn);
 
-	bool Server_ApplyDamageToTarget_GAS(AActor* TargetActor, float Damage, AController* InstigatorController, AActor* DamageCauser, const UMosesWeaponData* WeaponData) const;
+	bool Server_ApplyDamageToTarget_GAS(
+		AActor* TargetActor,
+		float Damage,
+		AController* InstigatorController,
+		AActor* DamageCauser,
+		const UMosesWeaponData* WeaponData,
+		const FHitResult& Hit) const;
 
 	void Server_PropagateFireCosmetics(FGameplayTag ApprovedWeaponId);
 
@@ -352,7 +358,7 @@ private:
 	TEnumAsByte<ECollisionChannel> FireTraceChannel = ECC_Visibility;
 
 	UPROPERTY(EditDefaultsOnly, Category = "Moses|Fire")
-	FName HeadshotBoneName = TEXT("head");
+	FName HeadshotBoneName = TEXT("Head");
 
 	UPROPERTY(EditDefaultsOnly, Category = "Moses|Fire")
 	float HeadshotDamageMultiplier = 2.0f;

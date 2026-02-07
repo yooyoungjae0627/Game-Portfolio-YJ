@@ -1093,3 +1093,45 @@ void UMosesMatchHUD::TryBroadcastCaptureSuccess_Once()
 	// AMosesPlayerController* PC = Cast<AMosesPlayerController>(GetOwningPlayer());
 	// if (PC) { PC->Server_RequestCaptureSuccessAnnouncement(); }
 }
+
+// =========================================================
+// [MOD] Headshot Toast (Owner Only)
+// =========================================================
+void UMosesMatchHUD::ShowHeadshotToast_Local(const FText& Text, float DurationSeconds)
+{
+	UWorld* World = GetWorld();
+	if (!World || !AnnouncementWidget)
+	{
+		return;
+	}
+
+	bLocalHeadshotToastActive = true;
+
+	FMosesAnnouncementState S;
+	S.bActive = true;
+	S.Text = Text;
+	AnnouncementWidget->UpdateAnnouncement(S);
+
+	World->GetTimerManager().ClearTimer(LocalHeadshotToastTimerHandle);
+	World->GetTimerManager().SetTimer(
+		LocalHeadshotToastTimerHandle,
+		this,
+		&ThisClass::StopLocalHeadshotToast_Internal,
+		FMath::Clamp(DurationSeconds, 0.2f, 10.0f),
+		false);
+
+	UE_LOG(LogMosesKillFeed, Warning, TEXT("[HEADSHOT][CL] Toast SHOW Text='%s' Dur=%.2f"),
+		*Text.ToString(), DurationSeconds);
+}
+
+void UMosesMatchHUD::StopLocalHeadshotToast_Internal()
+{
+	if (AnnouncementWidget)
+	{
+		FMosesAnnouncementState Off;
+		Off.bActive = false;
+		AnnouncementWidget->UpdateAnnouncement(Off);
+	}
+
+	bLocalHeadshotToastActive = false;
+}

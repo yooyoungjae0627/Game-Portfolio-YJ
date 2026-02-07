@@ -1,14 +1,5 @@
 ﻿// ============================================================================
-// UE5_Multi_Shooter/MosesPlayerState.h  (FULL - UPDATED)  [MOD]
-// ----------------------------------------------------------------------------
-// [MOD] Changes
-//  - [DAMAGE_POLICY] PlayerState holds 2 Damage GE soft class paths:
-//    * DamageGE_Player_SetByCaller  (for Player targets: MosesAttributeSet IncomingDamage style)
-//    * DamageGE_Zombie_SetByCaller  (for Zombie targets: MosesZombieAttributeSet Damage meta)
-//  - Provides getters to load them synchronously (server uses as source truth)
-//
-// NOTE
-// - This file is based on your provided header. Only [MOD] parts were added.
+// UE5_Multi_Shooter/MosesPlayerState.h  (FULL - UPDATED)  [MOD: TotalScore]
 // ============================================================================
 
 #pragma once
@@ -32,9 +23,6 @@ class UMosesPawnData;
 class UMosesCaptureComponent;
 class UGameplayEffect;
 
-// -----------------------------------------------------------------------------
-// Native delegates (HUD = RepNotify/ASC Delegate -> Delegate only)
-// -----------------------------------------------------------------------------
 DECLARE_MULTICAST_DELEGATE_TwoParams(FOnMosesHealthChangedNative, float /*Cur*/, float /*Max*/);
 DECLARE_MULTICAST_DELEGATE_TwoParams(FOnMosesShieldChangedNative, float /*Cur*/, float /*Max*/);
 DECLARE_MULTICAST_DELEGATE_OneParam(FOnMosesScoreChangedNative, int32 /*Score*/);
@@ -53,6 +41,9 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnMosesSelectedCharacterChangedBP, 
 
 DECLARE_MULTICAST_DELEGATE_OneParam(FOnTotalKillsChangedNative, int32 /*TotalKills*/);
 
+// [MOD] TotalScore
+DECLARE_MULTICAST_DELEGATE_OneParam(FOnMosesTotalScoreChangedNative, int32 /*TotalScore*/);
+
 UCLASS()
 class UE5_MULTI_SHOOTER_API AMosesPlayerState : public APlayerState, public IAbilitySystemInterface
 {
@@ -61,22 +52,16 @@ class UE5_MULTI_SHOOTER_API AMosesPlayerState : public APlayerState, public IAbi
 public:
 	AMosesPlayerState(const FObjectInitializer& ObjectInitializer);
 
-	//~AActor
 	virtual void PostInitializeComponents() override;
 
-	//~APlayerState
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 	virtual void CopyProperties(APlayerState* NewPlayerState) override;
 	virtual void OverrideWith(APlayerState* OldPlayerState) override;
 	virtual void OnRep_Score() override;
 
-	//~IAbilitySystemInterface
 	virtual UAbilitySystemComponent* GetAbilitySystemComponent() const override;
 
 public:
-	// ---------------------------------------------------------------------
-	// Getters
-	// ---------------------------------------------------------------------
 	const FGuid& GetPersistentId() const { return PersistentId; }
 	const FString& GetPlayerNickName() const { return PlayerNickName; }
 
@@ -102,35 +87,26 @@ public:
 	int32 GetPvPKills() const { return PvPKills; }
 	int32 GetHeadshots() const { return Headshots; }
 
+	// [MOD] TotalScore getter
+	int32 GetTotalScore() const { return TotalScore; }
+
 	bool IsDead() const { return bIsDead; }
 	float GetRespawnEndServerTime() const { return RespawnEndServerTime; }
 
 	int32 GetTotalKills() const { return PvPKills + ZombieKills; }
 
-	// ---------------------------------------------------------------------
-	// Vitals getters (ASC 기반 - HUD 초기 스냅샷/디버그용)
-	// ---------------------------------------------------------------------
 	float GetHealth_Current() const;
 	float GetHealth_Max() const;
 	float GetShield_Current() const;
 	float GetShield_Max() const;
 
 public:
-	// ---------------------------------------------------------------------
-	// GAS Init
-	// ---------------------------------------------------------------------
 	void TryInitASC(AActor* InAvatarActor);
 
 public:
-	// ---------------------------------------------------------------------
-	// DAY11 Death notify from AttributeSet
-	// ---------------------------------------------------------------------
 	void ServerNotifyDeathFromGAS();
 
 public:
-	// ---------------------------------------------------------------------
-	// DAY11 Shield Regen (Armor Regen)
-	// ---------------------------------------------------------------------
 	void ServerStartShieldRegen();
 	void ServerStopShieldRegen();
 
@@ -138,18 +114,10 @@ public:
 	TSubclassOf<UGameplayEffect> GE_ShieldRegen_One;
 
 public:
-	// ---------------------------------------------------------------------
-	// Match default loadout (Server only)
-	// ---------------------------------------------------------------------
 	void ServerEnsureMatchDefaultLoadout();
-
-	// GF_Combat_GAS: AbilitySet apply (Server only)
 	void ServerApplyCombatAbilitySetOnce(UMosesAbilitySet* InAbilitySet);
 
 public:
-	// ---------------------------------------------------------------------
-	// Lobby / Player info (Server authority)
-	// ---------------------------------------------------------------------
 	void EnsurePersistentId_Server();
 	void ServerSetLoggedIn(bool bInLoggedIn);
 	void ServerSetReady(bool bInReady);
@@ -163,21 +131,19 @@ public:
 	void ServerAddDeath();
 
 public:
-	// Score SSOT
 	void ServerAddScore(int32 Delta, const TCHAR* Reason);
 
-	// Match stats (Server authority, SSOT=PlayerState)
 	void ServerAddCapture(int32 Delta = 1);
 	void ServerAddZombieKill(int32 Delta = 1);
 	void ServerAddPvPKill(int32 Delta = 1);
 	void ServerAddHeadshot(int32 Delta = 1);
 
+	// [MOD] TotalScore set (Result 진입 순간 1회)
+	void ServerSetTotalScore(int32 NewTotalScore);
+
 	void ServerClearDeadAfterRespawn();
 
 public:
-	// ---------------------------------------------------------------------
-	// RepNotifies
-	// ---------------------------------------------------------------------
 	UFUNCTION() void OnRep_PersistentId();
 	UFUNCTION() void OnRep_LoggedIn();
 	UFUNCTION() void OnRep_Ready();
@@ -192,11 +158,9 @@ public:
 	UFUNCTION() void OnRep_PvPKills();
 	UFUNCTION() void OnRep_Headshots();
 	UFUNCTION() void OnRep_DeathState();
+	UFUNCTION() void OnRep_TotalScore();
 
 public:
-	// ---------------------------------------------------------------------
-	// Native Delegates (HUD Update)
-	// ---------------------------------------------------------------------
 	FOnMosesHealthChangedNative OnHealthChanged;
 	FOnMosesShieldChangedNative OnShieldChanged;
 	FOnMosesScoreChangedNative OnScoreChanged;
@@ -214,28 +178,24 @@ public:
 	FOnMosesSelectedCharacterChangedNative OnSelectedCharacterChangedNative;
 	FOnTotalKillsChangedNative OnTotalKillsChanged;
 
+	// [MOD]
+	FOnMosesTotalScoreChangedNative OnTotalScoreChanged;
+
 	UPROPERTY(BlueprintAssignable)
 	FOnMosesSelectedCharacterChangedBP OnSelectedCharacterChangedBP;
 
 public:
 	void DOD_PS_Log(const UObject* Caller, const TCHAR* Phase) const;
 
-	// =========================================================================
-	// [MOD][DAMAGE_POLICY] Damage GE getters (Player vs Zombie)
-	// - CombatComponent will request proper GE through these.
-	// =========================================================================
 	TSubclassOf<UGameplayEffect> GetDamageGE_Player_SetByCaller() const;
 	TSubclassOf<UGameplayEffect> GetDamageGE_Zombie_SetByCaller() const;
 
 private:
-	// Local notify
 	void NotifyLobbyPlayerStateChanged_Local(const TCHAR* Reason) const;
 
-	// GAS
 	void BindASCAttributeDelegates();
 	void BroadcastVitals_Initial();
 
-	// Broadcast
 	void BroadcastScore();
 	void BroadcastDeaths();
 	void BroadcastAmmoAndGrenade();
@@ -248,15 +208,14 @@ private:
 
 	void BroadcastDeathState();
 	void BroadcastTotalKills();
+	void BroadcastTotalScore();
 
-	// GAS Attribute callbacks
 	void HandleHealthChanged_Internal(const FOnAttributeChangeData& Data);
 	void HandleMaxHealthChanged_Internal(const FOnAttributeChangeData& Data);
 	void HandleShieldChanged_Internal(const FOnAttributeChangeData& Data);
 	void HandleMaxShieldChanged_Internal(const FOnAttributeChangeData& Data);
 
 private:
-	// Components (SSOT)
 	UPROPERTY(VisibleAnywhere)
 	TObjectPtr<UMosesAbilitySystemComponent> MosesAbilitySystemComponent = nullptr;
 
@@ -273,7 +232,6 @@ private:
 	TObjectPtr<UMosesCaptureComponent> CaptureComponent = nullptr;
 
 private:
-	// GAS runtime state
 	UPROPERTY() TWeakObjectPtr<AActor> CachedAvatar;
 
 	bool bASCInitialized = false;
@@ -286,9 +244,6 @@ private:
 	FMosesAbilitySet_GrantedHandles CombatAbilitySetHandles;
 
 private:
-	// ---------------------------------------------------------------------
-	// Replicated data (Lobby + Match 공용)
-	// ---------------------------------------------------------------------
 	UPROPERTY(ReplicatedUsing = OnRep_PlayerNickName)
 	FString PlayerNickName;
 
@@ -325,30 +280,24 @@ private:
 	UPROPERTY(ReplicatedUsing = OnRep_Headshots)
 	int32 Headshots = 0;
 
-	// Death/Respawn replicated state
+	// [MOD] TotalScore
+	UPROPERTY(ReplicatedUsing = OnRep_TotalScore)
+	int32 TotalScore = 0;
+
 	UPROPERTY(ReplicatedUsing = OnRep_DeathState)
 	bool bIsDead = false;
 
 	UPROPERTY(ReplicatedUsing = OnRep_DeathState)
 	float RespawnEndServerTime = 0.f;
 
-	// Shield regen timer
 	FTimerHandle TimerHandle_ShieldRegen;
 
-	// PawnData
 	UPROPERTY()
 	TObjectPtr<UObject> PawnData = nullptr;
 
-private:
-	// =========================================================================
-	// [MOD][DAMAGE_POLICY] Damage GE soft paths (data-driven, per PS)
-	// =========================================================================
-
-	// Player target damage GE (e.g. MosesAttributeSet IncomingDamage 방식)
 	UPROPERTY(EditDefaultsOnly, Category = "Moses|GAS|Damage")
 	TSoftClassPtr<UGameplayEffect> DamageGE_Player_SetByCaller;
 
-	// Zombie target damage GE (MosesZombieAttributeSet Damage meta 방식)
 	UPROPERTY(EditDefaultsOnly, Category = "Moses|GAS|Damage")
 	TSoftClassPtr<UGameplayEffect> DamageGE_Zombie_SetByCaller;
 };

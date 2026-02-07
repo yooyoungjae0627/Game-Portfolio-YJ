@@ -1,5 +1,5 @@
 ﻿// ============================================================================
-// UE5_Multi_Shooter/Match/UI/Match/MosesMatchHUD.h (FULL)
+// UE5_Multi_Shooter/Match/UI/Match/MosesMatchHUD.h (FULL)  [MOD]
 // ============================================================================
 
 #pragma once
@@ -45,6 +45,9 @@ public:
 
 	// ✅ Pickup toast (Owner only)
 	void ShowPickupToast_Local(const FText& Text, float DurationSeconds);
+
+	// ✅ Headshot toast (Owner only)  [MOD]
+	void ShowHeadshotToast_Local(const FText& Text, float DurationSeconds);
 
 protected:
 	virtual void NativeOnInitialized() override;
@@ -131,8 +134,6 @@ private:
 	// [CAPTURE] internal cache
 	void CacheCaptureProgress_InternalWidgets();
 	void HandleCaptureStateChanged(bool bActive, float Progress01, float WarningFloat, TWeakObjectPtr<AMosesFlagSpot> Spot);
-
-	// Capture 성공 시 “한 번만” 서버 공지 요청(옵션)
 	void TryBroadcastCaptureSuccess_Once();
 
 private:
@@ -228,6 +229,13 @@ private:
 	bool bLocalPickupToastActive = false;
 
 	void StopLocalPickupToast_Internal();
+
+private:
+	// ✅ Headshot toast (Owner only) - block global announcements while active  [MOD]
+	FTimerHandle LocalHeadshotToastTimerHandle;
+	bool bLocalHeadshotToastActive = false;
+
+	void StopLocalHeadshotToast_Internal();
 
 private:
 	// [CAPTURE] cached internal widgets

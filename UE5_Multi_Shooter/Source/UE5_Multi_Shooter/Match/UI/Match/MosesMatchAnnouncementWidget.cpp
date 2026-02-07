@@ -23,7 +23,6 @@ void UMosesMatchAnnouncementWidget::NativeOnInitialized()
 
 void UMosesMatchAnnouncementWidget::UpdateAnnouncement(const FMosesAnnouncementState& State)
 {
-	// 1) Active 토글
 	SetActive(State.bActive);
 
 	if (!State.bActive)
@@ -37,54 +36,43 @@ void UMosesMatchAnnouncementWidget::UpdateAnnouncement(const FMosesAnnouncementS
 		return;
 	}
 
-	// ---------------------------------------------------------------------
-	// 2) 원본 텍스트 → FString
-	// ---------------------------------------------------------------------
 	FString TextStr = State.Text.ToString();
 
-	// ---------------------------------------------------------------------
-	// 3) 영어 문자 제거 (A-Z, a-z)
-	// ---------------------------------------------------------------------
 	for (int32 i = TextStr.Len() - 1; i >= 0; --i)
 	{
 		const TCHAR C = TextStr[i];
-		if ((C >= TEXT('A') && C <= TEXT('Z')) ||
-			(C >= TEXT('a') && C <= TEXT('z')))
+		if ((C >= TEXT('A') && C <= TEXT('Z')) || (C >= TEXT('a') && C <= TEXT('z')))
 		{
 			TextStr.RemoveAt(i);
 		}
 	}
 
-	// ---------------------------------------------------------------------
-	// 4) 앞자리가 "한글"이 될 때까지 앞부분 제거
-	//    한글 유니코드 범위: 0xAC00 ~ 0xD7A3
-	// ---------------------------------------------------------------------
 	while (TextStr.Len() > 0)
 	{
 		const TCHAR C = TextStr[0];
 		if (C >= 0xAC00 && C <= 0xD7A3)
 		{
-			break; // ✅ 앞자리가 한글 → OK
+			break;
 		}
-
-		// ❌ 한글 아니면 제거
 		TextStr.RemoveAt(0);
 	}
 
-	// 앞뒤 공백 정리
 	TextStr = TextStr.TrimStartAndEnd();
-
 	AnnouncementText->SetText(FText::FromString(TextStr));
 
 	// ---------------------------------------------------------------------
-	// 5) 캡쳐 성공 판별 → 빨간색
+	// [MOD] 헤드샷/캡처 성공이면 빨간색
 	// ---------------------------------------------------------------------
+	const bool bIsHeadshot =
+		TextStr.Contains(TEXT("헤드샷")) ||
+		TextStr.Contains(TEXT("헤드 샷"));
+
 	const bool bIsCaptureSuccess =
 		TextStr.Contains(TEXT("캡쳐 성공")) ||
 		TextStr.Contains(TEXT("캡처 성공")) ||
 		TextStr.Contains(TEXT("깃발 캡처 성공"));
 
-	if (bIsCaptureSuccess)
+	if (bIsHeadshot || bIsCaptureSuccess)
 	{
 		AnnouncementText->SetColorAndOpacity(FSlateColor(FLinearColor::Red));
 	}

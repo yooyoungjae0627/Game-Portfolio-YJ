@@ -3,7 +3,7 @@
 #include "CoreMinimal.h"
 #include "GameFramework/Character.h"
 #include "AbilitySystemInterface.h"
-#include "GameplayEffectExtension.h" 
+#include "GameplayEffectExtension.h"
 #include "UE5_Multi_Shooter/Match/Characters/Enemy/Zombie/Types/MosesZombieAttackTypes.h"
 #include "MosesZombieCharacter.generated.h"
 
@@ -14,6 +14,7 @@ class UMosesZombieAnimInstance;
 class UBoxComponent;
 class UAnimMontage;
 class AMosesPlayerState;
+class AMosesPlayerController;
 
 struct FGameplayEffectModCallbackData;
 struct FGameplayEffectContextHandle;
@@ -72,7 +73,7 @@ private:
 	UFUNCTION()
 	void OnDeathMontageEnded_Server(UAnimMontage* Montage, bool bInterrupted);
 
-	// [MOD] 킬러/헤드샷 해석 (EffectContext 기반)
+	// 킬러/헤드샷 해석 (EffectContext 기반)
 	AMosesPlayerState* ResolveKillerPlayerState_FromEffectContext_Server(const FGameplayEffectContextHandle& Context) const;
 	bool ResolveHeadshot_FromEffectContext_Server(const FGameplayEffectContextHandle& Context) const;
 
@@ -122,7 +123,7 @@ private:
 	UPROPERTY(EditDefaultsOnly, Category = "Moses|Zombie")
 	FName HeadBoneName;
 
-	// ✅ [MOD] 마지막 데미지의 가해자 정보(서버에서만)
+	// 마지막 데미지의 가해자 정보(서버에서만)
 	UPROPERTY()
 	TObjectPtr<AMosesPlayerState> LastDamageKillerPS = nullptr;
 

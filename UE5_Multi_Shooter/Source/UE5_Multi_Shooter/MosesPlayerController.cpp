@@ -1094,12 +1094,39 @@ void AMosesPlayerController::Client_ShowPickupToast_OwnerOnly_Implementation(con
 	PendingPickupToastText = Text;
 	PendingPickupToastDuration = FMath::Clamp(DurationSec, 0.2f, 10.0f);
 
+	UE_LOG(LogMosesPickup, Log,
+		TEXT("[PICKUP_TOAST][CL] ClientRPC Arrived. Text=%s Dur=%.2f World=%s"),
+		*Text.ToString(),
+		PendingPickupToastDuration,
+		*GetNameSafe(GetWorld()));
+
+	// 즉시 flush 시도 (HUD 있으면 바로 뜸)
 	TryFlushPendingPickupToast_Local();
+
+	// HUD가 없어서 못 띄웠으면 재시도 타이머 시작
+	if (bPendingPickupToast)
+	{
+		StartPickupToastRetryTimer_Local();
+	}
 }
 
-void AMosesPlayerController::TryFlushPendingPickupToast_Local()
+void AMosesPlayerController::Client_ShowHeadshotToast_OwnerOnly_Implementation(const FText& Text, float DurationSec)
 {
-	if (!bPendingPickupToast)
+	if (!IsLocalController())
+	{
+		return;
+	}
+
+	bPendingHeadshotToast = true;
+	PendingHeadshotToastText = Text;
+	PendingHeadshotToastDuration = FMath::Clamp(DurationSec, 0.2f, 10.0f);
+
+	TryFlushPendingHeadshotToast_Local();
+}
+
+void AMosesPlayerController::TryFlushPendingHeadshotToast_Local()
+{
+	if (!bPendingHeadshotToast)
 	{
 		return;
 	}
@@ -1111,9 +1138,45 @@ void AMosesPlayerController::TryFlushPendingPickupToast_Local()
 		return;
 	}
 
+	HUD->ShowHeadshotToast_Local(PendingHeadshotToastText, PendingHeadshotToastDuration);
+
+	bPendingHeadshotToast = false;
+}
+
+void AMosesPlayerController::TryFlushPendingPickupToast_Local()
+{
+	if (!bPendingPickupToast)
+	{
+		// [MOD] Headshot만 pending일 수도 있으니 flush 시도
+		TryFlushPendingHeadshotToast_Local();
+		return;
+	}
+
+	UMosesMatchHUD* HUD = FindMatchHUD_Local();
+	if (!HUD)
+	{
+		UE_LOG(LogMosesPickup, VeryVerbose,
+			TEXT("[PICKUP_TOAST][CL] Flush WAIT. HUD=NULL RetryCount=%d"),
+			PickupToastRetryCount);
+
+		// Pending은 유지. 타이머가 계속 재시도해서 HUD 준비되면 뜸.
+		return;
+	}
+
+	UE_LOG(LogMosesPickup, Log,
+		TEXT("[PICKUP_TOAST][CL] Flush OK. Text=%s Dur=%.2f"),
+		*PendingPickupToastText.ToString(),
+		PendingPickupToastDuration);
+
 	HUD->ShowPickupToast_Local(PendingPickupToastText, PendingPickupToastDuration);
 
 	bPendingPickupToast = false;
+
+	// 토스트 성공했으니 재시도 타이머는 종료
+	StopPickupToastRetryTimer_Local();
+
+	// 픽업 flush 후에도 headshot pending이 남아있을 수 있음
+	TryFlushPendingHeadshotToast_Local();
 }
 
 UMosesMatchHUD* AMosesPlayerController::FindMatchHUD_Local()
@@ -1418,5 +1481,89 @@ void AMosesPlayerController::HandleEquippedChanged_ScopeLocal(int32 SlotIndex, F
 	if (UMosesMatchHUD* HUD = FindMatchHUD_Local())
 	{
 		HUD->SetScopeVisible_Local(bScopeActive_Local);
+	}
+}
+
+void AMosesPlayerController::StartPickupToastRetryTimer_Local()
+{
+	if (!IsLocalController())
+	{
+		return;
+	}
+
+	if (UWorld* World = GetWorld())
+	{
+		if (World->GetTimerManager().IsTimerActive(TimerHandle_PickupToastRetry))
+		{
+			return; // 이미 돌고 있음
+		}
+
+		PickupToastRetryCount = 0;
+
+		UE_LOG(LogMosesPickup, Log,
+			TEXT("[PICKUP_TOAST][CL] RetryTimer START Interval=%.2f Max=%d"),
+			PickupToastRetryIntervalSec,
+			MaxPickupToastRetryCount);
+
+		World->GetTimerManager().SetTimer(
+			TimerHandle_PickupToastRetry,
+			this,
+			&AMosesPlayerController::HandlePickupToastRetryTimer_Local,
+			PickupToastRetryIntervalSec,
+			true);
+	}
+}
+
+void AMosesPlayerController::StopPickupToastRetryTimer_Local()
+{
+	if (UWorld* World = GetWorld())
+	{
+		if (World->GetTimerManager().IsTimerActive(TimerHandle_PickupToastRetry))
+		{
+			World->GetTimerManager().ClearTimer(TimerHandle_PickupToastRetry);
+
+			UE_LOG(LogMosesPickup, Log,
+				TEXT("[PICKUP_TOAST][CL] RetryTimer STOP (Pending=%d RetryCount=%d)"),
+				bPendingPickupToast ? 1 : 0,
+				PickupToastRetryCount);
+		}
+	}
+}
+
+void AMosesPlayerController::HandlePickupToastRetryTimer_Local()
+{
+	// Pending이 해제됐으면 종료
+	if (!bPendingPickupToast)
+	{
+		StopPickupToastRetryTimer_Local();
+		return;
+	}
+
+	++PickupToastRetryCount;
+
+	// HUD 준비됐는지 확인하고 가능하면 flush
+	TryFlushPendingPickupToast_Local();
+
+	// flush 성공하면 TryFlush에서 Stop 처리함
+	if (!bPendingPickupToast)
+	{
+		return;
+	}
+
+	// 안전장치: 일정 시간 내 HUD가 안 뜨면 포기(로그로 증거 남김)
+	if (PickupToastRetryCount >= MaxPickupToastRetryCount)
+	{
+		UE_LOG(LogMosesPickup, Warning,
+			TEXT("[PICKUP_TOAST][CL] RetryTimer GIVEUP. HUD still NULL. Text=%s World=%s"),
+			*PendingPickupToastText.ToString(),
+			*GetNameSafe(GetWorld()));
+
+		// Pending은 버리거나 유지 중 선택인데, 실무에선 버려서 무한 대기 방지
+		bPendingPickupToast = false;
+
+		StopPickupToastRetryTimer_Local();
+
+		// headshot pending만 남았을 수 있으니 한 번 더
+		TryFlushPendingHeadshotToast_Local();
 	}
 }
