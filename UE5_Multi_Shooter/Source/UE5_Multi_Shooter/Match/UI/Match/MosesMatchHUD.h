@@ -294,4 +294,7 @@ private:
 	bool bCaptureInternalCached = false;
 
 	bool bCaptureSuccessAnnounced_Local = false;
+
+	bool bHUDVisibleActivated = false;
+
 };

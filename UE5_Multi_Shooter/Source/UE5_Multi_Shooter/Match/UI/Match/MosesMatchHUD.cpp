@@ -121,6 +121,9 @@ void UMosesMatchHUD::NativeOnInitialized()
 		*GetNameSafe(this),
 		*GetNameSafe(GetOwningPlayer()));
 
+	// ✅ [FIX] “완전 진입 전”에는 HUD를 무조건 숨긴다 (깜빡임 방지)
+	SetVisibility(ESlateVisibility::Collapsed);
+
 	UE_LOG(LogMosesHUD, Warning, TEXT("[HUD][CL] PhaseText Bind=%s (Check WBP name == PhaseText)"),
 		*GetNameSafe(PhaseText));
 
@@ -128,18 +131,17 @@ void UMosesMatchHUD::NativeOnInitialized()
 
 	BindToPlayerState();
 	BindToGameState_Match();
+	BindToCombatComponent_FromPlayerState();
+	BindToCaptureComponent_FromPlayerState();
 
 	RefreshInitial();
+
+	// 바인딩이 늦게 들어올 수 있으니 Retry 시작 (여기서 Visible은 절대 켜지지 않음)
 	StartBindRetry();
 	StartCrosshairUpdate();
 
-	// 5) ScopeWidget 초기 숨김
 	SetScopeVisible_Local(false);
-
-	BindToCaptureComponent_FromPlayerState();
-
-	// [MOD] 초기 Aim UI 즉시 동기화
-	UpdateAimWidgets_Immediate(); // [MOD]
+	UpdateAimWidgets_Immediate();
 }
 
 void UMosesMatchHUD::NativeDestruct()
@@ -228,12 +230,6 @@ bool UMosesMatchHUD::IsCaptureComponentBound() const { return CachedCaptureCompo
 
 void UMosesMatchHUD::StartBindRetry()
 {
-	if (IsPlayerStateBound() && IsMatchGameStateBound() && IsCombatComponentBound() && IsCaptureComponentBound())
-	{
-		ApplySnapshotFromMatchGameState();
-		return;
-	}
-
 	UWorld* World = GetWorld();
 	if (!World)
 	{
@@ -244,6 +240,9 @@ void UMosesMatchHUD::StartBindRetry()
 	{
 		return;
 	}
+
+	// ✅ [FIX] Retry 시작 시점에도 항상 숨김 유지
+	SetVisibility(ESlateVisibility::Collapsed);
 
 	BindRetryTryCount = 0;
 
@@ -291,27 +290,43 @@ void UMosesMatchHUD::TryBindRetry()
 		BindToCombatComponent_FromPlayerState();
 	}
 
+	// Capture는 HUD 전체 표시 조건에서 제외 (없어도 HUD는 떠야 함)
 	if (!IsCaptureComponentBound())
 	{
 		BindToCaptureComponent_FromPlayerState();
 	}
 
+	// 스냅샷 계속 적용
 	ApplySnapshotFromMatchGameState();
+	UpdateAimWidgets_Immediate();
 
-	// [MOD] 바인딩 재시도 중에도 Aim UI 동기화
-	UpdateAimWidgets_Immediate(); // [MOD]
+	// ✅ [FIX][핵심] HUD “필수 바인딩” 완료 조건 (PS + GS + Combat)
+	const bool bEssentialReady =
+		IsPlayerStateBound() && IsMatchGameStateBound() && IsCombatComponentBound();
 
-	const bool bDone = IsPlayerStateBound() && IsMatchGameStateBound() && IsCombatComponentBound() && IsCaptureComponentBound();
-	if (bDone)
+	if (bEssentialReady)
 	{
-		UE_LOG(LogMosesHUD, Warning, TEXT("[HUD][CL] BindRetry DONE Try=%d"), BindRetryTryCount);
+		// 여기서 “반드시” 켠다
+		if (GetVisibility() != ESlateVisibility::Visible)
+		{
+			SetVisibility(ESlateVisibility::Visible);
+			UE_LOG(LogMosesHUD, Warning, TEXT("[HUD][CL] HUD Visible ON (EssentialReady) Try=%d"), BindRetryTryCount);
+		}
+
+		UE_LOG(LogMosesHUD, Warning, TEXT("[HUD][CL] BindRetry DONE Try=%d (PS=1 GS=1 Combat=1 Capture=%d)"),
+			BindRetryTryCount,
+			IsCaptureComponentBound() ? 1 : 0);
+
 		StopBindRetry();
 		return;
 	}
 
 	if (BindRetryTryCount >= BindRetryMaxTry)
 	{
-		UE_LOG(LogMosesHUD, Warning, TEXT("[HUD][CL] BindRetry GIVEUP Try=%d (PS=%d GS=%d Combat=%d Capture=%d)"),
+		// ✅ [FIX] GIVEUP 해도 HUD는 강제로 켠다 (디버그/사용자 경험)
+		SetVisibility(ESlateVisibility::Visible);
+
+		UE_LOG(LogMosesHUD, Warning, TEXT("[HUD][CL] BindRetry GIVEUP -> Force HUD Visible Try=%d (PS=%d GS=%d Combat=%d Capture=%d)"),
 			BindRetryTryCount,
 			IsPlayerStateBound() ? 1 : 0,
 			IsMatchGameStateBound() ? 1 : 0,
@@ -321,6 +336,7 @@ void UMosesMatchHUD::TryBindRetry()
 		StopBindRetry();
 	}
 }
+
 
 void UMosesMatchHUD::BindToPlayerState()
 {
@@ -408,7 +424,6 @@ void UMosesMatchHUD::BindToPlayerState()
 	UpdateAimWidgets_Immediate();
 }
 
-
 void UMosesMatchHUD::BindToCombatComponent_FromPlayerState()
 {
 	AMosesPlayerState* PS = CachedPlayerState.Get();
@@ -417,7 +432,8 @@ void UMosesMatchHUD::BindToCombatComponent_FromPlayerState()
 		return;
 	}
 
-	UMosesCombatComponent* Combat = PS->FindComponentByClass<UMosesCombatComponent>();
+	// ✅ [FIX] SSOT 정책: PS가 CombatComponent를 소유한다 (FindComponentByClass 금지)
+	UMosesCombatComponent* Combat = PS->GetCombatComponent();
 	if (!Combat)
 	{
 		return;
@@ -432,9 +448,7 @@ void UMosesMatchHUD::BindToCombatComponent_FromPlayerState()
 
 	CachedCombatComponent = Combat;
 
-	// 3파라미터 버전 바인딩 (ReserveMax 포함)
-	Combat->OnAmmoChangedEx.AddUObject(this, &ThisClass::HandleAmmoChangedEx_FromCombat); 
-
+	Combat->OnAmmoChangedEx.AddUObject(this, &ThisClass::HandleAmmoChangedEx_FromCombat);
 	Combat->OnEquippedChanged.AddUObject(this, &ThisClass::HandleEquippedChanged_FromCombat);
 	Combat->OnReloadingChanged.AddUObject(this, &ThisClass::HandleReloadingChanged_FromCombat);
 	Combat->OnSlotsStateChanged.AddUObject(this, &ThisClass::HandleSlotsStateChanged_FromCombat);
@@ -442,7 +456,6 @@ void UMosesMatchHUD::BindToCombatComponent_FromPlayerState()
 	UE_LOG(LogMosesHUD, Warning, TEXT("[HUD][CL] Bound CombatComponent delegates Combat=%s PS=%s"),
 		*GetNameSafe(Combat), *GetNameSafe(PS));
 
-	// 초기 스냅샷
 	HandleAmmoChangedEx_FromCombat(
 		Combat->GetCurrentMagAmmo(),
 		Combat->GetCurrentReserveAmmo(),

@@ -55,7 +55,7 @@ private:
 	// Config
 	// ---------------------------------------------------------------------
 	UPROPERTY(EditDefaultsOnly, Category = "Respawn", meta = (AllowPrivateAccess = "true"))
-	int32 RespawnCountdownSeconds = 10;
+	int32 RespawnCountdownSeconds = 5;
 
 	/**
 	 * (옵션) 관리 스팟 목록.

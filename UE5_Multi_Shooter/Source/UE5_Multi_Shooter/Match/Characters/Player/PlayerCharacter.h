@@ -140,6 +140,9 @@ private:
 
 	UMosesCombatComponent* GetCombatComponent_Checked() const;
 
+	void ForceSyncAnimDeadStateFromSSOT(const TCHAR* FromTag);
+	bool GetDeadState_FromSSOT() const;
+
 private:
 	// =========================================================================
 	// Weapon visuals (Hand + Back1/2/3)

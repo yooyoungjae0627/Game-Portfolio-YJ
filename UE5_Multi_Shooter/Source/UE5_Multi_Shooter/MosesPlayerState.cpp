@@ -1,5 +1,10 @@
 ﻿// ============================================================================
-// UE5_Multi_Shooter/MosesPlayerState.cpp  (FULL - FIXED)
+// UE5_Multi_Shooter/MosesPlayerState.cpp  (FULL - UPDATED)  [MOD]
+// ----------------------------------------------------------------------------
+// [MOD] Changes
+//  - Player respawn delay: 10.0f -> 5.0f
+//  - On death confirm (server): push announcement "5초 뒤에 리스폰 됩니다." (1 sec)
+//  - Keep SSOT: bIsDead + RespawnEndServerTime + GM->ServerScheduleRespawn stay consistent
 // ============================================================================
 
 #include "UE5_Multi_Shooter/MosesPlayerState.h"
@@ -12,6 +17,8 @@
 #include "UE5_Multi_Shooter/Match/Components/MosesCombatComponent.h"
 #include "UE5_Multi_Shooter/Match/Components/MosesSlotOwnershipComponent.h"
 #include "UE5_Multi_Shooter/Match/Flag/MosesCaptureComponent.h"
+
+#include "UE5_Multi_Shooter/Match/GameState/MosesMatchGameState.h" // ✅ [MOD] Announcement 출력용
 
 #include "UE5_Multi_Shooter/GAS/Components/MosesAbilitySystemComponent.h"
 #include "UE5_Multi_Shooter/GAS/AttributeSet/MosesAttributeSet.h"
@@ -49,7 +56,6 @@ AMosesPlayerState::AMosesPlayerState(const FObjectInitializer& ObjectInitializer
 void AMosesPlayerState::PostInitializeComponents()
 {
 	Super::PostInitializeComponents();
-	// 여기서는 Match 지급을 하지 않는다. (MatchGameMode에서 호출)
 }
 
 void AMosesPlayerState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
@@ -163,7 +169,6 @@ void AMosesPlayerState::TryInitASC(AActor* InAvatarActor)
 	CachedAvatar = InAvatarActor;
 	bASCInitialized = true;
 
-	// Owner = PS, Avatar = Pawn
 	MosesAbilitySystemComponent->InitAbilityActorInfo(this, InAvatarActor);
 
 	UE_LOG(LogMosesGAS, Warning, TEXT("[GAS][PS] InitAbilityActorInfo Owner=%s Avatar=%s"),
@@ -477,7 +482,7 @@ void AMosesPlayerState::ServerAddDeath()
 	UE_LOG(LogMosesPlayer, Warning, TEXT("%s Deaths %d -> %d PS=%s"),
 		MOSES_TAG_SCORE_SV, OldDeaths, Deaths, *GetNameSafe(this));
 
-	OnRep_Deaths(); // ListenServer 즉시 반영
+	OnRep_Deaths();
 }
 
 // ============================================================================
@@ -498,7 +503,6 @@ void AMosesPlayerState::ServerAddScore(int32 Delta, const TCHAR* Reason)
 
 	SetScore(static_cast<float>(NewScore));
 
-	// 서버에서도 즉시 발행 (RepNotify 의존 X)
 	OnScoreChanged.Broadcast(NewScore);
 
 	UE_LOG(LogMosesPlayer, Warning, TEXT("[SCORE][SV] %s Old=%d -> New=%d Delta=%d PS=%s"),
@@ -531,7 +535,7 @@ void AMosesPlayerState::ServerAddCapture(int32 Delta)
 	UE_LOG(LogMosesPlayer, Warning, TEXT("[CAPTURE][SV][PS] Captures %d -> %d Delta=%d PS=%s"),
 		Old, Captures, Delta, *GetNameSafe(this));
 
-	OnRep_Captures(); // ListenServer 즉시 반영
+	OnRep_Captures();
 }
 
 void AMosesPlayerState::ServerAddZombieKill(int32 Delta)
@@ -550,7 +554,7 @@ void AMosesPlayerState::ServerAddZombieKill(int32 Delta)
 	UE_LOG(LogMosesPlayer, Warning, TEXT("[ZOMBIE][SV][PS] ZombieKills %d -> %d Delta=%d PS=%s"),
 		Old, ZombieKills, Delta, *GetNameSafe(this));
 
-	OnRep_ZombieKills(); // ListenServer 즉시 반영
+	OnRep_ZombieKills();
 }
 
 void AMosesPlayerState::ServerAddPvPKill(int32 Delta)
@@ -570,7 +574,7 @@ void AMosesPlayerState::ServerAddPvPKill(int32 Delta)
 	UE_LOG(LogMosesPlayer, Warning, TEXT("[PVP][SV][PS] PvPKills %d -> %d Delta=%d PS=%s"),
 		Old, PvPKills, Delta, *GetNameSafe(this));
 
-	OnRep_PvPKills(); // ListenServer 즉시 반영
+	OnRep_PvPKills();
 }
 
 void AMosesPlayerState::ServerAddHeadshot(int32 Delta)
@@ -584,7 +588,7 @@ void AMosesPlayerState::ServerAddHeadshot(int32 Delta)
 	UE_LOG(LogMosesPlayer, Warning, TEXT("[HEADSHOT][SV][PS] Headshots %d -> %d Delta=%d PS=%s"),
 		Old, Headshots, Delta, *GetNameSafe(this));
 
-	OnRep_Headshots(); // ListenServer 즉시
+	OnRep_Headshots();
 }
 
 // ============================================================================
@@ -606,29 +610,37 @@ void AMosesPlayerState::ServerNotifyDeathFromGAS()
 
 	bIsDead = true;
 
-	// ✅ PS 단일진실(Combat SSOT)에도 즉시 반영 (상태만, 몽타주 ❌)
 	if (UMosesCombatComponent* Combat = GetCombatComponent())
 	{
 		Combat->ServerMarkDead();
 	}
 
-	// ✅ HUD용 "리스폰 종료 서버 시간" 확정 (네 프로젝트는 GM에서 10초)
-	const float Delay = 10.0f;
+	// ---------------------------------------------------------------------
+	// ✅ [MOD] Player respawn delay (5 seconds)
+	// ---------------------------------------------------------------------
+	const float Delay = 5.0f; // ✅ [MOD] 10.0f -> 5.0f
 	const float Now = (GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f);
 	RespawnEndServerTime = Now + Delay;
 
-	ForceNetUpdate();
+	// ---------------------------------------------------------------------
+	// ✅ [MOD] Death announcement (1 sec) - "5초 뒤에 리스폰 됩니다."
+	// ---------------------------------------------------------------------
+	if (AMosesMatchGameState* MGS = GetWorld() ? GetWorld()->GetGameState<AMosesMatchGameState>() : nullptr)
+	{
+		MGS->ServerStartAnnouncementText(FText::FromString(TEXT("5초 뒤에 리스폰 됩니다.")), 1);
+		UE_LOG(LogMosesPhase, Warning, TEXT("[ANN][SV] DeathRespawnNotice Fired Delay=%.0f PS=%s"), Delay, *GetNameSafe(this));
+	}
 
-	// ListenServer 즉시 UI 갱신(RepNotify 의존 X)
-	OnRep_DeathState();
+	ForceNetUpdate();
+	OnRep_DeathState(); // ListenServer immediate UI update
 
 	UE_LOG(LogMosesSpawn, Warning,
-		TEXT("[DEATH][SV][PS] MarkDead OK bIsDead=1 RespawnEnd=%.2f PS=%s Pawn=%s"),
+		TEXT("[DEATH][SV][PS] MarkDead OK bIsDead=1 RespawnEnd=%.2f Delay=%.2f PS=%s Pawn=%s"),
 		RespawnEndServerTime,
+		Delay,
 		*GetNameSafe(this),
 		*GetNameSafe(GetPawn()));
 
-	// ✅ GameMode에 리스폰 스케줄 요청
 	APawn* Pawn = GetPawn();
 	AController* Controller = Pawn ? Pawn->GetController() : nullptr;
 
@@ -661,11 +673,8 @@ void AMosesPlayerState::ServerClearDeadAfterRespawn()
 	RespawnEndServerTime = 0.0f;
 
 	ForceNetUpdate();
-
-	// ListenServer 즉시 UI 갱신
 	OnRep_DeathState();
 
-	// ✅ Combat SSOT도 dead 해제
 	if (UMosesCombatComponent* Combat = GetCombatComponent())
 	{
 		Combat->ServerClearDeadAfterRespawn();
@@ -890,10 +899,6 @@ void AMosesPlayerState::NotifyLobbyPlayerStateChanged_Local(const TCHAR* Reason)
 	LPS->NotifyPlayerStateChanged();
 }
 
-// ============================================================================
-// DoD log
-// ============================================================================
-
 void AMosesPlayerState::DOD_PS_Log(const UObject* Caller, const TCHAR* Phase) const
 {
 	const TCHAR* CallerName = Caller ? *Caller->GetName() : TEXT("None");
@@ -916,10 +921,6 @@ void AMosesPlayerState::DOD_PS_Log(const UObject* Caller, const TCHAR* Phase) co
 		ZombieKills,
 		FMath::RoundToInt(GetScore()));
 }
-
-// ============================================================================
-// Vitals getters
-// ============================================================================
 
 float AMosesPlayerState::GetHealth_Current() const
 {

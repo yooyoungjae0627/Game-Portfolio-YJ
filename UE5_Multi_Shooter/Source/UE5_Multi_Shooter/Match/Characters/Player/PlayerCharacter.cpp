@@ -210,6 +210,9 @@ void APlayerCharacter::PawnClientRestart()
 
 	Moses_ApplyRotationPolicy(this, TEXT("PawnClientRestart"));
 	BindCombatComponent();
+
+	// [MOD] 리스폰 직후 "Dead=false"를 SSOT 기준으로 AnimBP에 강제 반영
+	ForceSyncAnimDeadStateFromSSOT(TEXT("PawnClientRestart"));
 }
 
 void APlayerCharacter::PossessedBy(AController* NewController)
@@ -230,6 +233,9 @@ void APlayerCharacter::OnRep_PlayerState()
 	{
 		ApplyAttachmentPlan_Immediate(CachedCombatComponent->GetCurrentSlot());
 	}
+
+	// [MOD] PS가 도착한 순간에도 한번 더 강제 동기화
+	ForceSyncAnimDeadStateFromSSOT(TEXT("OnRep_PlayerState"));
 }
 
 // ============================================================================
@@ -658,6 +664,8 @@ void APlayerCharacter::BindCombatComponent()
 		*GetNameSafe(GetPlayerState()),
 		*GetNameSafe(GetPlayerState() ? GetPlayerState()->GetPawn() : nullptr));
 
+	// [MOD] 최종 방어선: Bind 직후 SSOT->AnimBP Dead 강제 동기화
+	ForceSyncAnimDeadStateFromSSOT(TEXT("BindCombatComponent"));
 }
 
 void APlayerCharacter::UnbindCombatComponent()
@@ -1506,4 +1514,71 @@ void APlayerCharacter::Multicast_PlayDeathMontage_WithPid_Implementation(const F
 
 	// 기존 Multicast_PlayDeathMontage 내용 그대로 수행
 	Multicast_PlayDeathMontage_Implementation();
+}
+
+// ============================================================================
+// [MOD] Dead State 강제 동기화 (SSOT -> AnimInstance) : Tick 금지, 이벤트/훅에서만
+// - 문제: 리스폰 직후 AnimBP의 IsDead가 true로 남아서 DeathPose에 붙어있는 현상
+// - 해결: PawnClientRestart / OnRep_PlayerState / BindCombatComponent에서
+//         SSOT(CombatComponent->IsDead()) 값을 읽어 SetIsDead를 1회 강제 적용
+// ============================================================================
+
+bool APlayerCharacter::GetDeadState_FromSSOT() const
+{
+	// ✅ Combat SSOT가 있으면 그 값을 신뢰
+	if (CachedCombatComponent)
+	{
+		return CachedCombatComponent->IsDead();
+	}
+
+	// ✅ PS->CombatComponent를 직접 얻어서 읽는 보조 루트
+	if (const AMosesPlayerState* PS = GetPlayerState<AMosesPlayerState>())
+	{
+		if (const UMosesCombatComponent* Combat = PS->GetCombatComponent())
+		{
+			return Combat->IsDead();
+		}
+	}
+
+	return false;
+}
+
+void APlayerCharacter::ForceSyncAnimDeadStateFromSSOT(const TCHAR* FromTag)
+{
+	// Dedicated Server는 코스메틱 없음
+	if (GetNetMode() == NM_DedicatedServer)
+	{
+		return;
+	}
+
+	const bool bDead = GetDeadState_FromSSOT();
+
+	USkeletalMeshComponent* MeshComp = GetMesh();
+	if (!MeshComp)
+	{
+		return;
+	}
+
+	UAnimInstance* AnimInst = MeshComp->GetAnimInstance();
+	if (!AnimInst)
+	{
+		return;
+	}
+
+	UMosesAnimInstance* MosesAnim = Cast<UMosesAnimInstance>(AnimInst);
+	if (!MosesAnim)
+	{
+		return;
+	}
+
+	// ✅ 핵심: 여기서 SetIsDead를 “무조건” 1회 더 때린다.
+	MosesAnim->SetIsDead(bDead);
+
+	UE_LOG(LogMosesCombat, Warning,
+		TEXT("[DEAD][SYNC] ForceSyncAnimDeadState bDead=%d From=%s Pawn=%s PS=%s Combat=%s"),
+		bDead ? 1 : 0,
+		FromTag ? FromTag : TEXT("None"),
+		*GetNameSafe(this),
+		*GetNameSafe(GetPlayerState()),
+		*GetNameSafe(CachedCombatComponent));
 }
