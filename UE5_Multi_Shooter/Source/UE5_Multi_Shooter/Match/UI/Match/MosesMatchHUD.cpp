@@ -752,7 +752,7 @@ void UMosesMatchHUD::TickRespawnNotice_Local()
 
 	FMosesAnnouncementState S;
 	S.bActive = true;
-	S.Text = FText::FromString(FString::Printf(TEXT("잠시후 리스폰됩니다. (%d)"), RemainingSec));
+	S.Text = FText::FromString(FString::Printf(TEXT("잠시후 리스폰됩니다. %d초"), RemainingSec));
 	AnnouncementWidget->UpdateAnnouncement(S);
 
 	if (RemainingSec <= 0)
