@@ -1,16 +1,4 @@
-﻿// ============================================================================
-// UE5_Multi_Shooter/Combat/MosesCombatComponent.cpp  (FULL - UPDATED)
-// ============================================================================
-//
-// [STEP1 핵심 변경점]
-// - ServerGrantWeaponToSlot() 추가: 파밍/획득 시 슬롯 WeaponId 세팅 + 탄약 초기화.
-// - Server_EnsureAmmoInitializedForSlot()이 실제로 WeaponData(MagSize/MaxReserve)를 사용해
-//   (0/0)인 슬롯 탄약을 초기화하도록 구현.
-// - Slot WeaponId 세팅 즉시 RepNotify/Delegate를 갱신하는 내부 함수 추가.
-//
-// ============================================================================
-
-#include "UE5_Multi_Shooter/Match/Components/MosesCombatComponent.h"
+﻿#include "UE5_Multi_Shooter/Match/Components/MosesCombatComponent.h"
 #include "UE5_Multi_Shooter/Match/Characters/Player/PlayerCharacter.h"
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
 #include "UE5_Multi_Shooter/Match/Weapon/MosesWeaponData.h"
@@ -18,6 +6,7 @@
 #include "UE5_Multi_Shooter/MosesPlayerState.h"
 #include "UE5_Multi_Shooter/Match/Weapon/MosesGrenadeProjectile.h"
 #include "UE5_Multi_Shooter/GAS/MosesGameplayTags.h"
+#include "UE5_Multi_Shooter/Match/Characters/Enemy/Zombie/MosesZombieCharacter.h" 
 
 #include "Engine/World.h"
 #include "Engine/GameInstance.h"
@@ -1128,21 +1117,19 @@ void UMosesCombatComponent::Server_SpawnGrenadeProjectile(
 		GEClass ? *GetNameSafe(GEClass.Get()) : TEXT("None(FallbackOnly)"));
 }
 
+bool UMosesCombatComponent::Server_IsZombieTarget(const AActor* TargetActor) const
+{
+	return TargetActor && TargetActor->IsA(AMosesZombieCharacter::StaticClass());
+}
 
 // ============================================================================
 // UMosesCombatComponent::Server_ApplyDamageToTarget_GAS (FULL)  [MOD]
 // ----------------------------------------------------------------------------
-// 목표:
-// - 서버 권위 100%
-// - "총 히트 대상"이 Pawn(플레이어 캐릭터)인 경우, ASC가 PlayerState(SSOT)에 있으므로
-//   TargetASC를 Pawn->PlayerState->ASC로 우회해서 데미지 GE를 적용한다.
-// - 좀비/기타 대상이 IAbilitySystemInterface를 구현한 경우(ASC가 Pawn에 있는 경우)는
-//   기존대로 TargetActor의 ASI를 사용한다.
-// - 실패 시 false 반환하여 호출부에서 ApplyDamage 폴백(디버그) 가능
-// ----------------------------------------------------------------------------
-// 기대 로그:
-// - 성공: [GAS][SV] APPLY OK TargetASC=... TargetActor=... Damage=...
-// - 실패: [GAS][SV] APPLY FAIL (...)
+// [MOD] Changes
+// - Target type 분기:
+//   * Zombie target  -> PS.DamageGE_Zombie_SetByCaller
+//   * Player target  -> PS.DamageGE_Player_SetByCaller
+// - 기존 CombatComponent DamageGE_SetByCaller는 레거시로 두고, 실제 적용은 PS 정책을 사용
 // ============================================================================
 
 bool UMosesCombatComponent::Server_ApplyDamageToTarget_GAS(
@@ -1152,7 +1139,6 @@ bool UMosesCombatComponent::Server_ApplyDamageToTarget_GAS(
 	AActor* DamageCauser,
 	const UMosesWeaponData* WeaponData) const
 {
-
 	// [MOD] Dead target guard (PS SSOT)
 	if (APawn* TargetPawn = Cast<APawn>(TargetActor))
 	{
@@ -1231,15 +1217,37 @@ bool UMosesCombatComponent::Server_ApplyDamageToTarget_GAS(
 		return false;
 	}
 
-	// ---- Damage GE resolve ----
-	TSubclassOf<UGameplayEffect> GEClass = DamageGE_SetByCaller.LoadSynchronous();
+	// --------------------------------------------------------------------
+	// [MOD][DAMAGE_POLICY] Damage GE resolve (Player vs Zombie)
+	// --------------------------------------------------------------------
+	TSubclassOf<UGameplayEffect> GEClass = nullptr;
+
+	const bool bZombieTarget = Server_IsZombieTarget(TargetActor);
+
+	if (bZombieTarget)
+	{
+		GEClass = SourcePS->GetDamageGE_Zombie_SetByCaller();
+		UE_LOG(LogMosesGAS, Warning,
+			TEXT("[GAS][SV][DMG_POLICY] Target=Zombie -> Use GE_Zombie. PS=%s Victim=%s"),
+			*GetNameSafe(SourcePS),
+			*GetNameSafe(TargetActor));
+	}
+	else
+	{
+		GEClass = SourcePS->GetDamageGE_Player_SetByCaller();
+		UE_LOG(LogMosesGAS, Warning,
+			TEXT("[GAS][SV][DMG_POLICY] Target=Player -> Use GE_Player. PS=%s Victim=%s"),
+			*GetNameSafe(SourcePS),
+			*GetNameSafe(TargetActor));
+	}
+
 	if (!GEClass)
 	{
 		UE_LOG(LogMosesGAS, Error,
-			TEXT("[GAS][SV] APPLY FAIL (NoDamageGE) SoftPath=%s Owner=%s OwnerClass=%s"),
-			*DamageGE_SetByCaller.ToSoftObjectPath().ToString(),
-			*GetNameSafe(GetOwner()),
-			*GetNameSafe(GetOwner() ? GetOwner()->GetClass() : nullptr));
+			TEXT("[GAS][SV] APPLY FAIL (NoDamageGE_ByPolicy) Target=%s IsZombie=%d PS=%s"),
+			*GetNameSafe(TargetActor),
+			bZombieTarget ? 1 : 0,
+			*GetNameSafe(SourcePS));
 		return false;
 	}
 
@@ -1265,16 +1273,16 @@ bool UMosesCombatComponent::Server_ApplyDamageToTarget_GAS(
 	SourceASC->ApplyGameplayEffectSpecToTarget(*SpecHandle.Data.Get(), TargetASC);
 
 	UE_LOG(LogMosesGAS, Warning,
-		TEXT("[GAS][SV] APPLY OK TargetActor=%s ResolvedOwner=%s TargetASC_Owner=%s Damage=%.1f Weapon=%s"),
+		TEXT("[GAS][SV] APPLY OK TargetActor=%s ResolvedOwner=%s TargetASC_Owner=%s Damage=%.1f Weapon=%s GE=%s"),
 		*GetNameSafe(TargetActor),
 		*GetNameSafe(ResolvedTargetOwnerForLog),
 		*GetNameSafe(TargetASC ? TargetASC->GetOwner() : nullptr),
 		FinalDamageForSetByCaller,
-		WeaponData ? *WeaponData->WeaponId.ToString() : TEXT("None"));
+		WeaponData ? *WeaponData->WeaponId.ToString() : TEXT("None"),
+		*GetNameSafe(GEClass.Get()));
 
 	return true;
 }
-
 
 // ============================================================================
 // Cosmetic propagation (Fire only - already server approved by ServerFire)

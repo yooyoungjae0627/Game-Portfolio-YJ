@@ -1,4 +1,9 @@
-﻿#include "UE5_Multi_Shooter/MosesPlayerController.h"
+﻿// ============================================================================
+// UE5_Multi_Shooter/MosesPlayerController.cpp (FULL)
+// ============================================================================
+
+#include "UE5_Multi_Shooter/MosesPlayerController.h"
+
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
 #include "UE5_Multi_Shooter/MosesPlayerState.h"
 #include "UE5_Multi_Shooter/MosesStartGameMode.h"
@@ -8,6 +13,7 @@
 
 #include "UE5_Multi_Shooter/Lobby/GameMode/MosesLobbyGameMode.h"
 #include "UE5_Multi_Shooter/Lobby/GameState/MosesLobbyGameState.h"
+
 #include "UE5_Multi_Shooter/Match/GameMode/MosesMatchGameMode.h"
 #include "UE5_Multi_Shooter/Match/Components/MosesCombatComponent.h"
 #include "UE5_Multi_Shooter/Match/Weapon/MosesWeaponRegistrySubsystem.h"
@@ -15,8 +21,9 @@
 #include "UE5_Multi_Shooter/Match/UI/Match/MosesMatchHUD.h"
 
 #include "UE5_Multi_Shooter/System/MosesLobbyLocalPlayerSubsystem.h"
+
 #include "UE5_Multi_Shooter/GAS/MosesGameplayTags.h"
-#include "UE5_Multi_Shooter/Persist/MosesMatchRecordStorageSubsystem.h" 
+#include "UE5_Multi_Shooter/Persist/MosesMatchRecordStorageSubsystem.h"
 
 #include "Blueprint/WidgetBlueprintLibrary.h"
 
@@ -36,23 +43,15 @@ static constexpr int32 Lobby_MaxRoomMaxPlayers = 4;
 // =========================================================
 // ctor
 // =========================================================
-
 AMosesPlayerController::AMosesPlayerController(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
 {
 	PlayerCameraManagerClass = AMosesPlayerCameraManager::StaticClass();
-
-	/**
-	 * 주의:
-	 * - bAutoManageActiveCameraTarget을 ctor에서 영구로 끄면 매치에서 Pawn 카메라 자동 복구가 깨질 수 있음.
-	 * - 로비에서만 끄고, 로비가 아니면 반드시 원복한다. (BeginPlay / RestoreNonLobbyDefaults_LocalOnly)
-	 */
 }
 
 // =========================================================
 // Camera / Restart
 // =========================================================
-
 void AMosesPlayerController::ClientRestart_Implementation(APawn* NewPawn)
 {
 	Super::ClientRestart_Implementation(NewPawn);
@@ -62,14 +61,7 @@ void AMosesPlayerController::ClientRestart_Implementation(APawn* NewPawn)
 		return;
 	}
 
-	// =========================================================
-	// InputMode / Cursor 정책
-	// - Match : Cursor OFF (GameOnly)
-	// - Lobby : Cursor ON  (GameAndUI)
-	// - Start : Cursor ON  (GameAndUI)  ✅ 요구사항
-	// =========================================================
-
-	// Match => 무조건 OFF
+	// Match => Cursor OFF
 	if (IsMatchMap_Local())
 	{
 		RestoreNonLobbyDefaults_LocalOnly();
@@ -83,7 +75,7 @@ void AMosesPlayerController::ClientRestart_Implementation(APawn* NewPawn)
 		return;
 	}
 
-	// Lobby => ON
+	// Lobby => Cursor ON
 	if (IsLobbyContext())
 	{
 		bAutoManageActiveCameraTarget = false;
@@ -93,7 +85,7 @@ void AMosesPlayerController::ClientRestart_Implementation(APawn* NewPawn)
 		return;
 	}
 
-	// ✅ Start => ON
+	// Start => Cursor ON
 	if (IsStartMap_Local())
 	{
 		RestoreNonLobbyDefaults_LocalOnly();
@@ -102,7 +94,7 @@ void AMosesPlayerController::ClientRestart_Implementation(APawn* NewPawn)
 		return;
 	}
 
-	// Other NonLobby => OFF
+	// Other => Cursor OFF
 	RestoreNonLobbyDefaults_LocalOnly();
 	RestoreNonLobbyInputMode_LocalOnly();
 
@@ -111,29 +103,17 @@ void AMosesPlayerController::ClientRestart_Implementation(APawn* NewPawn)
 		SetViewTarget(NewPawn);
 		AutoManageActiveCameraTarget(NewPawn);
 	}
-
-	UE_LOG(LogTemp, Warning, TEXT("[CAM][PC] ClientRestart -> ForcePawnViewTarget Pawn=%s ViewTarget=%s AutoManage=%d"),
-		*GetNameSafe(NewPawn),
-		*GetNameSafe(GetViewTarget()),
-		bAutoManageActiveCameraTarget ? 1 : 0);
 }
 
 // =========================================================
 // Debug Exec
 // =========================================================
-
-void AMosesPlayerController::gas_DumpTags()
-{
-}
-
-void AMosesPlayerController::gas_DumpAttr()
-{
-}
+void AMosesPlayerController::gas_DumpTags() {}
+void AMosesPlayerController::gas_DumpAttr() {}
 
 // =========================================================
 // Dev Exec Helpers
 // =========================================================
-
 void AMosesPlayerController::TravelToMatch_Exec()
 {
 	UWorld* World = GetWorld();
@@ -171,9 +151,8 @@ void AMosesPlayerController::TravelToLobby_Exec()
 }
 
 // =========================================================
-// Lifecycle (Local UI / Camera)
+// Local: Pending Nick
 // =========================================================
-
 void AMosesPlayerController::SetPendingLobbyNickname_Local(const FString& Nick)
 {
 	if (!IsLocalController())
@@ -193,24 +172,36 @@ void AMosesPlayerController::SetPendingLobbyNickname_Local(const FString& Nick)
 	TrySendPendingLobbyNickname_Local();
 }
 
-// 이미 존재하는 Server_SendLobbyChat의 구현을 "서버 권위 GameState 위임"으로 통일
-void AMosesPlayerController::Server_SendLobbyChat_Implementation(const FString& Text)
+void AMosesPlayerController::TrySendPendingLobbyNickname_Local()
 {
-	AMosesPlayerState* PS = GetPlayerState<AMosesPlayerState>();
-	if (!PS)
+	if (!IsLocalController())
 	{
 		return;
 	}
 
-	AMosesLobbyGameState* LGS = GetWorld() ? GetWorld()->GetGameState<AMosesLobbyGameState>() : nullptr;
-	if (!LGS)
+	if (!bPendingLobbyNicknameSend_Local)
 	{
 		return;
 	}
 
-	LGS->Server_AddChatMessage(PS, Text);
+	if (!GetNetConnection() || !PlayerState)
+	{
+		return;
+	}
+
+	if (PendingLobbyNickname_Local.IsEmpty())
+	{
+		bPendingLobbyNicknameSend_Local = false;
+		return;
+	}
+
+	Server_SetLobbyNickname(PendingLobbyNickname_Local);
+	bPendingLobbyNicknameSend_Local = false;
 }
 
+// =========================================================
+// Lifecycle
+// =========================================================
 void AMosesPlayerController::BeginPlay()
 {
 	Super::BeginPlay();
@@ -220,7 +211,7 @@ void AMosesPlayerController::BeginPlay()
 		return;
 	}
 
-	// Match => 커서 OFF 고정
+	// Match => 커서 OFF
 	if (IsMatchMap_Local())
 	{
 		RestoreNonLobbyDefaults_LocalOnly();
@@ -232,25 +223,18 @@ void AMosesPlayerController::BeginPlay()
 			AutoManageActiveCameraTarget(LocalPawn);
 		}
 
-		// [MOD][SCOPE] Match에서도 바인딩 필요 (Early return 전에!)
-		BindScopeWeaponEvents_Local(); // [MOD]
-
+		BindScopeWeaponEvents_Local();
 		return;
 	}
 
-	// ✅ Start => 커서 ON
+	// Start => 커서 ON
 	if (IsStartMap_Local())
 	{
 		RestoreNonLobbyDefaults_LocalOnly();
 		ApplyStartInputMode_LocalOnly();
 		ReapplyStartInputMode_NextTick_LocalOnly();
 
-		UE_LOG(LogMosesSpawn, Warning, TEXT("[Start][PC] BeginPlay -> Cursor ON Map=%s"),
-			*UGameplayStatics::GetCurrentLevelName(GetWorld(), true));
-
-		// [MOD][SCOPE] Start에서도 바인딩(안전) - 원하면 유지
-		BindScopeWeaponEvents_Local(); // [MOD]
-
+		BindScopeWeaponEvents_Local();
 		return;
 	}
 
@@ -266,44 +250,32 @@ void AMosesPlayerController::BeginPlay()
 			AutoManageActiveCameraTarget(LocalPawn);
 		}
 
-		UE_LOG(LogTemp, Warning, TEXT("[CAM][PC] BeginPlay NonLobby -> Restore + ForcePawnViewTarget Pawn=%s ViewTarget=%s AutoManage=%d"),
-			*GetNameSafe(GetPawn()),
-			*GetNameSafe(GetViewTarget()),
-			bAutoManageActiveCameraTarget ? 1 : 0);
-
-		// [MOD][SCOPE] NonLobby에서도 바인딩(안전)
-		BindScopeWeaponEvents_Local(); // [MOD]
-
+		BindScopeWeaponEvents_Local();
 		return;
 	}
 
-	// Lobby Context => 커서 ON
+	// Lobby => 커서 ON
 	bAutoManageActiveCameraTarget = false;
-
 	ActivateLobbyUI_LocalOnly();
 	ApplyLobbyInputMode_LocalOnly();
 	ApplyLobbyPreviewCamera();
-
 	ReapplyLobbyInputMode_NextTick_LocalOnly();
 
 	GetWorldTimerManager().SetTimer(
 		LobbyPreviewCameraTimerHandle,
 		this,
-		&AMosesPlayerController::ApplyLobbyPreviewCamera,
+		&ThisClass::ApplyLobbyPreviewCamera,
 		LobbyPreviewCameraDelay,
-		false
-	);
+		false);
 
-	// [MOD][SCOPE] bind weapon change events
-	BindScopeWeaponEvents_Local(); // [MOD]
+	BindScopeWeaponEvents_Local();
 }
-
 
 void AMosesPlayerController::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
-	// [MOD][DAY8] 스코프 타이머 정리(로컬)
 	StopScopeBlurTimer_Local();
 	UnbindScopeWeaponEvents_Local();
+
 	bScopeActive_Local = false;
 	CachedScopeWeaponData_Local.Reset();
 	CachedMatchHUD_Local.Reset();
@@ -320,7 +292,6 @@ void AMosesPlayerController::OnPossess(APawn* InPawn)
 		return;
 	}
 
-	// Match => 커서 OFF
 	if (IsMatchMap_Local())
 	{
 		RestoreNonLobbyDefaults_LocalOnly();
@@ -331,17 +302,9 @@ void AMosesPlayerController::OnPossess(APawn* InPawn)
 			SetViewTarget(InPawn);
 			AutoManageActiveCameraTarget(InPawn);
 		}
-
-		UE_LOG(LogTemp, Warning, TEXT("[TEST][Cam] (Match) PC=%s Pawn=%s ViewTarget=%s AutoManage=%d"),
-			*GetNameSafe(this),
-			*GetNameSafe(InPawn),
-			*GetNameSafe(GetViewTarget()),
-			bAutoManageActiveCameraTarget ? 1 : 0);
-
 		return;
 	}
 
-	// ✅ Start => 커서 ON
 	if (IsStartMap_Local())
 	{
 		RestoreNonLobbyDefaults_LocalOnly();
@@ -350,7 +313,6 @@ void AMosesPlayerController::OnPossess(APawn* InPawn)
 		return;
 	}
 
-	// Lobby => 커서 ON
 	if (IsLobbyContext())
 	{
 		bAutoManageActiveCameraTarget = false;
@@ -369,14 +331,6 @@ void AMosesPlayerController::OnPossess(APawn* InPawn)
 			AutoManageActiveCameraTarget(InPawn);
 		}
 	}
-
-	UE_LOG(LogTemp, Warning, TEXT("[TEST][Cam] PC=%s Pawn=%s ViewTarget=%s AutoManage=%d Lobby=%d Start=%d"),
-		*GetNameSafe(this),
-		*GetNameSafe(InPawn),
-		*GetNameSafe(GetViewTarget()),
-		bAutoManageActiveCameraTarget ? 1 : 0,
-		IsLobbyContext() ? 1 : 0,
-		IsStartMap_Local() ? 1 : 0);
 }
 
 void AMosesPlayerController::OnRep_PlayerState()
@@ -389,26 +343,32 @@ void AMosesPlayerController::OnRep_PlayerState()
 	}
 
 	ULocalPlayer* LP = GetLocalPlayer();
-	if (!LP)
+	if (LP)
 	{
-		return;
+		if (UMosesLobbyLocalPlayerSubsystem* Subsys = LP->GetSubsystem<UMosesLobbyLocalPlayerSubsystem>())
+		{
+			Subsys->NotifyPlayerStateChanged();
+		}
 	}
 
-	UMosesLobbyLocalPlayerSubsystem* Subsys = LP->GetSubsystem<UMosesLobbyLocalPlayerSubsystem>();
-	if (!Subsys)
-	{
-		return;
-	}
-
-	AMosesPlayerState* PS = GetPlayerState<AMosesPlayerState>();
-	UE_LOG(LogMosesSpawn, Warning, TEXT("[PC][CL] OnRep_PlayerState PS=%s"), *GetNameSafe(PS));
-
-	Subsys->NotifyPlayerStateChanged();
-
-	// [MOD][SCOPE] PlayerState가 붙는 타이밍에서 Combat 바인딩 재시도(필수 안전장치)
-	BindScopeWeaponEvents_Local(); // [MOD]
+	BindScopeWeaponEvents_Local();
 }
 
+void AMosesPlayerController::OnRep_Pawn()
+{
+	Super::OnRep_Pawn();
+
+	if (!IsLocalController())
+	{
+		return;
+	}
+
+	ApplyMatchCameraPolicy_LocalOnly(TEXT("OnRep_Pawn"));
+}
+
+// =========================================================
+// Replication
+// =========================================================
 void AMosesPlayerController::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
 {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
@@ -420,7 +380,6 @@ void AMosesPlayerController::GetLifetimeReplicatedProps(TArray<FLifetimeProperty
 // =========================================================
 // Client → Server RPC (Lobby)
 // =========================================================
-
 void AMosesPlayerController::Server_CreateRoom_Implementation(const FString& RoomTitle, int32 MaxPlayers)
 {
 	if (!HasAuthority())
@@ -449,10 +408,7 @@ void AMosesPlayerController::Server_CreateRoom_Implementation(const FString& Roo
 
 	UE_LOG(LogMosesSpawn, Log, TEXT("[LobbyRPC][SV] CreateRoom %s Room=%s Title=%s Max=%d PC=%s"),
 		NewRoomId.IsValid() ? TEXT("OK") : TEXT("FAIL"),
-		*NewRoomId.ToString(),
-		*SafeTitle,
-		SafeMaxPlayers,
-		*GetNameSafe(this));
+		*NewRoomId.ToString(), *SafeTitle, SafeMaxPlayers, *GetNameSafe(this));
 }
 
 void AMosesPlayerController::Server_JoinRoom_Implementation(const FGuid& RoomId)
@@ -464,8 +420,7 @@ void AMosesPlayerController::Server_JoinRoom_Implementation(const FGuid& RoomId)
 
 	if (!RoomId.IsValid())
 	{
-		UE_LOG(LogMosesSpawn, Warning, TEXT("[LobbyRPC][SV] JoinRoom REJECT (InvalidRoomId) PC=%s"),
-			*GetNameSafe(this));
+		UE_LOG(LogMosesSpawn, Warning, TEXT("[LobbyRPC][SV] JoinRoom REJECT (InvalidRoomId) PC=%s"), *GetNameSafe(this));
 		return;
 	}
 
@@ -481,27 +436,12 @@ void AMosesPlayerController::Server_JoinRoom_Implementation(const FGuid& RoomId)
 	if (!PS->IsLoggedIn())
 	{
 		const FString PlayerNickName = PS->GetPlayerNickName();
-
 		PS->ServerSetPlayerNickName(PlayerNickName);
 		PS->ServerSetLoggedIn(true);
-
-		UE_LOG(LogMosesSpawn, Warning,
-			TEXT("[LobbyRPC][SV] AutoLoginBeforeJoin Nick=%s Pid=%s PC=%s"),
-			*PlayerNickName,
-			*PS->GetPersistentId().ToString(),
-			*GetNameSafe(this));
 	}
 
 	EMosesRoomJoinResult Result = EMosesRoomJoinResult::Ok;
-	const bool bOk = LGS->Server_JoinRoomWithResult(PS, RoomId, Result);
-
-	UE_LOG(LogMosesSpawn, Log, TEXT("[LobbyRPC][SV] JoinRoom %s Room=%s Result=%d PC=%s Pid=%s LoggedIn=%d"),
-		bOk ? TEXT("OK") : TEXT("FAIL"),
-		*RoomId.ToString(),
-		(int32)Result,
-		*GetNameSafe(this),
-		*PS->GetPersistentId().ToString(),
-		PS->IsLoggedIn() ? 1 : 0);
+	LGS->Server_JoinRoomWithResult(PS, RoomId, Result);
 
 	Client_JoinRoomResult(Result, RoomId);
 }
@@ -521,7 +461,6 @@ void AMosesPlayerController::Server_LeaveRoom_Implementation()
 	}
 
 	LGS->Server_LeaveRoom(PS);
-	UE_LOG(LogMosesSpawn, Log, TEXT("[LobbyRPC][SV] LeaveRoom OK PC=%s"), *GetNameSafe(this));
 }
 
 void AMosesPlayerController::Server_SetReady_Implementation(bool bInReady)
@@ -539,20 +478,15 @@ void AMosesPlayerController::Server_SetReady_Implementation(bool bInReady)
 
 	if (PS->IsRoomHost())
 	{
-		UE_LOG(LogMosesSpawn, Warning, TEXT("[LobbyRPC][SV] SetReady REJECT (Host cannot Ready) PC=%s"),
-			*GetNameSafe(this));
 		return;
 	}
 
 	if (!PS->GetRoomId().IsValid())
 	{
-		UE_LOG(LogMosesSpawn, Warning, TEXT("[LobbyRPC][SV] SetReady REJECT (NotInRoom) PC=%s"),
-			*GetNameSafe(this));
 		return;
 	}
 
 	PS->ServerSetReady(bInReady);
-	PS->DOD_PS_Log(this, TEXT("Lobby:AfterServer_SetReady"));
 
 	if (AMosesLobbyGameState* LGS = GetWorld() ? GetWorld()->GetGameState<AMosesLobbyGameState>() : nullptr)
 	{
@@ -570,8 +504,6 @@ void AMosesPlayerController::Server_RequestStartMatch_Implementation()
 	AMosesLobbyGameMode* LobbyGM = GetWorld() ? GetWorld()->GetAuthGameMode<AMosesLobbyGameMode>() : nullptr;
 	if (!LobbyGM)
 	{
-		UE_LOG(LogMosesSpawn, Warning, TEXT("[LobbyRPC][SV] StartMatch REJECT (NotLobbyGM) PC=%s"),
-			*GetNameSafe(this));
 		return;
 	}
 
@@ -601,18 +533,28 @@ void AMosesPlayerController::Server_SetLobbyNickname_Implementation(const FStrin
 
 	PS->ServerSetPlayerNickName(Clean);
 	PS->ServerSetLoggedIn(true);
+}
 
-	UE_LOG(LogMosesSpawn, Warning, TEXT("[NickSV] PC=%s PS=%s Nick=%s Pid=%s"),
-		*GetNameSafe(this),
-		*GetNameSafe(PS),
-		*Clean,
-		*PS->GetPersistentId().ToString());
+void AMosesPlayerController::Server_SendLobbyChat_Implementation(const FString& Text)
+{
+	AMosesPlayerState* PS = GetPlayerState<AMosesPlayerState>();
+	if (!PS)
+	{
+		return;
+	}
+
+	AMosesLobbyGameState* LGS = GetWorld() ? GetWorld()->GetGameState<AMosesLobbyGameState>() : nullptr;
+	if (!LGS)
+	{
+		return;
+	}
+
+	LGS->Server_AddChatMessage(PS, Text);
 }
 
 // =========================================================
 // JoinRoom Result (Server → Client)
 // =========================================================
-
 void AMosesPlayerController::Client_JoinRoomResult_Implementation(EMosesRoomJoinResult Result, const FGuid& RoomId)
 {
 	ULocalPlayer* LP = GetLocalPlayer();
@@ -630,7 +572,6 @@ void AMosesPlayerController::Client_JoinRoomResult_Implementation(EMosesRoomJoin
 // =========================================================
 // Travel Guard (Dev Exec → Server Only)
 // =========================================================
-
 void AMosesPlayerController::Server_TravelToMatch_Implementation()
 {
 	if (!HasAuthority())
@@ -652,68 +593,26 @@ void AMosesPlayerController::Server_TravelToLobby_Implementation()
 }
 
 // =========================================================
-// Pending Nickname send helper (Local-only)
-// =========================================================
-
-void AMosesPlayerController::TrySendPendingLobbyNickname_Local()
-{
-	if (!IsLocalController())
-	{
-		return;
-	}
-
-	if (!bPendingLobbyNicknameSend_Local)
-	{
-		return;
-	}
-
-	if (!GetNetConnection())
-	{
-		return;
-	}
-
-	if (!PlayerState)
-	{
-		return;
-	}
-
-	if (PendingLobbyNickname_Local.IsEmpty())
-	{
-		bPendingLobbyNicknameSend_Local = false;
-		return;
-	}
-
-	Server_SetLobbyNickname(PendingLobbyNickname_Local);
-	bPendingLobbyNicknameSend_Local = false;
-}
-
-// =========================================================
 // Server-side Travel helpers
 // =========================================================
-
 void AMosesPlayerController::DoServerTravelToMatch()
 {
 	UWorld* World = GetWorld();
 	if (!World)
 	{
-		UE_LOG(LogMosesSpawn, Warning, TEXT("[DOD][Travel] REJECT (NoWorld)"));
 		return;
 	}
 
 	AGameModeBase* GM = World->GetAuthGameMode();
 	if (!GM)
 	{
-		UE_LOG(LogMosesSpawn, Warning, TEXT("[DOD][Travel] REJECT (NoGameMode)"));
 		return;
 	}
 
 	if (AMosesLobbyGameMode* LobbyGM = Cast<AMosesLobbyGameMode>(GM))
 	{
 		LobbyGM->TravelToMatch();
-		return;
 	}
-
-	UE_LOG(LogMosesSpawn, Warning, TEXT("[DOD][Travel] REJECT (NotLobbyGM) GM=%s"), *GetNameSafe(GM));
 }
 
 void AMosesPlayerController::DoServerTravelToLobby()
@@ -721,30 +620,65 @@ void AMosesPlayerController::DoServerTravelToLobby()
 	UWorld* World = GetWorld();
 	if (!World)
 	{
-		UE_LOG(LogMosesSpawn, Warning, TEXT("[DOD][Travel] REJECT (NoWorld)"));
 		return;
 	}
 
-	AGameModeBase* GM = GetWorld()->GetAuthGameMode();
+	AGameModeBase* GM = World->GetAuthGameMode();
 	if (!GM)
 	{
-		UE_LOG(LogMosesSpawn, Warning, TEXT("[DOD][Travel] REJECT (NoGameMode)"));
 		return;
 	}
 
 	if (AMosesMatchGameMode* MatchGM = Cast<AMosesMatchGameMode>(GM))
 	{
 		MatchGM->TravelToLobby();
-		return;
 	}
-
-	UE_LOG(LogMosesSpawn, Warning, TEXT("[DOD][Travel] REJECT (NotMatchGM) GM=%s"), *GetNameSafe(GM));
 }
 
 // =========================================================
-// Lobby/Match/Start Context 판정 (Local-only)
+// Server: StartGame → Lobby 진입 요청 처리
 // =========================================================
+void AMosesPlayerController::Server_RequestEnterLobby_Implementation(const FString& Nickname)
+{
+	(void)Nickname;
 
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	AMosesStartGameMode* GM = GetWorld() ? GetWorld()->GetAuthGameMode<AMosesStartGameMode>() : nullptr;
+	if (!GM)
+	{
+		return;
+	}
+
+	GM->ServerTravelToLobby();
+}
+
+// =========================================================
+// Server: 캐릭터 선택 처리
+// =========================================================
+void AMosesPlayerController::Server_SetSelectedCharacterId_Implementation(int32 SelectedId)
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	AMosesPlayerState* PS = GetMosesPlayerStateChecked_Log(TEXT("Server_SetSelectedCharacterId"));
+	if (!PS)
+	{
+		return;
+	}
+
+	const int32 SafeId = (SelectedId == 2) ? 2 : 1;
+	PS->ServerSetSelectedCharacterId(SafeId);
+}
+
+// =========================================================
+// Context 판정 (Local-only)
+// =========================================================
 bool AMosesPlayerController::IsLobbyMap_Local() const
 {
 	const UWorld* World = GetWorld();
@@ -783,21 +717,19 @@ bool AMosesPlayerController::IsStartMap_Local() const
 
 bool AMosesPlayerController::IsLobbyContext() const
 {
-	// [MOD] Match/Start 맵에서는 LobbyContext로 판정되면 안 된다.
-	// SeamlessTravel/초기 프레임에서 GameState 타입이 잠깐 Lobby일 수 있어도
-	// 입력 정책이 꼬이면 Look(Pitch) 축이 "안 들어오는 것처럼" 보인다.
+	// Match/Start에서는 절대 Lobby로 판정되면 안 됨 (Travel 타이밍 흔들림 방지)
 	if (IsMatchMap_Local() || IsStartMap_Local())
 	{
 		return false;
 	}
 
-	// 1순위: 맵 이름 기반
+	// 1순위: 맵 이름
 	if (IsLobbyMap_Local())
 	{
 		return true;
 	}
 
-	// 2순위: GameState 타입 기반 보조 (NonMatch/NonStart에서만)
+	// 2순위: GameState 타입 보조
 	const UWorld* World = GetWorld();
 	if (!World)
 	{
@@ -808,9 +740,8 @@ bool AMosesPlayerController::IsLobbyContext() const
 }
 
 // =========================================================
-// Lobby Context / Camera / UI (Local-only)
+// Lobby Camera / UI
 // =========================================================
-
 void AMosesPlayerController::ApplyLobbyPreviewCamera()
 {
 	if (!IsLocalController() || !IsLobbyContext())
@@ -845,8 +776,6 @@ void AMosesPlayerController::ApplyLobbyPreviewCamera()
 
 	bAutoManageActiveCameraTarget = false;
 	SetViewTargetWithBlend(TargetCam, 0.0f);
-
-	UE_LOG(LogTemp, Verbose, TEXT("[LobbyCam] Applied ViewTarget=%s"), *GetNameSafe(TargetCam));
 }
 
 void AMosesPlayerController::ActivateLobbyUI_LocalOnly()
@@ -854,17 +783,12 @@ void AMosesPlayerController::ActivateLobbyUI_LocalOnly()
 	ULocalPlayer* LP = GetLocalPlayer();
 	if (!LP)
 	{
-		UE_LOG(LogMosesSpawn, Warning, TEXT("[LobbyUI] No LocalPlayer PC=%s"), *GetNameSafe(this));
 		return;
 	}
 
 	if (UMosesLobbyLocalPlayerSubsystem* LobbySubsys = LP->GetSubsystem<UMosesLobbyLocalPlayerSubsystem>())
 	{
 		LobbySubsys->ActivateLobbyUI();
-	}
-	else
-	{
-		UE_LOG(LogMosesSpawn, Error, TEXT("[LobbyUI] No MosesLobbyLocalPlayerSubsystem PC=%s"), *GetNameSafe(this));
 	}
 }
 
@@ -888,9 +812,8 @@ void AMosesPlayerController::RestoreNonLobbyDefaults_LocalOnly()
 }
 
 // =========================================================
-// InputMode (Lobby/Start/NonLobby)
+// InputMode
 // =========================================================
-
 void AMosesPlayerController::ApplyLobbyInputMode_LocalOnly()
 {
 	if (!IsLocalController())
@@ -905,7 +828,6 @@ void AMosesPlayerController::ApplyLobbyInputMode_LocalOnly()
 	FInputModeGameAndUI Mode;
 	Mode.SetHideCursorDuringCapture(false);
 	Mode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
-
 	SetInputMode(Mode);
 }
 
@@ -916,9 +838,6 @@ void AMosesPlayerController::ApplyStartInputMode_LocalOnly()
 		return;
 	}
 
-	// 개발자 주석:
-	// - Start 모드는 UI 입력 중심(닉 입력/버튼 클릭)이므로 커서 ON이 필요하다.
-	// - Lobby와 동일 정책(GameAndUI)을 사용한다.
 	bShowMouseCursor = true;
 	bEnableClickEvents = true;
 	bEnableMouseOverEvents = true;
@@ -926,11 +845,7 @@ void AMosesPlayerController::ApplyStartInputMode_LocalOnly()
 	FInputModeGameAndUI Mode;
 	Mode.SetHideCursorDuringCapture(false);
 	Mode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
-
 	SetInputMode(Mode);
-
-	UE_LOG(LogMosesSpawn, Verbose, TEXT("[Start][PC] ApplyStartInputMode -> Cursor ON Map=%s"),
-		*UGameplayStatics::GetCurrentLevelName(GetWorld(), true));
 }
 
 void AMosesPlayerController::RestoreNonLobbyInputMode_LocalOnly()
@@ -968,14 +883,12 @@ void AMosesPlayerController::ReapplyLobbyInputMode_NextTick_LocalOnly()
 				return;
 			}
 
-			// 매치로 이미 넘어갔으면 커서 OFF
 			if (IsMatchMap_Local())
 			{
 				RestoreNonLobbyInputMode_LocalOnly();
 				return;
 			}
 
-			// 로비면 커서 ON 유지
 			if (IsLobbyContext())
 			{
 				ApplyLobbyInputMode_LocalOnly();
@@ -1003,7 +916,6 @@ void AMosesPlayerController::ReapplyStartInputMode_NextTick_LocalOnly()
 				return;
 			}
 
-			// Start가 아니면 건드리지 않는다
 			if (IsStartMap_Local())
 			{
 				ApplyStartInputMode_LocalOnly();
@@ -1012,9 +924,8 @@ void AMosesPlayerController::ReapplyStartInputMode_NextTick_LocalOnly()
 }
 
 // =========================================================
-// Shared getters (null/log guard)
+// Shared getters
 // =========================================================
-
 AMosesLobbyGameState* AMosesPlayerController::GetLobbyGameStateChecked_Log(const TCHAR* Caller) const
 {
 	UWorld* World = GetWorld();
@@ -1031,6 +942,7 @@ AMosesLobbyGameState* AMosesPlayerController::GetLobbyGameStateChecked_Log(const
 AMosesPlayerState* AMosesPlayerController::GetMosesPlayerStateChecked_Log(const TCHAR* Caller) const
 {
 	AMosesPlayerState* PS = GetPlayerState<AMosesPlayerState>();
+
 	if (!PS)
 	{
 		UE_LOG(LogMosesSpawn, Warning, TEXT("[%s] REJECT (NoPlayerState) PC=%s"), Caller, *GetNameSafe(this));
@@ -1040,77 +952,23 @@ AMosesPlayerState* AMosesPlayerController::GetMosesPlayerStateChecked_Log(const 
 }
 
 // =========================================================
-// Server: StartGame → Lobby 진입 요청 처리
+// Match Camera Policy (Local-only)
 // =========================================================
-
-void AMosesPlayerController::Server_RequestEnterLobby_Implementation(const FString& Nickname)
-{
-	if (!HasAuthority())
-	{
-		return;
-	}
-
-	AMosesStartGameMode* GM = GetWorld() ? GetWorld()->GetAuthGameMode<AMosesStartGameMode>() : nullptr;
-	if (!GM)
-	{
-		UE_LOG(LogMosesSpawn, Warning, TEXT("[EnterLobby][SV] REJECT (NoStartGM) PC=%s"), *GetNameSafe(this));
-		return;
-	}
-
-	GM->ServerTravelToLobby();
-}
-
-// =========================================================
-// Server: 캐릭터 선택 처리
-// =========================================================
-
-void AMosesPlayerController::Server_SetSelectedCharacterId_Implementation(int32 SelectedId)
-{
-	if (!HasAuthority())
-	{
-		return;
-	}
-
-	AMosesPlayerState* PS = GetMosesPlayerStateChecked_Log(TEXT("Server_SetSelectedCharacterId"));
-	if (!PS)
-	{
-		return;
-	}
-
-	const int32 SafeId = (SelectedId == 2) ? 2 : 1;
-
-	PS->ServerSetSelectedCharacterId(SafeId);
-
-	UE_LOG(LogMosesSpawn, Log, TEXT("[CharSel][SV] SetSelectedCharacterId=%d PC=%s PS=%s"),
-		SafeId, *GetNameSafe(this), *GetNameSafe(PS));
-}
-
-void AMosesPlayerController::OnRep_Pawn()
-{
-	Super::OnRep_Pawn();
-
-	if (!IsLocalController())
-	{
-		return;
-	}
-
-	ApplyMatchCameraPolicy_LocalOnly(TEXT("OnRep_Pawn"));
-}
-
 void AMosesPlayerController::ApplyMatchCameraPolicy_LocalOnly(const TCHAR* Reason)
 {
+	(void)Reason;
+
 	if (!IsLocalController())
 	{
 		return;
 	}
 
-	// [MOD] MatchMap이면 "무조건" NonLobby 정책 강제
-	// - Lobby/Start 판정은 Travel 타이밍에 일시적으로 흔들릴 수 있다.
-	// - Match에서 커서/입력 정책이 스킵되면 Look(Pitch) 축이 죽은 것처럼 보인다.
+	// MatchMap이면 무조건 NonLobby 정책 강제
 	if (IsMatchMap_Local())
 	{
 		RestoreNonLobbyDefaults_LocalOnly();
 		RestoreNonLobbyInputMode_LocalOnly();
+
 		SetIgnoreLookInput(false);
 		SetIgnoreMoveInput(false);
 
@@ -1119,59 +977,26 @@ void AMosesPlayerController::ApplyMatchCameraPolicy_LocalOnly(const TCHAR* Reaso
 			SetViewTarget(LocalPawn);
 			AutoManageActiveCameraTarget(LocalPawn);
 		}
-
-		UE_LOG(LogMosesSpawn, Warning,
-			TEXT("[CAM][PC][%s] ApplyMatchCameraPolicy (FORCED MATCH) ViewTarget=%s Cursor=%d"),
-			Reason ? Reason : TEXT("None"),
-			*GetNameSafe(GetViewTarget()),
-			bShowMouseCursor ? 1 : 0);
-
 		return;
 	}
 
-	// Lobby/Start에서는 건드리지 않는다(기존 정책 유지)
+	// Lobby/Start에서는 건드리지 않는다
 	if (IsLobbyContext() || IsStartMap_Local())
 	{
 		return;
 	}
 
-	// 기존 NonLobby 정책
 	RestoreNonLobbyDefaults_LocalOnly();
 	RestoreNonLobbyInputMode_LocalOnly();
+
 	SetIgnoreLookInput(false);
 	SetIgnoreMoveInput(false);
 
-	APawn* LocalPawn = GetPawn();
-	if (IsValid(LocalPawn))
+	if (!GetPawn())
 	{
-		SetViewTarget(LocalPawn);
-		AutoManageActiveCameraTarget(LocalPawn);
-
-		UE_LOG(LogTemp, Warning,
-			TEXT("[CAM][PC][%s] ApplyMatchCameraPolicy OK Pawn=%s ViewTarget=%s AutoManage=%d Map=%s"),
-			Reason ? Reason : TEXT("None"),
-			*GetNameSafe(LocalPawn),
-			*GetNameSafe(GetViewTarget()),
-			bAutoManageActiveCameraTarget ? 1 : 0,
-			*UGameplayStatics::GetCurrentLevelName(GetWorld(), true));
-
-		if (GetWorld())
-		{
-			GetWorldTimerManager().ClearTimer(MatchCameraRetryTimerHandle);
-		}
-		return;
+		RetryApplyMatchCameraPolicy_NextTick_LocalOnly();
 	}
-
-	UE_LOG(LogTemp, Warning,
-		TEXT("[CAM][PC][%s] ApplyMatchCameraPolicy RETRY (Pawn=None) ViewTarget=%s AutoManage=%d Map=%s"),
-		Reason ? Reason : TEXT("None"),
-		*GetNameSafe(GetViewTarget()),
-		bAutoManageActiveCameraTarget ? 1 : 0,
-		*UGameplayStatics::GetCurrentLevelName(GetWorld(), true));
-
-	RetryApplyMatchCameraPolicy_NextTick_LocalOnly();
 }
-
 
 void AMosesPlayerController::RetryApplyMatchCameraPolicy_NextTick_LocalOnly()
 {
@@ -1193,7 +1018,6 @@ void AMosesPlayerController::RetryApplyMatchCameraPolicy_NextTick_LocalOnly()
 				return;
 			}
 
-			// Lobby/Start로 돌아간 경우에는 중단
 			if (IsLobbyContext() || IsStartMap_Local())
 			{
 				return;
@@ -1203,10 +1027,126 @@ void AMosesPlayerController::RetryApplyMatchCameraPolicy_NextTick_LocalOnly()
 		}));
 }
 
-// ============================================================================
-// [MOD][DAY8] Scope Local (로컬 연출)
-// ============================================================================
+// =========================================================
+// [PERSIST] Records
+// =========================================================
+void AMosesPlayerController::RequestMatchRecords_Local(const FString& NicknameFilter, int32 MaxCount)
+{
+	if (!IsLocalController())
+	{
+		return;
+	}
 
+	MaxCount = FMath::Clamp(MaxCount, 1, 200);
+	Server_RequestMatchRecords(NicknameFilter, MaxCount);
+}
+
+void AMosesPlayerController::Server_RequestMatchRecords_Implementation(const FString& NicknameFilter, int32 MaxCount)
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	AMosesPlayerState* PS = GetPlayerState<AMosesPlayerState>();
+	if (!PS)
+	{
+		return;
+	}
+
+	UGameInstance* GI = GetGameInstance();
+	if (!GI)
+	{
+		return;
+	}
+
+	UMosesMatchRecordStorageSubsystem* Storage = GI->GetSubsystem<UMosesMatchRecordStorageSubsystem>();
+	if (!Storage)
+	{
+		return;
+	}
+
+	const FString MyPid = PS->GetPersistentId().ToString(EGuidFormats::DigitsWithHyphens);
+	const FString MyNick = PS->GetPlayerNickName();
+
+	TArray<FMosesMatchRecordSummary> Records;
+	Storage->LoadRecordSummaries_Server(MyPid, MyNick, NicknameFilter, MaxCount, Records);
+
+	Client_ReceiveMatchRecords(Records);
+}
+
+void AMosesPlayerController::Client_ReceiveMatchRecords_Implementation(const TArray<FMosesMatchRecordSummary>& Records)
+{
+	OnMatchRecordsReceivedBP.Broadcast(Records);
+}
+
+// =========================================================
+// Pickup Toast (Owner Only)
+// =========================================================
+void AMosesPlayerController::Client_ShowPickupToast_OwnerOnly_Implementation(const FText& Text, float DurationSec)
+{
+	if (!IsLocalController())
+	{
+		return;
+	}
+
+	bPendingPickupToast = true;
+	PendingPickupToastText = Text;
+	PendingPickupToastDuration = FMath::Clamp(DurationSec, 0.2f, 10.0f);
+
+	TryFlushPendingPickupToast_Local();
+}
+
+void AMosesPlayerController::TryFlushPendingPickupToast_Local()
+{
+	if (!bPendingPickupToast)
+	{
+		return;
+	}
+
+	UMosesMatchHUD* HUD = FindMatchHUD_Local();
+	if (!HUD)
+	{
+		// HUD 생성/교체 타이밍이면 pending 유지
+		return;
+	}
+
+	HUD->ShowPickupToast_Local(PendingPickupToastText, PendingPickupToastDuration);
+
+	bPendingPickupToast = false;
+}
+
+UMosesMatchHUD* AMosesPlayerController::FindMatchHUD_Local()
+{
+	if (CachedMatchHUD_Local.IsValid())
+	{
+		return CachedMatchHUD_Local.Get();
+	}
+
+	TArray<UUserWidget*> Widgets;
+	UWidgetBlueprintLibrary::GetAllWidgetsOfClass(this, Widgets, UMosesMatchHUD::StaticClass(), false);
+
+	for (UUserWidget* W : Widgets)
+	{
+		UMosesMatchHUD* HUD = Cast<UMosesMatchHUD>(W);
+		if (!HUD)
+		{
+			continue;
+		}
+
+		if (HUD->GetOwningPlayer() == this)
+		{
+			CachedMatchHUD_Local = HUD;
+			return HUD;
+		}
+	}
+
+	return nullptr;
+}
+
+// =========================================================
+// [SCOPE] Local cosmetic
+// =========================================================
 UMosesCombatComponent* AMosesPlayerController::FindCombatComponent_Local() const
 {
 	AMosesPlayerState* PS = GetPlayerState<AMosesPlayerState>();
@@ -1217,33 +1157,6 @@ UMosesCameraComponent* AMosesPlayerController::FindMosesCameraComponent_Local() 
 {
 	APawn* P = GetPawn();
 	return P ? P->FindComponentByClass<UMosesCameraComponent>() : nullptr;
-}
-
-UMosesMatchHUD* AMosesPlayerController::FindMatchHUD_Local()
-{
-	if (CachedMatchHUD_Local.IsValid())
-	{
-		return CachedMatchHUD_Local.Get();
-	}
-
-	// HUD는 GF_UI에서 AddToViewport 될 수 있으므로 "월드 전체 위젯 검색"으로 안전하게 찾는다.
-	TArray<UUserWidget*> Widgets;
-	UWidgetBlueprintLibrary::GetAllWidgetsOfClass(this, Widgets, UMosesMatchHUD::StaticClass(), false);
-
-	for (UUserWidget* W : Widgets)
-	{
-		if (UMosesMatchHUD* HUD = Cast<UMosesMatchHUD>(W))
-		{
-			// OwningPlayer가 나(이 PC)인 HUD만 사용
-			if (HUD->GetOwningPlayer() == this)
-			{
-				CachedMatchHUD_Local = HUD;
-				return HUD;
-			}
-		}
-	}
-
-	return nullptr;
 }
 
 bool AMosesPlayerController::CanUseScope_Local(const UMosesWeaponData*& OutWeaponData) const
@@ -1267,7 +1180,6 @@ bool AMosesPlayerController::CanUseScope_Local(const UMosesWeaponData*& OutWeapo
 		return false;
 	}
 
-	// 로컬에서 WeaponData 해석: RegistrySubsystem 사용
 	const UWorld* World = GetWorld();
 	const UGameInstance* GI = World ? World->GetGameInstance() : nullptr;
 	if (!GI)
@@ -1287,7 +1199,7 @@ bool AMosesPlayerController::CanUseScope_Local(const UMosesWeaponData*& OutWeapo
 		return false;
 	}
 
-	// ✅ Sniper 판정은 enum 대신 Tag 기반(빌드 에러 방지 + 데이터키 일치)
+	// 스나이퍼만 허용(Tag 기반)
 	if (WeaponData->WeaponId != FMosesGameplayTags::Get().Weapon_Sniper_A)
 	{
 		return false;
@@ -1299,28 +1211,17 @@ bool AMosesPlayerController::CanUseScope_Local(const UMosesWeaponData*& OutWeapo
 
 void AMosesPlayerController::Scope_OnPressed_Local()
 {
-	UE_LOG(LogMosesHUD, Warning, TEXT("[SCOPE][CL] Press ENTER PC=%s"), *GetNameSafe(this));
-
 	const UMosesWeaponData* WeaponData = nullptr;
 	if (!CanUseScope_Local(WeaponData))
 	{
-		UE_LOG(LogMosesHUD, Warning, TEXT("[SCOPE][CL] Press REJECT CanUseScope_Local=0 PC=%s"), *GetNameSafe(this));
 		return;
 	}
-
-	UE_LOG(LogMosesHUD, Warning, TEXT("[SCOPE][CL] Press ACCEPT Weapon=%s ScopeFOV=%.1f"),
-		*GetNameSafe(WeaponData),
-		WeaponData ? WeaponData->ScopeFOV : -1.0f);
 
 	SetScopeActive_Local(true, WeaponData);
 }
 
 void AMosesPlayerController::Scope_OnReleased_Local()
 {
-	UE_LOG(LogMosesHUD, Warning, TEXT("[SCOPE][CL] Release ENTER Active=%d PC=%s"),
-		bScopeActive_Local ? 1 : 0, *GetNameSafe(this));
-
-	// 스팸 방지: 켜져있을 때만 OFF
 	if (!bScopeActive_Local)
 	{
 		return;
@@ -1328,7 +1229,6 @@ void AMosesPlayerController::Scope_OnReleased_Local()
 
 	SetScopeActive_Local(false, nullptr);
 }
-
 
 void AMosesPlayerController::SetScopeActive_Local(bool bActive, const UMosesWeaponData* WeaponData)
 {
@@ -1339,30 +1239,18 @@ void AMosesPlayerController::SetScopeActive_Local(bool bActive, const UMosesWeap
 
 	if (bScopeActive_Local == bActive)
 	{
-		UE_LOG(LogMosesHUD, VeryVerbose, TEXT("[SCOPE][CL] SetScopeActive SKIP (SameState=%d)"), bActive ? 1 : 0);
 		return;
 	}
 
 	bScopeActive_Local = bActive;
 
-	UE_LOG(LogMosesHUD, Warning, TEXT("[SCOPE][CL] SetScopeActive APPLY Active=%d PC=%s"),
-		bScopeActive_Local ? 1 : 0, *GetNameSafe(this));
-
-	// HUD 찾기 + 위젯 토글
+	// HUD 토글
 	if (UMosesMatchHUD* HUD = FindMatchHUD_Local())
 	{
-		UE_LOG(LogMosesHUD, Warning, TEXT("[SCOPE][CL] HUD FOUND=%s -> SetScopeVisible=%d"),
-			*GetNameSafe(HUD),
-			bScopeActive_Local ? 1 : 0);
-
 		HUD->SetScopeVisible_Local(bScopeActive_Local);
 	}
-	else
-	{
-		UE_LOG(LogMosesHUD, Error, TEXT("[SCOPE][CL] HUD NOT FOUND -> ScopeWidget cannot show"));
-	}
 
-	// 카메라 오버라이드
+	// 카메라 FOV/블러
 	if (UMosesCameraComponent* Cam = FindMosesCameraComponent_Local())
 	{
 		if (bScopeActive_Local)
@@ -1457,32 +1345,9 @@ void AMosesPlayerController::TickScopeBlur_Local()
 	Cam->SetScopeBlurStrength_Local(Blur);
 }
 
-void AMosesPlayerController::Server_RequestCaptureSuccessAnnouncement_Implementation()
-{
-	// 서버에서만
-	if (!HasAuthority())
-	{
-		return;
-	}
-
-	AMosesMatchGameState* GS = GetWorld() ? GetWorld()->GetGameState<AMosesMatchGameState>() : nullptr;
-	if (!GS)
-	{
-		UE_LOG(LogMosesPhase, Warning, TEXT("[ANN][SV] CaptureSuccess FAIL NoMatchGameState"));
-		return;
-	}
-
-	// ✅ 여기서 “캡쳐 성공”만 띄우기
-	// Duration은 원하는 만큼(예: 2초)
-	GS->ServerStartAnnouncementText(FText::FromString(TEXT("캡쳐 성공")), 2);
-
-	UE_LOG(LogMosesPhase, Warning, TEXT("[ANN][SV] CaptureSuccess -> Text='캡쳐 성공' Dur=2"));
-}
-
-// ============================================================================
-// [MOD][SCOPE] weapon-change safety (local only)
-// ============================================================================
-
+// =========================================================
+// [SCOPE] weapon-change safety (local only)
+// =========================================================
 void AMosesPlayerController::BindScopeWeaponEvents_Local()
 {
 	if (!IsLocalController())
@@ -1493,37 +1358,25 @@ void AMosesPlayerController::BindScopeWeaponEvents_Local()
 	UMosesCombatComponent* Combat = FindCombatComponent_Local();
 	if (!Combat)
 	{
-		UE_LOG(LogMosesHUD, VeryVerbose, TEXT("[SCOPE][CL] BindScopeWeaponEvents SKIP (NoCombat) PC=%s"), *GetNameSafe(this));
 		return;
 	}
 
-	// 이미 같은 Combat에 바인딩 되어있으면 종료
 	if (CachedCombatForScope_Local.Get() == Combat)
 	{
 		return;
 	}
 
-	// 기존 Combat에 묶여있던 델리게이트 해제
 	UnbindScopeWeaponEvents_Local();
 
 	CachedCombatForScope_Local = Combat;
-
-	// CombatComponent의 "무기 장착 변경" 이벤트를 구독한다.
-	// (로컬에서만, UI/FOV 연출 안정화 목적)
 	Combat->OnEquippedChanged.AddUObject(this, &ThisClass::HandleEquippedChanged_ScopeLocal);
 
-	UE_LOG(LogMosesHUD, Warning, TEXT("[SCOPE][CL] BindScopeWeaponEvents OK Combat=%s PC=%s"),
-		*GetNameSafe(Combat),
-		*GetNameSafe(this));
-
-	// 바인딩 직후, 현재 상태가 스나이퍼가 아니면 스코프 ON을 방지한다.
-	// (Travel/초기 프레임 꼬임 대비)
+	// Safety: 스나이퍼가 아니면 스코프는 OFF
 	const FGameplayTag CurWeaponId = Combat->GetEquippedWeaponId();
 	const bool bIsSniperNow = (CurWeaponId == FMosesGameplayTags::Get().Weapon_Sniper_A);
 
 	if (!bIsSniperNow && bScopeActive_Local)
 	{
-		UE_LOG(LogMosesHUD, Warning, TEXT("[SCOPE][CL] Force ScopeOff (BindSafety) CurWeapon=%s"), *CurWeaponId.ToString());
 		SetScopeActive_Local(false, nullptr);
 	}
 }
@@ -1532,15 +1385,7 @@ void AMosesPlayerController::UnbindScopeWeaponEvents_Local()
 {
 	if (UMosesCombatComponent* Combat = CachedCombatForScope_Local.Get())
 	{
-		// ⚠️ RemoveAll(this)는 "이 객체(this)가 Combat에 AddUObject한 모든 델리게이트"를 제거한다.
-		// - 프로젝트에서 PC가 Combat에 다른 델리게이트를 추가로 물고 있지 않다는 전제.
-		// - 만약 이후 PC가 Combat에 다른 델리게이트를 더 붙이게 되면,
-		//   RemoveAll(this) 대신 Remove(Handle) 방식으로 변경 권장.
 		Combat->OnEquippedChanged.RemoveAll(this);
-
-		UE_LOG(LogMosesHUD, Warning, TEXT("[SCOPE][CL] UnbindScopeWeaponEvents OK Combat=%s PC=%s"),
-			*GetNameSafe(Combat),
-			*GetNameSafe(this));
 	}
 
 	CachedCombatForScope_Local.Reset();
@@ -1557,97 +1402,21 @@ void AMosesPlayerController::HandleEquippedChanged_ScopeLocal(int32 SlotIndex, F
 
 	const bool bIsSniper = (WeaponId == FMosesGameplayTags::Get().Weapon_Sniper_A);
 
-	UE_LOG(LogMosesHUD, Log, TEXT("[SCOPE][CL] EquippedChanged Slot=%d Weapon=%s Sniper=%d ScopeActive=%d PC=%s"),
-		SlotIndex,
-		*WeaponId.ToString(),
-		bIsSniper ? 1 : 0,
-		bScopeActive_Local ? 1 : 0,
-		*GetNameSafe(this));
-
-	// 스나이퍼가 아닌 무기로 바뀌면: 스코프는 무조건 OFF (UI/FOV 잔상 방지)
-	if (!bIsSniper)
+	// 스나이퍼가 아니면 스코프는 무조건 OFF
+	if (!bIsSniper && bScopeActive_Local)
 	{
-		if (bScopeActive_Local)
-		{
-			UE_LOG(LogMosesHUD, Warning, TEXT("[SCOPE][CL] Force ScopeOff (WeaponChangedToNonSniper) NewWeapon=%s"), *WeaponId.ToString());
-			SetScopeActive_Local(false, nullptr);
-		}
+		SetScopeActive_Local(false, nullptr);
 
-		// HUD가 남아있으면 스코프 위젯도 강제 숨김(안전)
 		if (UMosesMatchHUD* HUD = FindMatchHUD_Local())
 		{
 			HUD->SetScopeVisible_Local(false);
 		}
-
 		return;
 	}
 
-	// 스나이퍼로 바뀐 경우:
-	// - Crosshair는 HUD가 스나이퍼면 항상 숨김 정책
-	// - Scope는 RMB로만 켬 (현재 bScopeActive_Local 상태를 그대로 반영)
+	// 스나이퍼면 HUD는 현재 ScopeActive 상태를 반영
 	if (UMosesMatchHUD* HUD = FindMatchHUD_Local())
 	{
 		HUD->SetScopeVisible_Local(bScopeActive_Local);
 	}
-}
-
-void AMosesPlayerController::RequestMatchRecords_Local(const FString& NicknameFilter, int32 MaxCount)
-{
-	if (!IsLocalController())
-	{
-		return;
-	}
-
-	MaxCount = FMath::Clamp(MaxCount, 1, 200);
-	Server_RequestMatchRecords(NicknameFilter, MaxCount);
-
-	UE_LOG(LogMosesPhase, Warning, TEXT("[PERSIST][CL] RequestMatchRecords Sent Filter='%s' Max=%d"),
-		*NicknameFilter, MaxCount);
-}
-
-void AMosesPlayerController::Server_RequestMatchRecords_Implementation(const FString& NicknameFilter, int32 MaxCount)
-{
-	if (!HasAuthority())
-	{
-		return;
-	}
-
-	AMosesPlayerState* PS = GetPlayerState<AMosesPlayerState>();
-	if (!PS)
-	{
-		return;
-	}
-
-	UGameInstance* GI = GetGameInstance();
-	if (!GI)
-	{
-		return;
-	}
-
-	UMosesMatchRecordStorageSubsystem* Storage = GI->GetSubsystem<UMosesMatchRecordStorageSubsystem>();
-	if (!Storage)
-	{
-		UE_LOG(LogMosesPhase, Warning, TEXT("[PERSIST][SV] Load FAIL (NoStorageSubsystem)"));
-		return;
-	}
-
-	const FString MyPid = PS->GetPersistentId().ToString(EGuidFormats::DigitsWithHyphens);
-	const FString MyNick = PS->GetPlayerNickName();
-
-	TArray<FMosesMatchRecordSummary> Records;
-	Storage->LoadRecordSummaries_Server(MyPid, MyNick, NicknameFilter, MaxCount, Records);
-
-	Client_ReceiveMatchRecords(Records);
-
-	UE_LOG(LogMosesPhase, Warning, TEXT("[PERSIST][SV] Sent Records=%d ToPC=%s"),
-		Records.Num(), *GetNameSafe(this));
-}
-
-void AMosesPlayerController::Client_ReceiveMatchRecords_Implementation(const TArray<FMosesMatchRecordSummary>& Records)
-{
-	UE_LOG(LogMosesPhase, Warning, TEXT("[PERSIST][CL] Records Received Count=%d PC=%s"),
-		Records.Num(), *GetNameSafe(this));
-
-	// BP UI에서 바로 받게
-	OnMatchRecordsReceivedBP.Broadcast(Records);
 }

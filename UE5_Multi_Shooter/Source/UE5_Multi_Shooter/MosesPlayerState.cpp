@@ -963,3 +963,17 @@ float AMosesPlayerState::GetShield_Max() const
 		? MosesAbilitySystemComponent->GetNumericAttribute(UMosesAttributeSet::GetMaxShieldAttribute())
 		: 0.f;
 }
+
+// ============================================================================
+// [MOD][DAMAGE_POLICY] Getters
+// ============================================================================
+
+TSubclassOf<UGameplayEffect> AMosesPlayerState::GetDamageGE_Player_SetByCaller() const
+{
+	return DamageGE_Player_SetByCaller.LoadSynchronous();
+}
+
+TSubclassOf<UGameplayEffect> AMosesPlayerState::GetDamageGE_Zombie_SetByCaller() const
+{
+	return DamageGE_Zombie_SetByCaller.LoadSynchronous();
+}

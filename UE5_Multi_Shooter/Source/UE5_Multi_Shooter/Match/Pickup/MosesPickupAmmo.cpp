@@ -1,5 +1,5 @@
 ﻿// ============================================================================
-// UE5_Multi_Shooter/Match/Pickup/MosesPickupAmmo.cpp  (FULL - UPDATED)
+// UE5_Multi_Shooter/Match/Pickup/MosesPickupAmmo.cpp  (FULL · FINAL)
 // ============================================================================
 
 #include "UE5_Multi_Shooter/Match/Pickup/MosesPickupAmmo.h"
@@ -23,6 +23,10 @@
 #include "Camera/PlayerCameraManager.h"
 #include "Engine/World.h"
 #include "TimerManager.h"
+
+// ============================================================================
+// ctor
+// ============================================================================
 
 AMosesPickupAmmo::AMosesPickupAmmo()
 {
@@ -50,10 +54,14 @@ AMosesPickupAmmo::AMosesPickupAmmo()
 	PromptWidgetComponent->SetWidgetSpace(EWidgetSpace::World);
 	PromptWidgetComponent->SetDrawAtDesiredSize(true);
 	PromptWidgetComponent->SetTwoSided(true);
-	PromptWidgetComponent->SetVisibility(false);
 	PromptWidgetComponent->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	PromptWidgetComponent->SetRelativeLocation(FVector(0.f, 0.f, 110.f));
+	PromptWidgetComponent->SetVisibility(false);
 }
+
+// ============================================================================
+// BeginPlay
+// ============================================================================
 
 void AMosesPickupAmmo::BeginPlay()
 {
@@ -68,7 +76,7 @@ void AMosesPickupAmmo::BeginPlay()
 	SetPromptVisible_Local(false);
 	StopPromptBillboard_Local();
 
-	// WorldMesh 적용(선택)
+	// World mesh 적용
 	if (PickupData)
 	{
 		if (PickupData->WorldMesh.IsValid())
@@ -87,13 +95,9 @@ void AMosesPickupAmmo::BeginPlay()
 	ApplyPromptText_Local();
 }
 
-void AMosesPickupAmmo::SetLocalHighlight(bool bEnable)
-{
-	if (Mesh)
-	{
-		Mesh->SetRenderCustomDepth(bEnable);
-	}
-}
+// ============================================================================
+// Server: Pickup
+// ============================================================================
 
 bool AMosesPickupAmmo::ServerTryPickup(AMosesPlayerState* PickerPS, FText& OutAnnounceText)
 {
@@ -106,46 +110,58 @@ bool AMosesPickupAmmo::ServerTryPickup(AMosesPlayerState* PickerPS, FText& OutAn
 
 	if (bConsumed)
 	{
-		UE_LOG(LogMosesPickup, Warning, TEXT("[PICKUP][SV] Ammo FAIL AlreadyConsumed Actor=%s"), *GetNameSafe(this));
+		UE_LOG(LogMosesPickup, Warning,
+			TEXT("[PICKUP][SV] Ammo FAIL AlreadyConsumed Actor=%s"),
+			*GetNameSafe(this));
 		return false;
 	}
 
 	if (!PickerPS || !PickupData)
 	{
-		UE_LOG(LogMosesPickup, Warning, TEXT("[PICKUP][SV] Ammo FAIL (Null PS/Data) Actor=%s"), *GetNameSafe(this));
+		UE_LOG(LogMosesPickup, Warning,
+			TEXT("[PICKUP][SV] Ammo FAIL (Null PS/Data) Actor=%s"),
+			*GetNameSafe(this));
 		return false;
 	}
 
 	if (!PickupData->AmmoTypeId.IsValid())
 	{
-		UE_LOG(LogMosesPickup, Warning, TEXT("[PICKUP][SV] Ammo FAIL (AmmoTypeId invalid) Actor=%s"), *GetNameSafe(this));
+		UE_LOG(LogMosesPickup, Warning,
+			TEXT("[PICKUP][SV] Ammo FAIL (Invalid AmmoTypeId) Actor=%s"),
+			*GetNameSafe(this));
 		return false;
 	}
 
 	UMosesCombatComponent* Combat = PickerPS->GetCombatComponent();
 	if (!Combat)
 	{
-		UE_LOG(LogMosesPickup, Warning, TEXT("[PICKUP][SV] Ammo FAIL (NoCombat) PS=%s"), *GetNameSafe(PickerPS));
+		UE_LOG(LogMosesPickup, Warning,
+			TEXT("[PICKUP][SV] Ammo FAIL (NoCombat) PS=%s"),
+			*GetNameSafe(PickerPS));
 		return false;
 	}
 
-	// -------------------------------------------------------------------------
-	// 원자성 판정: OK 1 / FAIL 1
-	// -------------------------------------------------------------------------
+	// ---------------------------------------------------------------------
+	// 원자성 보장 (OK 1 / FAIL 1)
+	// ---------------------------------------------------------------------
 	bConsumed = true;
 
-	// ✅ 서버에서만 SSOT 갱신
-	// - 네 CombatComponent에 ServerAddAmmoByTag가 이미 추가된 상태 기준
-	Combat->ServerAddAmmoByTag(PickupData->AmmoTypeId, PickupData->ReserveMaxDelta, PickupData->ReserveFillDelta);
+	Combat->ServerAddAmmoByTag(
+		PickupData->AmmoTypeId,
+		PickupData->ReserveMaxDelta,
+		PickupData->ReserveFillDelta);
 
-	const FText NameText = !PickupData->DisplayName.IsEmpty()
+	const FText NameText =
+		!PickupData->DisplayName.IsEmpty()
 		? PickupData->DisplayName
 		: FText::FromString(PickupData->AmmoTypeId.ToString());
 
-	OutAnnounceText = FText::Format(FText::FromString(TEXT("{0} 획득")), NameText);
+	OutAnnounceText = FText::Format(
+		FText::FromString(TEXT("{0} 획득")),
+		NameText);
 
 	UE_LOG(LogMosesPickup, Warning,
-		TEXT("[PICKUP][SV] Ammo OK TypeId=%s MaxDelta=%d FillDelta=%d PS=%s Actor=%s"),
+		TEXT("[PICKUP][SV] Ammo OK Type=%s Max+%d Fill+%d PS=%s Actor=%s"),
 		*PickupData->AmmoTypeId.ToString(),
 		PickupData->ReserveMaxDelta,
 		PickupData->ReserveFillDelta,
@@ -156,71 +172,89 @@ bool AMosesPickupAmmo::ServerTryPickup(AMosesPlayerState* PickerPS, FText& OutAn
 	return true;
 }
 
+// ============================================================================
+// Local highlight
+// ============================================================================
+
+void AMosesPickupAmmo::SetLocalHighlight(bool bEnable)
+{
+	if (Mesh)
+	{
+		Mesh->SetRenderCustomDepth(bEnable);
+	}
+}
+
+// ============================================================================
+// Overlap handlers (Local)
+// ============================================================================
+
 void AMosesPickupAmmo::HandleSphereBeginOverlap(
-	UPrimitiveComponent* /*OverlappedComp*/,
+	UPrimitiveComponent*,
 	AActor* OtherActor,
-	UPrimitiveComponent* /*OtherComp*/,
-	int32 /*OtherBodyIndex*/,
-	bool /*bFromSweep*/,
-	const FHitResult& /*SweepResult*/)
+	UPrimitiveComponent*,
+	int32,
+	bool,
+	const FHitResult&)
 {
 	APawn* Pawn = Cast<APawn>(OtherActor);
-	if (!Pawn)
+	if (!Pawn || !Pawn->IsLocallyControlled())
 	{
 		return;
 	}
 
-	if (Pawn->IsLocallyControlled())
+	LocalPromptPawn = Pawn;
+
+	SetLocalHighlight(true);
+	ApplyPromptText_Local();
+	SetPromptVisible_Local(true);
+	StartPromptBillboard_Local();
+
+	if (UMosesInteractionComponent* IC = GetInteractionComponentFromPawn(Pawn))
 	{
-		LocalPromptPawn = Pawn;
-
-		SetLocalHighlight(true);
-		ApplyPromptText_Local();
-		SetPromptVisible_Local(true);
-		StartPromptBillboard_Local();
-
-		if (UMosesInteractionComponent* IC = GetInteractionComponentFromPawn(Pawn))
-		{
-			IC->SetCurrentInteractTarget_Local(this);
-		}
-
-		UE_LOG(LogMosesPickup, Verbose, TEXT("[PICKUP][CL] Ammo Prompt+Target Show Actor=%s Pawn=%s"),
-			*GetNameSafe(this), *GetNameSafe(Pawn));
+		IC->SetCurrentInteractTarget_Local(this);
 	}
+
+	UE_LOG(LogMosesPickup, Verbose,
+		TEXT("[PICKUP][CL] Ammo Prompt SHOW Actor=%s Pawn=%s"),
+		*GetNameSafe(this),
+		*GetNameSafe(Pawn));
 }
 
 void AMosesPickupAmmo::HandleSphereEndOverlap(
-	UPrimitiveComponent* /*OverlappedComp*/,
+	UPrimitiveComponent*,
 	AActor* OtherActor,
-	UPrimitiveComponent* /*OtherComp*/,
-	int32 /*OtherBodyIndex*/)
+	UPrimitiveComponent*,
+	int32)
 {
 	APawn* Pawn = Cast<APawn>(OtherActor);
-	if (!Pawn)
+	if (!Pawn || !Pawn->IsLocallyControlled())
 	{
 		return;
 	}
 
-	if (Pawn->IsLocallyControlled())
+	if (LocalPromptPawn.Get() == Pawn)
 	{
-		if (LocalPromptPawn.Get() == Pawn)
-		{
-			LocalPromptPawn = nullptr;
-		}
-
-		SetLocalHighlight(false);
-		SetPromptVisible_Local(false);
-		StopPromptBillboard_Local();
-
-		if (UMosesInteractionComponent* IC = GetInteractionComponentFromPawn(Pawn))
-		{
-			IC->ClearCurrentInteractTarget_Local(this);
-		}
-
-		UE_LOG(LogMosesPickup, Verbose, TEXT("[PICKUP][CL] Ammo Prompt+Target Hide Actor=%s Pawn=%s"),
-			*GetNameSafe(this), *GetNameSafe(Pawn));
+		LocalPromptPawn = nullptr;
 	}
+
+	SetLocalHighlight(false);
+	SetPromptVisible_Local(false);
+	StopPromptBillboard_Local();
+
+	if (UMosesInteractionComponent* IC = GetInteractionComponentFromPawn(Pawn))
+	{
+		IC->ClearCurrentInteractTarget_Local(this);
+	}
+
+	UE_LOG(LogMosesPickup, Verbose,
+		TEXT("[PICKUP][CL] Ammo Prompt HIDE Actor=%s Pawn=%s"),
+		*GetNameSafe(this),
+		*GetNameSafe(Pawn));
 }
+
+// ============================================================================
+// Prompt UI
+// ============================================================================
 
 void AMosesPickupAmmo::SetPromptVisible_Local(bool bVisible)
 {
@@ -244,11 +278,13 @@ void AMosesPickupAmmo::ApplyPromptText_Local()
 		return;
 	}
 
-	const FText InteractText = !PickupData->InteractText.IsEmpty()
+	const FText InteractText =
+		!PickupData->InteractText.IsEmpty()
 		? PickupData->InteractText
 		: FText::FromString(TEXT("E : 줍기"));
 
-	const FText NameText = !PickupData->DisplayName.IsEmpty()
+	const FText NameText =
+		!PickupData->DisplayName.IsEmpty()
 		? PickupData->DisplayName
 		: FText::FromString(PickupData->AmmoTypeId.ToString());
 
@@ -261,12 +297,11 @@ UMosesInteractionComponent* AMosesPickupAmmo::GetInteractionComponentFromPawn(AP
 }
 
 // ============================================================================
-// Billboard (Local only) - Tick 금지, Timer 기반
+// Billboard (Local only)
 // ============================================================================
 
 void AMosesPickupAmmo::StartPromptBillboard_Local()
 {
-	// 로컬에서만
 	if (HasAuthority())
 	{
 		return;
@@ -290,8 +325,6 @@ void AMosesPickupAmmo::StartPromptBillboard_Local()
 		&ThisClass::TickPromptBillboard_Local,
 		PromptBillboardInterval,
 		true);
-
-	UE_LOG(LogMosesPickup, VeryVerbose, TEXT("[PICKUP][CL] Ammo Billboard START Actor=%s"), *GetNameSafe(this));
 }
 
 void AMosesPickupAmmo::StopPromptBillboard_Local()
@@ -299,7 +332,6 @@ void AMosesPickupAmmo::StopPromptBillboard_Local()
 	if (GetWorldTimerManager().IsTimerActive(TimerHandle_PromptBillboard))
 	{
 		GetWorldTimerManager().ClearTimer(TimerHandle_PromptBillboard);
-		UE_LOG(LogMosesPickup, VeryVerbose, TEXT("[PICKUP][CL] Ammo Billboard STOP Actor=%s"), *GetNameSafe(this));
 	}
 }
 
@@ -322,7 +354,7 @@ void AMosesPickupAmmo::ApplyBillboardRotation_Local()
 	}
 
 	APlayerController* PC = Cast<APlayerController>(Pawn->GetController());
-	if (!PC || !PC->IsLocalController() || !PC->PlayerCameraManager)
+	if (!PC || !PC->PlayerCameraManager)
 	{
 		return;
 	}

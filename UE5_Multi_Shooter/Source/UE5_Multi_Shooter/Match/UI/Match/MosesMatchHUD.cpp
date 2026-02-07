@@ -1,5 +1,5 @@
 ﻿// ============================================================================
-// UE5_Multi_Shooter/Match/UI/Match/MosesMatchHUD.cpp  (FULL)  [MOD]
+// UE5_Multi_Shooter/Match/UI/Match/MosesMatchHUD.cpp (FULL)
 // ============================================================================
 
 #include "UE5_Multi_Shooter/Match/UI/Match/MosesMatchHUD.h"
@@ -9,9 +9,6 @@
 
 #include "UE5_Multi_Shooter/Match/GameState/MosesMatchGameState.h"
 #include "UE5_Multi_Shooter/Match/Components/MosesCombatComponent.h"
-
-#include "UE5_Multi_Shooter/Match/Weapon/MosesWeaponRegistrySubsystem.h"
-#include "UE5_Multi_Shooter/Match/Weapon/MosesWeaponData.h"
 
 #include "UE5_Multi_Shooter/GAS/MosesGameplayTags.h"
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
@@ -30,14 +27,12 @@
 
 #include "Engine/World.h"
 #include "TimerManager.h"
-#include "GameFramework/PlayerController.h"
-#include "GameFramework/Pawn.h"
 #include "GameFramework/GameStateBase.h"
+#include "GameFramework/Pawn.h"
 
 // ============================================================================
 // Local Helpers
 // ============================================================================
-
 static void MosesHUD_SetTextIfValid(UTextBlock* TB, const FText& Text)
 {
 	if (TB)
@@ -65,16 +60,14 @@ static void MosesHUD_SetImageVisibleIfValid(UImage* Img, bool bVisible)
 // ============================================================================
 // Ctor
 // ============================================================================
-
 UMosesMatchHUD::UMosesMatchHUD(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
 {
 }
 
 // ============================================================================
-// [MOD] Aim UI immediate sync
+// Aim UI
 // ============================================================================
-
 bool UMosesMatchHUD::IsSniperEquipped_Local() const
 {
 	const UMosesCombatComponent* Combat = CachedCombatComponent.Get();
@@ -103,31 +96,20 @@ void UMosesMatchHUD::UpdateAimWidgets_Immediate()
 		const bool bShowScope = (bIsSniper && bScopeOn);
 		ScopeWidget->SetScopeVisible(bShowScope);
 	}
-
-	UE_LOG(LogMosesHUD, VeryVerbose, TEXT("[HUD][CL][AIM] UpdateAimWidgets Sniper=%d ScopeOn=%d Crosshair=%s Scope=%s"),
-		bIsSniper ? 1 : 0,
-		bScopeOn ? 1 : 0,
-		*GetNameSafe(CrosshairWidget),
-		*GetNameSafe(ScopeWidget));
 }
 
 // ============================================================================
 // UUserWidget Lifecycle
 // ============================================================================
-
 void UMosesMatchHUD::NativeOnInitialized()
 {
 	Super::NativeOnInitialized();
 
 	UE_LOG(LogMosesHUD, Warning, TEXT("[HUD][CL] Init MatchHUD=%s OwningPlayer=%s"),
-		*GetNameSafe(this),
-		*GetNameSafe(GetOwningPlayer()));
+		*GetNameSafe(this), *GetNameSafe(GetOwningPlayer()));
 
-	// ✅ [MOD] 완전 진입 전(필수 바인딩 완료 전)까지 숨김
+	// 바인딩 완료 전까지 숨김
 	SetVisibility(ESlateVisibility::Collapsed);
-
-	UE_LOG(LogMosesHUD, Warning, TEXT("[HUD][CL] PhaseText Bind=%s (Check WBP name == PhaseText)"),
-		*GetNameSafe(PhaseText));
 
 	CacheCaptureProgress_InternalWidgets();
 
@@ -147,13 +129,12 @@ void UMosesMatchHUD::NativeOnInitialized()
 
 void UMosesMatchHUD::NativeDestruct()
 {
-	StopRespawnNotice_Local(); // ✅ [MOD]
+	StopRespawnNotice_Local();
+	StopLocalPickupToast_Internal();
 
 	UnbindCaptureComponent();
-
 	StopBindRetry();
 	StopCrosshairUpdate();
-
 	UnbindCombatComponent();
 
 	if (AMosesPlayerState* PS = CachedPlayerState.Get())
@@ -162,17 +143,12 @@ void UMosesMatchHUD::NativeDestruct()
 		PS->OnShieldChanged.RemoveAll(this);
 		PS->OnScoreChanged.RemoveAll(this);
 		PS->OnDeathsChanged.RemoveAll(this);
-
 		PS->OnPlayerCapturesChanged.RemoveAll(this);
 		PS->OnPlayerZombieKillsChanged.RemoveAll(this);
 		PS->OnPlayerPvPKillsChanged.RemoveAll(this);
 		PS->OnAmmoChanged.RemoveAll(this);
 		PS->OnGrenadeChanged.RemoveAll(this);
-
-		// ✅ [MOD] DeathState delegate 해제
 		PS->OnDeathStateChanged.RemoveAll(this);
-
-		UE_LOG(LogMosesHUD, Warning, TEXT("[HUD][CL] Unbound PlayerState delegates PS=%s"), *GetNameSafe(PS));
 	}
 
 	if (AMosesMatchGameState* GS = CachedMatchGameState.Get())
@@ -180,8 +156,6 @@ void UMosesMatchHUD::NativeDestruct()
 		GS->OnMatchTimeChanged.RemoveAll(this);
 		GS->OnMatchPhaseChanged.RemoveAll(this);
 		GS->OnAnnouncementChanged.RemoveAll(this);
-
-		UE_LOG(LogMosesHUD, Warning, TEXT("[HUD][CL] Unbound MatchGameState delegates GS=%s"), *GetNameSafe(GS));
 	}
 
 	CachedPlayerState.Reset();
@@ -191,44 +165,58 @@ void UMosesMatchHUD::NativeDestruct()
 }
 
 // ============================================================================
-// Scope UI (Local cosmetic only)
+// Public API
 // ============================================================================
-
 void UMosesMatchHUD::SetScopeVisible_Local(bool bVisible)
 {
-	UE_LOG(LogMosesHUD, Warning, TEXT("[HUD][CL][SCOPE] SetScopeVisible bVisible=%d ScopeWidget=%s"),
-		bVisible ? 1 : 0,
-		*GetNameSafe(ScopeWidget));
-
 	if (ScopeWidget)
 	{
 		ScopeWidget->SetScopeVisible(bVisible);
 	}
 }
 
-void UMosesMatchHUD::TryBroadcastCaptureSuccess_Once()
+void UMosesMatchHUD::ShowPickupToast_Local(const FText& Text, float DurationSeconds)
 {
-	if (bCaptureSuccessAnnounced_Local)
+	UWorld* World = GetWorld();
+	if (!World || !AnnouncementWidget)
 	{
 		return;
 	}
 
-	AMosesPlayerController* MosesPC = Cast<AMosesPlayerController>(GetOwningPlayer());
-	if (!MosesPC)
+	bLocalPickupToastActive = true;
+
+	FMosesAnnouncementState S;
+	S.bActive = true;
+	S.Text = Text;
+	AnnouncementWidget->UpdateAnnouncement(S);
+
+	World->GetTimerManager().ClearTimer(LocalPickupToastTimerHandle);
+	World->GetTimerManager().SetTimer(
+		LocalPickupToastTimerHandle,
+		this,
+		&ThisClass::StopLocalPickupToast_Internal,
+		FMath::Clamp(DurationSeconds, 0.2f, 10.0f),
+		false);
+
+	UE_LOG(LogMosesPickup, Warning, TEXT("[PICKUP][CL] Toast SHOW Text='%s' Dur=%.2f"),
+		*Text.ToString(), DurationSeconds);
+}
+
+void UMosesMatchHUD::StopLocalPickupToast_Internal()
+{
+	if (AnnouncementWidget)
 	{
-		return;
+		FMosesAnnouncementState Off;
+		Off.bActive = false;
+		AnnouncementWidget->UpdateAnnouncement(Off);
 	}
 
-	bCaptureSuccessAnnounced_Local = true;
-	MosesPC->Server_RequestCaptureSuccessAnnouncement();
-
-	UE_LOG(LogMosesHUD, Warning, TEXT("[ANN][CL] Request CaptureSuccessAnnouncement -> PC=%s"), *GetNameSafe(MosesPC));
+	bLocalPickupToastActive = false;
 }
 
 // ============================================================================
 // Bind / Retry
 // ============================================================================
-
 bool UMosesMatchHUD::IsPlayerStateBound() const { return CachedPlayerState.IsValid(); }
 bool UMosesMatchHUD::IsMatchGameStateBound() const { return CachedMatchGameState.IsValid(); }
 bool UMosesMatchHUD::IsCombatComponentBound() const { return CachedCombatComponent.IsValid(); }
@@ -247,7 +235,6 @@ void UMosesMatchHUD::StartBindRetry()
 		return;
 	}
 
-	// ✅ [MOD] Retry 중에도 항상 숨김 유지
 	SetVisibility(ESlateVisibility::Collapsed);
 
 	BindRetryTryCount = 0;
@@ -258,8 +245,6 @@ void UMosesMatchHUD::StartBindRetry()
 		&ThisClass::TryBindRetry,
 		BindRetryInterval,
 		true);
-
-	UE_LOG(LogMosesHUD, Warning, TEXT("[HUD][CL] BindRetry START Interval=%.2f MaxTry=%d"), BindRetryInterval, BindRetryMaxTry);
 }
 
 void UMosesMatchHUD::StopBindRetry()
@@ -273,7 +258,6 @@ void UMosesMatchHUD::StopBindRetry()
 	if (World->GetTimerManager().IsTimerActive(BindRetryHandle))
 	{
 		World->GetTimerManager().ClearTimer(BindRetryHandle);
-		UE_LOG(LogMosesHUD, Warning, TEXT("[HUD][CL] BindRetry STOP"));
 	}
 }
 
@@ -281,26 +265,10 @@ void UMosesMatchHUD::TryBindRetry()
 {
 	BindRetryTryCount++;
 
-	if (!IsPlayerStateBound())
-	{
-		BindToPlayerState();
-	}
-
-	if (!IsMatchGameStateBound())
-	{
-		BindToGameState_Match();
-	}
-
-	if (!IsCombatComponentBound())
-	{
-		BindToCombatComponent_FromPlayerState();
-	}
-
-	// Capture는 필수 조건이 아님
-	if (!IsCaptureComponentBound())
-	{
-		BindToCaptureComponent_FromPlayerState();
-	}
+	if (!IsPlayerStateBound()) { BindToPlayerState(); }
+	if (!IsMatchGameStateBound()) { BindToGameState_Match(); }
+	if (!IsCombatComponentBound()) { BindToCombatComponent_FromPlayerState(); }
+	if (!IsCaptureComponentBound()) { BindToCaptureComponent_FromPlayerState(); }
 
 	ApplySnapshotFromMatchGameState();
 	UpdateAimWidgets_Immediate();
@@ -308,32 +276,14 @@ void UMosesMatchHUD::TryBindRetry()
 	const bool bEssentialReady = IsPlayerStateBound() && IsMatchGameStateBound() && IsCombatComponentBound();
 	if (bEssentialReady)
 	{
-		if (GetVisibility() != ESlateVisibility::Visible)
-		{
-			SetVisibility(ESlateVisibility::Visible);
-			UE_LOG(LogMosesHUD, Warning, TEXT("[HUD][CL] HUD Visible ON (EssentialReady) Try=%d"), BindRetryTryCount);
-		}
-
-		UE_LOG(LogMosesHUD, Warning, TEXT("[HUD][CL] BindRetry DONE Try=%d (PS=1 GS=1 Combat=1 Capture=%d)"),
-			BindRetryTryCount,
-			IsCaptureComponentBound() ? 1 : 0);
-
+		SetVisibility(ESlateVisibility::Visible);
 		StopBindRetry();
 		return;
 	}
 
 	if (BindRetryTryCount >= BindRetryMaxTry)
 	{
-		// GIVEUP이라도 화면은 켜준다
 		SetVisibility(ESlateVisibility::Visible);
-
-		UE_LOG(LogMosesHUD, Warning, TEXT("[HUD][CL] BindRetry GIVEUP -> Force HUD Visible Try=%d (PS=%d GS=%d Combat=%d Capture=%d)"),
-			BindRetryTryCount,
-			IsPlayerStateBound() ? 1 : 0,
-			IsMatchGameStateBound() ? 1 : 0,
-			IsCombatComponentBound() ? 1 : 0,
-			IsCaptureComponentBound() ? 1 : 0);
-
 		StopBindRetry();
 	}
 }
@@ -352,7 +302,6 @@ void UMosesMatchHUD::BindToPlayerState()
 		return;
 	}
 
-	// 같은 PS면 스냅샷만 보강
 	if (CachedPlayerState.Get() == PS)
 	{
 		BindToCombatComponent_FromPlayerState();
@@ -364,27 +313,22 @@ void UMosesMatchHUD::BindToPlayerState()
 		HandlePvPKillsChanged(PS->GetPvPKills());
 		HandleCapturesChanged(PS->GetCaptures());
 		HandleZombieKillsChanged(PS->GetZombieKills());
-
-		// ✅ [MOD] 죽음 스냅샷도 갱신
 		HandleDeathStateChanged(PS->IsDead(), PS->GetRespawnEndServerTime());
 		return;
 	}
 
-	// 이전 PS 해제
 	if (AMosesPlayerState* OldPS = CachedPlayerState.Get())
 	{
 		OldPS->OnHealthChanged.RemoveAll(this);
 		OldPS->OnShieldChanged.RemoveAll(this);
 		OldPS->OnScoreChanged.RemoveAll(this);
 		OldPS->OnDeathsChanged.RemoveAll(this);
-
 		OldPS->OnPlayerCapturesChanged.RemoveAll(this);
 		OldPS->OnPlayerZombieKillsChanged.RemoveAll(this);
 		OldPS->OnPlayerPvPKillsChanged.RemoveAll(this);
 		OldPS->OnAmmoChanged.RemoveAll(this);
 		OldPS->OnGrenadeChanged.RemoveAll(this);
-
-		OldPS->OnDeathStateChanged.RemoveAll(this); // ✅ [MOD]
+		OldPS->OnDeathStateChanged.RemoveAll(this);
 	}
 
 	CachedPlayerState = PS;
@@ -392,29 +336,21 @@ void UMosesMatchHUD::BindToPlayerState()
 	PS->OnHealthChanged.AddUObject(this, &ThisClass::HandleHealthChanged);
 	PS->OnShieldChanged.AddUObject(this, &ThisClass::HandleShieldChanged);
 	PS->OnScoreChanged.AddUObject(this, &ThisClass::HandleScoreChanged);
-
 	PS->OnPlayerCapturesChanged.AddUObject(this, &ThisClass::HandleCapturesChanged);
 	PS->OnPlayerZombieKillsChanged.AddUObject(this, &ThisClass::HandleZombieKillsChanged);
 	PS->OnPlayerPvPKillsChanged.AddUObject(this, &ThisClass::HandlePvPKillsChanged);
-
 	PS->OnAmmoChanged.AddUObject(this, &ThisClass::HandleAmmoChanged_FromPS);
 	PS->OnGrenadeChanged.AddUObject(this, &ThisClass::HandleGrenadeChanged);
 
-	// ✅ [MOD] DeathState (이 HUD는 로컬 플레이어 PS만 바인딩하므로 “죽은 사람만” 실행됨)
 	PS->OnDeathStateChanged.AddUObject(this, &ThisClass::HandleDeathStateChanged);
 
-	UE_LOG(LogMosesHUD, Warning, TEXT("[HUD][CL] Bound PlayerState delegates PS=%s"), *GetNameSafe(PS));
-
-	// Bind 직후 즉시 스냅샷
 	HandleHealthChanged(PS->GetHealth_Current(), PS->GetHealth_Max());
 	HandleShieldChanged(PS->GetShield_Current(), PS->GetShield_Max());
-
 	HandleScoreChanged(FMath::RoundToInt(PS->GetScore()));
 	HandleCapturesChanged(PS->GetCaptures());
 	HandleZombieKillsChanged(PS->GetZombieKills());
 	HandlePvPKillsChanged(PS->GetPvPKills());
-
-	HandleDeathStateChanged(PS->IsDead(), PS->GetRespawnEndServerTime()); // ✅ [MOD]
+	HandleDeathStateChanged(PS->IsDead(), PS->GetRespawnEndServerTime());
 
 	BindToCombatComponent_FromPlayerState();
 	BindToCaptureComponent_FromPlayerState();
@@ -430,7 +366,7 @@ void UMosesMatchHUD::BindToCombatComponent_FromPlayerState()
 		return;
 	}
 
-	UMosesCombatComponent* Combat = PS->GetCombatComponent(); // ✅ SSOT
+	UMosesCombatComponent* Combat = PS->GetCombatComponent(); // SSOT
 	if (!Combat)
 	{
 		return;
@@ -450,9 +386,6 @@ void UMosesMatchHUD::BindToCombatComponent_FromPlayerState()
 	Combat->OnReloadingChanged.AddUObject(this, &ThisClass::HandleReloadingChanged_FromCombat);
 	Combat->OnSlotsStateChanged.AddUObject(this, &ThisClass::HandleSlotsStateChanged_FromCombat);
 
-	UE_LOG(LogMosesHUD, Warning, TEXT("[HUD][CL] Bound CombatComponent delegates Combat=%s PS=%s"),
-		*GetNameSafe(Combat), *GetNameSafe(PS));
-
 	HandleAmmoChangedEx_FromCombat(
 		Combat->GetCurrentMagAmmo(),
 		Combat->GetCurrentReserveAmmo(),
@@ -470,8 +403,6 @@ void UMosesMatchHUD::UnbindCombatComponent()
 		Combat->OnEquippedChanged.RemoveAll(this);
 		Combat->OnReloadingChanged.RemoveAll(this);
 		Combat->OnSlotsStateChanged.RemoveAll(this);
-
-		UE_LOG(LogMosesHUD, Warning, TEXT("[HUD][CL] Unbound CombatComponent delegates Combat=%s"), *GetNameSafe(Combat));
 	}
 
 	CachedCombatComponent.Reset();
@@ -509,8 +440,6 @@ void UMosesMatchHUD::BindToGameState_Match()
 	GS->OnMatchPhaseChanged.AddUObject(this, &ThisClass::HandleMatchPhaseChanged);
 	GS->OnAnnouncementChanged.AddUObject(this, &ThisClass::HandleAnnouncementChanged);
 
-	UE_LOG(LogMosesHUD, Warning, TEXT("[HUD][CL] Bound MatchGameState delegates GS=%s"), *GetNameSafe(GS));
-
 	ApplySnapshotFromMatchGameState();
 }
 
@@ -525,8 +454,8 @@ void UMosesMatchHUD::ApplySnapshotFromMatchGameState()
 	HandleMatchTimeChanged(GS->GetRemainingSeconds());
 	HandleMatchPhaseChanged(GS->GetMatchPhase());
 
-	// ✅ [MOD] 로컬 리스폰 공지 중엔 전원 공지를 덮지 않는다
-	if (!bLocalRespawnNoticeActive)
+	// 로컬 리스폰/픽업 토스트 중엔 전원 공지 덮지 않음
+	if (!bLocalRespawnNoticeActive && !bLocalPickupToastActive)
 	{
 		HandleAnnouncementChanged(GS->GetAnnouncementState());
 	}
@@ -555,7 +484,7 @@ void UMosesMatchHUD::RefreshInitial()
 		HandleHealthChanged(PS->GetHealth_Current(), PS->GetHealth_Max());
 		HandleShieldChanged(PS->GetShield_Current(), PS->GetShield_Max());
 
-		HandleDeathStateChanged(PS->IsDead(), PS->GetRespawnEndServerTime()); // ✅ [MOD]
+		HandleDeathStateChanged(PS->IsDead(), PS->GetRespawnEndServerTime());
 	}
 	else
 	{
@@ -563,7 +492,6 @@ void UMosesMatchHUD::RefreshInitial()
 		HandlePvPKillsChanged(0);
 		HandleCapturesChanged(0);
 		HandleZombieKillsChanged(0);
-
 		HandleHealthChanged(0.f, 0.f);
 		HandleShieldChanged(0.f, 0.f);
 	}
@@ -581,7 +509,6 @@ void UMosesMatchHUD::RefreshInitial()
 // ============================================================================
 // Crosshair Update
 // ============================================================================
-
 void UMosesMatchHUD::StartCrosshairUpdate()
 {
 	UWorld* World = GetWorld();
@@ -658,16 +585,13 @@ void UMosesMatchHUD::TickCrosshairUpdate()
 		const bool bScopeOn = (MosesPC ? MosesPC->IsScopeActive_Local() : false);
 
 		UE_LOG(LogMosesHUD, Log, TEXT("[HUD][CL] Crosshair Spread=%.2f Weapon=%s Scope=%d"),
-			SpreadFactor,
-			*WeaponId.ToString(),
-			bScopeOn ? 1 : 0);
+			SpreadFactor, *WeaponId.ToString(), bScopeOn ? 1 : 0);
 	}
 }
 
 // ============================================================================
 // PlayerState Handlers
 // ============================================================================
-
 void UMosesMatchHUD::HandleHealthChanged(float Current, float Max)
 {
 	if (HealthBar)
@@ -710,8 +634,6 @@ void UMosesMatchHUD::HandleCapturesChanged(int32 NewCaptures)
 	{
 		CapturesAmount->SetText(FText::AsNumber(NewCaptures));
 	}
-
-	UE_LOG(LogMosesHUD, Verbose, TEXT("[HUD][CL] PlayerCapturesChanged=%d"), NewCaptures);
 }
 
 void UMosesMatchHUD::HandleZombieKillsChanged(int32 NewZombieKills)
@@ -720,8 +642,6 @@ void UMosesMatchHUD::HandleZombieKillsChanged(int32 NewZombieKills)
 	{
 		ZombieKillsAmount->SetText(FText::AsNumber(NewZombieKills));
 	}
-
-	UE_LOG(LogMosesHUD, Verbose, TEXT("[HUD][CL] PlayerZombieKillsChanged=%d"), NewZombieKills);
 }
 
 void UMosesMatchHUD::HandlePvPKillsChanged(int32 NewPvPKills)
@@ -730,8 +650,6 @@ void UMosesMatchHUD::HandlePvPKillsChanged(int32 NewPvPKills)
 	{
 		DefeatsAmount->SetText(FText::AsNumber(NewPvPKills));
 	}
-
-	UE_LOG(LogMosesHUD, Verbose, TEXT("[HUD][CL] PvPKillsChanged=%d -> DefeatsAmount Updated"), NewPvPKills);
 }
 
 void UMosesMatchHUD::HandleAmmoChanged_FromPS(int32 Mag, int32 Reserve)
@@ -752,25 +670,22 @@ void UMosesMatchHUD::HandleGrenadeChanged(int32 Grenade)
 
 void UMosesMatchHUD::HandleAmmoChangedEx_FromCombat(int32 Mag, int32 ReserveCur, int32 ReserveMax)
 {
+	(void)ReserveMax;
+
 	if (WeaponAmmoAmount)
 	{
 		WeaponAmmoAmount->SetText(FText::FromString(FString::Printf(TEXT("%d / %d"), Mag, ReserveCur)));
 	}
-
-	UE_LOG(LogMosesHUD, Verbose, TEXT("[HUD][CL] AmmoChangedEx Mag=%d Reserve=%d/%d"), Mag, ReserveCur, ReserveMax);
 
 	UpdateCurrentWeaponHeader();
 	UpdateSlotPanels_All();
 }
 
 // ============================================================================
-// ✅ [MOD] Local Respawn Notice (Victim only)
+// Respawn Notice (Victim only)
 // ============================================================================
-
 void UMosesMatchHUD::HandleDeathStateChanged(bool bIsDead, float InRespawnEndServerTime)
 {
-	// 이 HUD는 “내 PC의 PS”만 바인딩하므로 => 죽은 사람(나)에게만 실행된다.
-
 	if (!bIsDead)
 	{
 		StopRespawnNotice_Local();
@@ -783,7 +698,7 @@ void UMosesMatchHUD::HandleDeathStateChanged(bool bIsDead, float InRespawnEndSer
 void UMosesMatchHUD::StartRespawnNotice_Local(float InRespawnEndServerTime)
 {
 	UWorld* World = GetWorld();
-	if (!World)
+	if (!World || !AnnouncementWidget)
 	{
 		return;
 	}
@@ -791,7 +706,6 @@ void UMosesMatchHUD::StartRespawnNotice_Local(float InRespawnEndServerTime)
 	RespawnNoticeEndServerTime = InRespawnEndServerTime;
 	bLocalRespawnNoticeActive = true;
 
-	// 즉시 1회 갱신
 	TickRespawnNotice_Local();
 
 	World->GetTimerManager().ClearTimer(RespawnNoticeTimerHandle);
@@ -801,8 +715,6 @@ void UMosesMatchHUD::StartRespawnNotice_Local(float InRespawnEndServerTime)
 		&ThisClass::TickRespawnNotice_Local,
 		1.0f,
 		true);
-
-	UE_LOG(LogMosesHUD, Warning, TEXT("[ANN][CL][RESPAWN] START EndServerTime=%.2f"), RespawnNoticeEndServerTime);
 }
 
 void UMosesMatchHUD::StopRespawnNotice_Local()
@@ -816,15 +728,12 @@ void UMosesMatchHUD::StopRespawnNotice_Local()
 	RespawnNoticeEndServerTime = 0.f;
 	bLocalRespawnNoticeActive = false;
 
-	// 공지 끄기(로컬)
 	if (AnnouncementWidget)
 	{
 		FMosesAnnouncementState Off;
 		Off.bActive = false;
 		AnnouncementWidget->UpdateAnnouncement(Off);
 	}
-
-	UE_LOG(LogMosesHUD, Warning, TEXT("[ANN][CL][RESPAWN] STOP"));
 }
 
 void UMosesMatchHUD::TickRespawnNotice_Local()
@@ -837,25 +746,17 @@ void UMosesMatchHUD::TickRespawnNotice_Local()
 	UWorld* World = GetWorld();
 	AGameStateBase* GSBase = World ? World->GetGameState() : nullptr;
 
-	// 서버 시간 기준(클라 TimeSeconds 오차 방지)
 	const float ServerNow = GSBase ? GSBase->GetServerWorldTimeSeconds() : (World ? World->GetTimeSeconds() : 0.f);
-
 	const float Remaining = RespawnNoticeEndServerTime - ServerNow;
 	const int32 RemainingSec = FMath::Max(0, FMath::CeilToInt(Remaining));
 
 	FMosesAnnouncementState S;
 	S.bActive = true;
-	S.bCountdown = false;
-	S.RemainingSeconds = 1;
-	S.Text = FText::FromString(FString::Printf(TEXT("잠시후 리스폰됩니다."), RemainingSec));
-
+	S.Text = FText::FromString(FString::Printf(TEXT("잠시후 리스폰됩니다. (%d)"), RemainingSec));
 	AnnouncementWidget->UpdateAnnouncement(S);
-
-	UE_LOG(LogMosesHUD, Warning, TEXT("[ANN][CL][RESPAWN] %d sec left"), RemainingSec);
 
 	if (RemainingSec <= 0)
 	{
-		// Dead=false에서 꺼지긴 하지만, 안전하게 한 번 더
 		StopRespawnNotice_Local();
 	}
 }
@@ -863,15 +764,12 @@ void UMosesMatchHUD::TickRespawnNotice_Local()
 // ============================================================================
 // CombatComponent Handlers
 // ============================================================================
-
 void UMosesMatchHUD::HandleAmmoChanged_FromCombat(int32 Mag, int32 Reserve)
 {
 	if (WeaponAmmoAmount)
 	{
 		WeaponAmmoAmount->SetText(FText::FromString(FString::Printf(TEXT("%d / %d"), Mag, Reserve)));
 	}
-
-	UE_LOG(LogMosesHUD, Verbose, TEXT("[HUD][CL][STEP3] AmmoChanged FromCombat %d/%d"), Mag, Reserve);
 
 	UpdateCurrentWeaponHeader();
 	UpdateSlotPanels_All();
@@ -893,24 +791,17 @@ void UMosesMatchHUD::HandleReloadingChanged_FromCombat(bool /*bReloading*/)
 {
 	UpdateCurrentWeaponHeader();
 	UpdateSlotPanels_All();
-
-	UE_LOG(LogMosesHUD, Verbose, TEXT("[HUD][CL] ReloadingChanged -> UpdateHeader+Slots"));
 }
 
-void UMosesMatchHUD::HandleSlotsStateChanged_FromCombat(int32 ChangedSlotOr0ForAll)
+void UMosesMatchHUD::HandleSlotsStateChanged_FromCombat(int32 /*ChangedSlotOr0ForAll*/)
 {
-	(void)ChangedSlotOr0ForAll;
-
 	UpdateCurrentWeaponHeader();
 	UpdateSlotPanels_All();
-
-	UE_LOG(LogMosesHUD, Verbose, TEXT("[HUD][CL] SlotsStateChanged Slot=%d -> UpdateHeader+Slots"), ChangedSlotOr0ForAll);
 }
 
 // ============================================================================
 // MatchGameState Handlers
 // ============================================================================
-
 void UMosesMatchHUD::HandleMatchTimeChanged(int32 RemainingSeconds)
 {
 	if (MatchCountdownText)
@@ -926,7 +817,7 @@ FText UMosesMatchHUD::GetPhaseText_KR(EMosesMatchPhase Phase)
 	case EMosesMatchPhase::Warmup: return FText::FromString(TEXT("워밍업"));
 	case EMosesMatchPhase::Combat: return FText::FromString(TEXT("매치"));
 	case EMosesMatchPhase::Result: return FText::FromString(TEXT("결과"));
-	default:                       return FText::FromString(TEXT("알 수 없음"));
+	default: return FText::FromString(TEXT("알 수 없음"));
 	}
 }
 
@@ -935,10 +826,10 @@ int32 UMosesMatchHUD::GetPhasePriority(EMosesMatchPhase Phase)
 	switch (Phase)
 	{
 	case EMosesMatchPhase::WaitingForPlayers: return 0;
-	case EMosesMatchPhase::Warmup:           return 1;
-	case EMosesMatchPhase::Combat:           return 2;
-	case EMosesMatchPhase::Result:           return 3;
-	default:                                return -1;
+	case EMosesMatchPhase::Warmup: return 1;
+	case EMosesMatchPhase::Combat: return 2;
+	case EMosesMatchPhase::Result: return 3;
+	default: return -1;
 	}
 }
 
@@ -949,35 +840,29 @@ void UMosesMatchHUD::HandleMatchPhaseChanged(EMosesMatchPhase NewPhase)
 
 	if (NewP < OldP)
 	{
-		UE_LOG(LogMosesPhase, Warning,
-			TEXT("[HUD][CL] PhaseChanged IGNORE (rollback) New=%s Old=%s"),
-			*UEnum::GetValueAsString(NewPhase),
-			*UEnum::GetValueAsString(LastAppliedPhase));
 		return;
 	}
 
 	LastAppliedPhase = NewPhase;
 
-	UE_LOG(LogMosesPhase, Warning, TEXT("[HUD][CL] PhaseChanged APPLY New=%s PhaseTextPtr=%s"),
-		*UEnum::GetValueAsString(NewPhase),
-		*GetNameSafe(PhaseText));
-
 	if (!PhaseText)
 	{
-		UE_LOG(LogMosesHUD, Warning, TEXT("[HUD][CL] PhaseText is NULL. Check WBP TextBlock name == 'PhaseText'"));
 		return;
 	}
 
 	PhaseText->SetText(GetPhaseText_KR(NewPhase));
-
-	UE_LOG(LogMosesPhase, Warning, TEXT("[HUD][CL] PhaseText SET -> %s"),
-		*GetPhaseText_KR(NewPhase).ToString());
 }
 
 void UMosesMatchHUD::HandleAnnouncementChanged(const FMosesAnnouncementState& State)
 {
-	// ✅ [MOD] 죽은 사람에게는 “리스폰 공지”가 우선. 전원 공지가 덮어쓰지 못하게 차단.
+	// 로컬 리스폰 공지 우선
 	if (bLocalRespawnNoticeActive)
+	{
+		return;
+	}
+
+	// 픽업 토스트 표시 중이면 전원 공지 차단
+	if (bLocalPickupToastActive)
 	{
 		return;
 	}
@@ -991,7 +876,6 @@ void UMosesMatchHUD::HandleAnnouncementChanged(const FMosesAnnouncementState& St
 // ============================================================================
 // Helpers
 // ============================================================================
-
 FString UMosesMatchHUD::ToMMSS(int32 TotalSeconds)
 {
 	const int32 Clamped = FMath::Max(0, TotalSeconds);
@@ -1015,6 +899,7 @@ void UMosesMatchHUD::UpdateCurrentWeaponHeader()
 	const FGameplayTag CurWeaponId = Combat->GetEquippedWeaponId();
 
 	FText WeaponDisplayName = FText::FromString(TEXT("-"));
+
 	switch (CurSlot)
 	{
 	case 1: WeaponDisplayName = FText::FromString(TEXT("라이플")); break;
@@ -1049,11 +934,6 @@ void UMosesMatchHUD::UpdateSlotPanels_All()
 	const int32 EquippedSlot = Combat->GetCurrentSlot();
 	const bool bReloading = Combat->IsReloading();
 
-	auto MakeAmmoTextLocal = [](int32 Mag, int32 Reserve) -> FText
-		{
-			return FText::FromString(FString::Printf(TEXT("%d / %d"), Mag, Reserve));
-		};
-
 	auto ApplySlotUI = [&](int32 SlotIndex, UTextBlock* WeaponNameTB, UTextBlock* AmmoTB, UImage* EquippedImg, UTextBlock* ReloadingTB)
 		{
 			const FGameplayTag WeaponId = Combat->GetWeaponIdForSlot(SlotIndex);
@@ -1067,11 +947,12 @@ void UMosesMatchHUD::UpdateSlotPanels_All()
 				const int32 Mag = Combat->GetMagAmmoForSlot(SlotIndex);
 				const int32 Res = Combat->GetReserveAmmoForSlot(SlotIndex);
 				const int32 Max = Combat->GetReserveMaxForSlot(SlotIndex);
+
 				MosesHUD_SetTextIfValid(AmmoTB, FText::FromString(FString::Printf(TEXT("%d | %d/%d"), Mag, Res, Max)));
 			}
 			else
 			{
-				MosesHUD_SetTextIfValid(AmmoTB, MakeAmmoTextLocal(0, 0));
+				MosesHUD_SetTextIfValid(AmmoTB, FText::FromString(TEXT("0 / 0")));
 			}
 
 			MosesHUD_SetImageVisibleIfValid(EquippedImg, bEquipped);
@@ -1092,18 +973,17 @@ void UMosesMatchHUD::UpdateSlotPanels_All()
 // ============================================================================
 // [CAPTURE] Cache internal widgets
 // ============================================================================
-
 void UMosesMatchHUD::CacheCaptureProgress_InternalWidgets()
 {
 	if (bCaptureInternalCached)
 	{
 		return;
 	}
+
 	bCaptureInternalCached = true;
 
 	if (!CaptureProgress)
 	{
-		UE_LOG(LogMosesHUD, Verbose, TEXT("[CAPTURE][HUD][CL] CaptureProgress NULL. Check WBP_CombatHUD widget name == 'CaptureProgress'"));
 		return;
 	}
 
@@ -1111,18 +991,12 @@ void UMosesMatchHUD::CacheCaptureProgress_InternalWidgets()
 	Capture_TextPercent = Cast<UTextBlock>(CaptureProgress->GetWidgetFromName(TEXT("Text_Percent")));
 	Capture_TextWarning = Cast<UTextBlock>(CaptureProgress->GetWidgetFromName(TEXT("Text_Warning")));
 
-	UE_LOG(LogMosesHUD, Warning, TEXT("[CAPTURE][HUD][CL] CacheInternal OK PB=%s Percent=%s Warning=%s"),
-		*GetNameSafe(Capture_ProgressBar),
-		*GetNameSafe(Capture_TextPercent),
-		*GetNameSafe(Capture_TextWarning));
-
 	CaptureProgress->SetVisibility(ESlateVisibility::Collapsed);
 }
 
 // ============================================================================
 // [CAPTURE] Bind / Unbind
 // ============================================================================
-
 void UMosesMatchHUD::BindToCaptureComponent_FromPlayerState()
 {
 	AMosesPlayerState* PS = CachedPlayerState.Get();
@@ -1146,10 +1020,6 @@ void UMosesMatchHUD::BindToCaptureComponent_FromPlayerState()
 
 	CachedCaptureComponent = CaptureComp;
 	CaptureComp->OnCaptureStateChanged.AddUObject(this, &ThisClass::HandleCaptureStateChanged);
-
-	UE_LOG(LogMosesHUD, Warning, TEXT("[CAPTURE][HUD][CL] Bound CaptureComponent=%s PS=%s"),
-		*GetNameSafe(CaptureComp),
-		*GetNameSafe(PS));
 }
 
 void UMosesMatchHUD::UnbindCaptureComponent()
@@ -1157,7 +1027,6 @@ void UMosesMatchHUD::UnbindCaptureComponent()
 	if (UMosesCaptureComponent* CaptureComp = CachedCaptureComponent.Get())
 	{
 		CaptureComp->OnCaptureStateChanged.RemoveAll(this);
-		UE_LOG(LogMosesHUD, Warning, TEXT("[CAPTURE][HUD][CL] Unbound CaptureComponent=%s"), *GetNameSafe(CaptureComp));
 	}
 
 	CachedCaptureComponent.Reset();
@@ -1166,9 +1035,10 @@ void UMosesMatchHUD::UnbindCaptureComponent()
 // ============================================================================
 // [CAPTURE] Delegate Handler
 // ============================================================================
-
 void UMosesMatchHUD::HandleCaptureStateChanged(bool bActive, float Progress01, float WarningFloat, TWeakObjectPtr<AMosesFlagSpot> Spot)
 {
+	(void)Spot;
+
 	CacheCaptureProgress_InternalWidgets();
 
 	if (!CaptureProgress)
@@ -1208,9 +1078,18 @@ void UMosesMatchHUD::HandleCaptureStateChanged(bool bActive, float Progress01, f
 	{
 		TryBroadcastCaptureSuccess_Once();
 	}
+}
 
-	UE_LOG(LogMosesHUD, Verbose, TEXT("[CAPTURE][HUD][CL] StateChanged Active=1 Pct=%.2f WarnF=%.2f Spot=%s"),
-		Clamped,
-		WarningFloat,
-		*GetNameSafe(Spot.Get()));
+void UMosesMatchHUD::TryBroadcastCaptureSuccess_Once()
+{
+	if (bCaptureSuccessAnnounced_Local)
+	{
+		return;
+	}
+
+	bCaptureSuccessAnnounced_Local = true;
+
+	// 옵션: 여기서 PC RPC를 호출해 서버 공지 띄우고 싶으면 연결
+	// AMosesPlayerController* PC = Cast<AMosesPlayerController>(GetOwningPlayer());
+	// if (PC) { PC->Server_RequestCaptureSuccessAnnouncement(); }
 }

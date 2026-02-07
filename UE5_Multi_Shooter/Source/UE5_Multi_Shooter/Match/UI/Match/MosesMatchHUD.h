@@ -1,8 +1,12 @@
-﻿#pragma once
+﻿// ============================================================================
+// UE5_Multi_Shooter/Match/UI/Match/MosesMatchHUD.h (FULL)
+// ============================================================================
+
+#pragma once
 
 #include "CoreMinimal.h"
-#include "GameplayTagContainer.h"
 #include "Blueprint/UserWidget.h"
+#include "GameplayTagContainer.h"
 
 #include "UE5_Multi_Shooter/Match/MosesMatchPhase.h"
 #include "UE5_Multi_Shooter/Match/GameState/MosesMatchGameState.h"
@@ -15,7 +19,6 @@ class UImage;
 
 class AMosesPlayerState;
 class AMosesMatchGameState;
-
 class AMosesFlagSpot;
 
 class UMosesMatchAnnouncementWidget;
@@ -37,27 +40,25 @@ public:
 	UMosesMatchHUD(const FObjectInitializer& ObjectInitializer);
 
 public:
+	// Scope UI (Local cosmetic only)
 	void SetScopeVisible_Local(bool bVisible);
-	void TryBroadcastCaptureSuccess_Once();
+
+	// ✅ Pickup toast (Owner only)
+	void ShowPickupToast_Local(const FText& Text, float DurationSeconds);
 
 protected:
 	virtual void NativeOnInitialized() override;
 	virtual void NativeDestruct() override;
 
 private:
-	// =========================================================================
-	// [MOD] Aim UI immediate sync (Sniper/Crosshair/Scope)
-	// =========================================================================
+	// Aim UI
 	void UpdateAimWidgets_Immediate();
 	bool IsSniperEquipped_Local() const;
 
 private:
-	// =========================================================================
-	// Bind / Retry (Tick 금지: Timer 기반 재시도)
-	// =========================================================================
+	// Bind / Retry
 	void BindToPlayerState();
 	void BindToGameState_Match();
-
 	void BindToCombatComponent_FromPlayerState();
 	void UnbindCombatComponent();
 
@@ -77,70 +78,49 @@ private:
 	void RefreshInitial();
 
 private:
-	// =========================================================================
-	// PlayerState Delegate Handlers (SSOT)
-	// =========================================================================
+	// PlayerState Handlers
 	void HandleHealthChanged(float Current, float Max);
 	void HandleShieldChanged(float Current, float Max);
 	void HandleScoreChanged(int32 NewScore);
-
 	void HandleCapturesChanged(int32 NewCaptures);
 	void HandleZombieKillsChanged(int32 NewZombieKills);
 	void HandlePvPKillsChanged(int32 NewPvPKills);
-
 	void HandleAmmoChanged_FromPS(int32 Mag, int32 Reserve);
 	void HandleGrenadeChanged(int32 Grenade);
 
+	// Combat snapshot
 	void HandleAmmoChangedEx_FromCombat(int32 Mag, int32 ReserveCur, int32 ReserveMax);
 
-	// ✅ [MOD] Dead/Respawn (Victim only - Local)
+	// ✅ Death notice (Victim only)
 	void HandleDeathStateChanged(bool bIsDead, float RespawnEndServerTime);
 	void StartRespawnNotice_Local(float RespawnEndServerTime);
 	void StopRespawnNotice_Local();
 	void TickRespawnNotice_Local();
 
 private:
-	// =========================================================================
-	// CombatComponent Delegate Handlers (SSOT on PlayerState)
-	// =========================================================================
+	// CombatComponent handlers
 	void HandleAmmoChanged_FromCombat(int32 Mag, int32 Reserve);
 	void HandleEquippedChanged_FromCombat(int32 SlotIndex, FGameplayTag WeaponId);
 	void HandleReloadingChanged_FromCombat(bool bReloading);
 	void HandleSlotsStateChanged_FromCombat(int32 ChangedSlotOr0ForAll);
 
 private:
-	// =========================================================================
-	// [CAPTURE] CaptureComponent Delegate Handler
-	// =========================================================================
-	void HandleCaptureStateChanged(bool bActive, float Progress01, float WarningFloat, TWeakObjectPtr<AMosesFlagSpot> Spot);
-
-private:
-	// =========================================================================
-	// HUD Update Helpers
-	// =========================================================================
-	void UpdateCurrentWeaponHeader();
-	void UpdateSlotPanels_All();
-
-private:
-	// =========================================================================
-	// MatchGameState Delegate Handlers
-	// =========================================================================
+	// MatchGameState handlers
 	void HandleMatchTimeChanged(int32 RemainingSeconds);
 	void HandleMatchPhaseChanged(EMosesMatchPhase NewPhase);
 	void HandleAnnouncementChanged(const FMosesAnnouncementState& State);
 
 private:
-	// =========================================================================
-	// Utils
-	// =========================================================================
+	// Helpers
 	static FString ToMMSS(int32 TotalSeconds);
 	static FText GetPhaseText_KR(EMosesMatchPhase Phase);
 	static int32 GetPhasePriority(EMosesMatchPhase Phase);
 
+	void UpdateCurrentWeaponHeader();
+	void UpdateSlotPanels_All();
+
 private:
-	// =========================================================================
-	// Crosshair Update (표시 전용) - Timer(20Hz)
-	// =========================================================================
+	// Crosshair Update
 	void StartCrosshairUpdate();
 	void StopCrosshairUpdate();
 	void TickCrosshairUpdate();
@@ -148,23 +128,22 @@ private:
 	float CalculateCrosshairSpreadFactor_Local() const;
 
 private:
-	// =========================================================================
-	// [CAPTURE] CaptureProgress 내부 위젯 캐시
-	// =========================================================================
+	// [CAPTURE] internal cache
 	void CacheCaptureProgress_InternalWidgets();
+	void HandleCaptureStateChanged(bool bActive, float Progress01, float WarningFloat, TWeakObjectPtr<AMosesFlagSpot> Spot);
+
+	// Capture 성공 시 “한 번만” 서버 공지 요청(옵션)
+	void TryBroadcastCaptureSuccess_Once();
 
 private:
-	// =========================================================================
-	// BindWidgetOptional
-	// =========================================================================
+	// Widgets
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UProgressBar> HealthBar = nullptr;
-	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock>   HealthText = nullptr;
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> HealthText = nullptr;
 
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UProgressBar> ShieldBar = nullptr;
-	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock>   ShieldText = nullptr;
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> ShieldText = nullptr;
 
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> ScoreAmount = nullptr;
-
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> DefeatsAmount = nullptr;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> CapturesAmount = nullptr;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> ZombieKillsAmount = nullptr;
@@ -206,29 +185,27 @@ private:
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UMosesCaptureProgressWidget> CaptureProgress = nullptr;
 
 private:
-	// =========================================================================
-	// Cached pointers
-	// =========================================================================
+	// Cached refs
 	EMosesMatchPhase LastAppliedPhase = EMosesMatchPhase::WaitingForPlayers;
 
-	TWeakObjectPtr<AMosesPlayerState>    CachedPlayerState;
+	TWeakObjectPtr<AMosesPlayerState> CachedPlayerState;
 	TWeakObjectPtr<AMosesMatchGameState> CachedMatchGameState;
 	TWeakObjectPtr<UMosesCombatComponent> CachedCombatComponent;
 	TWeakObjectPtr<UMosesCaptureComponent> CachedCaptureComponent;
 
 private:
-	// =========================================================================
-	// Bind retry timer
-	// =========================================================================
+	// Bind retry
 	FTimerHandle BindRetryHandle;
 	int32 BindRetryTryCount = 0;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Moses|HUD|Bind")
 	int32 BindRetryMaxTry = 25;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Moses|HUD|Bind")
 	float BindRetryInterval = 0.20f;
 
 private:
-	// =========================================================================
-	// Crosshair update timer
-	// =========================================================================
+	// Crosshair timer
 	FTimerHandle CrosshairTimerHandle;
 
 	UPROPERTY(EditDefaultsOnly, Category = "Moses|HUD|Crosshair")
@@ -240,25 +217,24 @@ private:
 	float LastLoggedCrosshairSpread = -1.0f;
 
 private:
-	// =========================================================================
-	// [CAPTURE] internal cache
-	// =========================================================================
+	// ✅ Respawn notice (Victim only)
+	FTimerHandle RespawnNoticeTimerHandle;
+	float RespawnNoticeEndServerTime = 0.f;
+	bool bLocalRespawnNoticeActive = false;
+
+private:
+	// ✅ Pickup toast (Owner only) - block global announcements while active
+	FTimerHandle LocalPickupToastTimerHandle;
+	bool bLocalPickupToastActive = false;
+
+	void StopLocalPickupToast_Internal();
+
+private:
+	// [CAPTURE] cached internal widgets
 	UPROPERTY(Transient) TObjectPtr<UProgressBar> Capture_ProgressBar = nullptr;
 	UPROPERTY(Transient) TObjectPtr<UTextBlock>   Capture_TextPercent = nullptr;
 	UPROPERTY(Transient) TObjectPtr<UTextBlock>   Capture_TextWarning = nullptr;
 
 	UPROPERTY(Transient) bool bCaptureInternalCached = false;
 	bool bCaptureSuccessAnnounced_Local = false;
-
-private:
-	// =========================================================================
-	// [MOD] Local respawn notice (Victim only)
-	// =========================================================================
-	FTimerHandle RespawnNoticeTimerHandle;
-
-	// 서버가 복제해준 “리스폰 종료 서버시간”
-	float RespawnNoticeEndServerTime = 0.f;
-
-	// 로컬 리스폰 공지 중엔 전원 공지(AnnouncementState)를 무시한다
-	bool bLocalRespawnNoticeActive = false;
 };

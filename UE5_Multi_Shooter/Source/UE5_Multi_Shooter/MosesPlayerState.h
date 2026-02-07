@@ -1,6 +1,14 @@
 ﻿// ============================================================================
-// UE5_Multi_Shooter/MosesPlayerState.h  (FULL - FIXED)
-// - [FIX][ADD] GetPawnData<T>() 템플릿 복구 (MosesGameModeBase.cpp 빌드 에러 해결)
+// UE5_Multi_Shooter/MosesPlayerState.h  (FULL - UPDATED)  [MOD]
+// ----------------------------------------------------------------------------
+// [MOD] Changes
+//  - [DAMAGE_POLICY] PlayerState holds 2 Damage GE soft class paths:
+//    * DamageGE_Player_SetByCaller  (for Player targets: MosesAttributeSet IncomingDamage style)
+//    * DamageGE_Zombie_SetByCaller  (for Zombie targets: MosesZombieAttributeSet Damage meta)
+//  - Provides getters to load them synchronously (server uses as source truth)
+//
+// NOTE
+// - This file is based on your provided header. Only [MOD] parts were added.
 // ============================================================================
 
 #pragma once
@@ -20,7 +28,7 @@ class UMosesAttributeSet;
 class UMosesCombatComponent;
 class UMosesSlotOwnershipComponent;
 class UMosesAbilitySet;
-class UMosesPawnData;              // ✅ [FIX][ADD] forward decl (GameModeBase에서 UMosesPawnData 사용)
+class UMosesPawnData;
 class UMosesCaptureComponent;
 class UGameplayEffect;
 
@@ -79,8 +87,6 @@ public:
 
 	int32 GetSelectedCharacterId() const { return SelectedCharacterId; }
 
-	// ✅ [FIX][ADD] MosesGameModeBase.cpp에서 쓰는 템플릿 Getter 복구
-	// - 호출 측 .cpp가 UMosesPawnData 헤더를 포함하고 있으면 Cast가 정상 동작함
 	template<typename TPawnData>
 	const TPawnData* GetPawnData() const
 	{
@@ -163,7 +169,6 @@ public:
 	// Match stats (Server authority, SSOT=PlayerState)
 	void ServerAddCapture(int32 Delta = 1);
 	void ServerAddZombieKill(int32 Delta = 1);
-
 	void ServerAddPvPKill(int32 Delta = 1);
 	void ServerAddHeadshot(int32 Delta = 1);
 
@@ -214,6 +219,13 @@ public:
 
 public:
 	void DOD_PS_Log(const UObject* Caller, const TCHAR* Phase) const;
+
+	// =========================================================================
+	// [MOD][DAMAGE_POLICY] Damage GE getters (Player vs Zombie)
+	// - CombatComponent will request proper GE through these.
+	// =========================================================================
+	TSubclassOf<UGameplayEffect> GetDamageGE_Player_SetByCaller() const;
+	TSubclassOf<UGameplayEffect> GetDamageGE_Zombie_SetByCaller() const;
 
 private:
 	// Local notify
@@ -325,5 +337,18 @@ private:
 
 	// PawnData
 	UPROPERTY()
-	TObjectPtr<UObject> PawnData = nullptr; // (캐스트는 GetPawnData<T>()에서)
+	TObjectPtr<UObject> PawnData = nullptr;
+
+private:
+	// =========================================================================
+	// [MOD][DAMAGE_POLICY] Damage GE soft paths (data-driven, per PS)
+	// =========================================================================
+
+	// Player target damage GE (e.g. MosesAttributeSet IncomingDamage 방식)
+	UPROPERTY(EditDefaultsOnly, Category = "Moses|GAS|Damage")
+	TSoftClassPtr<UGameplayEffect> DamageGE_Player_SetByCaller;
+
+	// Zombie target damage GE (MosesZombieAttributeSet Damage meta 방식)
+	UPROPERTY(EditDefaultsOnly, Category = "Moses|GAS|Damage")
+	TSoftClassPtr<UGameplayEffect> DamageGE_Zombie_SetByCaller;
 };

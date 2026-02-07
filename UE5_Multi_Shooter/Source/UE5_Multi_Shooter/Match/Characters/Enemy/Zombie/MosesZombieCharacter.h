@@ -1,22 +1,16 @@
-// ============================================================================
-// UE5_Multi_Shooter/Match/Characters/Enemy/Zombie/MosesZombieCharacter.h
-// (FULL - UPDATED)
-// - [NEW] bIsDying_Server 가드
-// - Death RPC 제거(공용 Multicast_PlayAttackMontage 재사용)
-// ============================================================================
-
 #pragma once
 
 #include "CoreMinimal.h"
 #include "GameFramework/Character.h"
 #include "AbilitySystemInterface.h"
-
+#include "GameplayEffectExtension.h" 
 #include "UE5_Multi_Shooter/Match/Characters/Enemy/Zombie/Types/MosesZombieAttackTypes.h"
 #include "MosesZombieCharacter.generated.h"
 
 class UMosesAbilitySystemComponent;
 class UMosesZombieAttributeSet;
 class UMosesZombieTypeData;
+class UMosesZombieAnimInstance;
 class UBoxComponent;
 class UAnimMontage;
 class AMosesPlayerState;
@@ -36,25 +30,16 @@ public:
 	virtual UAbilitySystemComponent* GetAbilitySystemComponent() const override;
 
 public:
-	// -------------------------
-	// AI Helper (Server)
-	// -------------------------
 	UMosesZombieTypeData* GetZombieTypeData() const { return ZombieTypeData; }
 
 	float GetAttackRange_Server() const;
 	float GetMaxChaseDistance_Server() const;
 
-	/** AI가 호출: 쿨다운/상태 가드 후 공격 시작 */
 	bool ServerTryStartAttack_FromAI(AActor* TargetActor);
 
 public:
-	/** 서버에서 공격 시작(외부 호출 전제) */
 	void ServerStartAttack();
-
-	/** AnimNotifyState에서 공격 윈도우를 켜고 끄기 */
 	void ServerSetMeleeAttackWindow(EMosesZombieAttackHand Hand, bool bEnabled, bool bResetHitActorsOnBegin);
-
-	/** GAS 데미지 적용 후(AttrSet에서 콜백) */
 	void HandleDamageAppliedFromGAS_Server(const FGameplayEffectModCallbackData& Data, float AppliedDamage, float NewHealth);
 
 protected:
@@ -84,36 +69,43 @@ private:
 	UFUNCTION()
 	void OnAttackMontageEnded_Server(UAnimMontage* Montage, bool bInterrupted);
 
+	UFUNCTION()
+	void OnDeathMontageEnded_Server(UAnimMontage* Montage, bool bInterrupted);
+
+	// [MOD] 킬러/헤드샷 해석 (EffectContext 기반)
 	AMosesPlayerState* ResolveKillerPlayerState_FromEffectContext_Server(const FGameplayEffectContextHandle& Context) const;
 	bool ResolveHeadshot_FromEffectContext_Server(const FGameplayEffectContextHandle& Context) const;
 
 	void HandleDeath_Server();
-	float ComputeDeathDestroyDelaySeconds_Server(UAnimMontage* DeathMontage) const; 
 
-	void PushKillFeed_Server(bool bHeadshot, AMosesPlayerState* KillerPS);
-	void PushHeadshotAnnouncement_Server(AMosesPlayerState* KillerPS) const;
-
+	// RPC
 	UFUNCTION(NetMulticast, Reliable)
 	void Multicast_PlayAttackMontage(UAnimMontage* MontageToPlay);
+
+	UFUNCTION(NetMulticast, Reliable)
+	void Multicast_SetDeadState(bool bInDead);
 
 	// ---- Window Hit Dedup ----
 	void ResetHitActorsThisWindow();
 	bool HasHitActorThisWindow(AActor* Actor) const;
 	void MarkHitActorThisWindow(AActor* Actor);
 
+	UMosesZombieAnimInstance* GetZombieAnimInstance() const;
+	void SetZombieDeadFlag_Local(bool bInDead, const TCHAR* From) const;
+
 private:
-	// ---- GAS ----
+	// GAS
 	UPROPERTY(VisibleAnywhere, Category = "Moses|Zombie")
 	TObjectPtr<UMosesAbilitySystemComponent> AbilitySystemComponent = nullptr;
 
 	UPROPERTY()
 	TObjectPtr<UMosesZombieAttributeSet> AttributeSet = nullptr;
 
-	// ---- Data ----
+	// Data
 	UPROPERTY(EditDefaultsOnly, Category = "Moses|Zombie")
 	TObjectPtr<UMosesZombieTypeData> ZombieTypeData = nullptr;
 
-	// ---- HitBoxes ----
+	// HitBoxes
 	UPROPERTY(VisibleAnywhere, Category = "Moses|Zombie|HitBox")
 	TObjectPtr<UBoxComponent> AttackHitBox_L = nullptr;
 
@@ -126,23 +118,24 @@ private:
 	UPROPERTY()
 	TSet<TObjectPtr<AActor>> HitActorsThisWindow;
 
-	// ---- Headshot ----
+	// Headshot
 	UPROPERTY(EditDefaultsOnly, Category = "Moses|Zombie")
 	FName HeadBoneName;
 
+	// ✅ [MOD] 마지막 데미지의 가해자 정보(서버에서만)
 	UPROPERTY()
 	TObjectPtr<AMosesPlayerState> LastDamageKillerPS = nullptr;
 
 	bool bLastDamageHeadshot = false;
 
-	// -------------------------
 	// AI Attack Guard
-	// -------------------------
 	double NextAttackServerTime = 0.0;
 	bool bIsAttacking_Server = false;
 
-	// -------------------------
-	// [NEW] Death Guard (Server)
-	// -------------------------
-	bool bIsDying_Server = false; // [NEW]
+	// Death Guard
+	bool bIsDying_Server = false;
+
+	// Destroy delay after death montage end
+	UPROPERTY(EditDefaultsOnly, Category = "Moses|Zombie|Death")
+	float DestroyDelayAfterDeathMontageSeconds = 5.0f; // ✅ 요청: 몽타주 끝나고 5초 뒤 삭제
 };

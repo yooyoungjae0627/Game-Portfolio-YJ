@@ -1,23 +1,17 @@
 ﻿// ============================================================================
-// UE5_Multi_Shooter/Pickup/MosesPickupWeapon.cpp  (FULL - UPDATED)  [STEP4]
-// ============================================================================
-//
-// [STEP4 핵심 변경점]
-// - ServerTryPickup() 성공 시:
-//   - SlotOwnershipComponent::ServerAcquireSlot(...) 기존 유지
-//   - + CombatComponent::ServerGrantWeaponToSlot(SlotIndex, WeaponId, true) 추가  ✅
-//
-// 이로써 "파밍 -> 등 소켓 표시 -> 스왑 -> HUD 탄약 전환 -> 해당 무기만 사격" 흐름이 닫힌다.
-//
+// UE5_Multi_Shooter/Match/Pickup/MosesPickupWeapon.cpp  (FULL · FINAL)
 // ============================================================================
 
 #include "UE5_Multi_Shooter/Match/Pickup/MosesPickupWeapon.h"
+
 #include "UE5_Multi_Shooter/Match/Pickup/MosesPickupWeaponData.h"
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
 #include "UE5_Multi_Shooter/MosesPlayerState.h"
+
 #include "UE5_Multi_Shooter/Match/Components/MosesSlotOwnershipComponent.h"
-#include "UE5_Multi_Shooter/Match/Components/MosesInteractionComponent.h"
 #include "UE5_Multi_Shooter/Match/Components/MosesCombatComponent.h"
+#include "UE5_Multi_Shooter/Match/Components/MosesInteractionComponent.h"
+
 #include "UE5_Multi_Shooter/Match/UI/Match/MosesPickupPromptWidget.h"
 
 #include "Components/SphereComponent.h"
@@ -30,6 +24,10 @@
 #include "Camera/PlayerCameraManager.h"
 #include "Engine/World.h"
 #include "TimerManager.h"
+
+// ============================================================================
+// ctor
+// ============================================================================
 
 AMosesPickupWeapon::AMosesPickupWeapon()
 {
@@ -56,10 +54,14 @@ AMosesPickupWeapon::AMosesPickupWeapon()
 	PromptWidgetComponent->SetWidgetSpace(EWidgetSpace::World);
 	PromptWidgetComponent->SetDrawAtDesiredSize(true);
 	PromptWidgetComponent->SetTwoSided(true);
-	PromptWidgetComponent->SetVisibility(false);
 	PromptWidgetComponent->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	PromptWidgetComponent->SetRelativeLocation(FVector(0.f, 0.f, 110.f));
+	PromptWidgetComponent->SetVisibility(false);
 }
+
+// ============================================================================
+// BeginPlay
+// ============================================================================
 
 void AMosesPickupWeapon::BeginPlay()
 {
@@ -67,8 +69,8 @@ void AMosesPickupWeapon::BeginPlay()
 
 	if (InteractSphere)
 	{
-		InteractSphere->OnComponentBeginOverlap.AddDynamic(this, &AMosesPickupWeapon::HandleSphereBeginOverlap);
-		InteractSphere->OnComponentEndOverlap.AddDynamic(this, &AMosesPickupWeapon::HandleSphereEndOverlap);
+		InteractSphere->OnComponentBeginOverlap.AddDynamic(this, &ThisClass::HandleSphereBeginOverlap);
+		InteractSphere->OnComponentEndOverlap.AddDynamic(this, &ThisClass::HandleSphereEndOverlap);
 	}
 
 	SetPromptVisible_Local(false);
@@ -82,13 +84,9 @@ void AMosesPickupWeapon::BeginPlay()
 	ApplyPromptText_Local();
 }
 
-void AMosesPickupWeapon::SetLocalHighlight(bool bEnable)
-{
-	if (Mesh)
-	{
-		Mesh->SetRenderCustomDepth(bEnable);
-	}
-}
+// ============================================================================
+// Server: Pickup
+// ============================================================================
 
 bool AMosesPickupWeapon::ServerTryPickup(AMosesPlayerState* RequesterPS, FText& OutAnnounceText)
 {
@@ -101,130 +99,170 @@ bool AMosesPickupWeapon::ServerTryPickup(AMosesPlayerState* RequesterPS, FText& 
 
 	if (!CanPickup_Server(RequesterPS))
 	{
-		UE_LOG(LogMosesPickup, Warning, TEXT("[PICKUP][SV] FAIL Guard Actor=%s Player=%s"),
-			*GetNameSafe(this), *GetNameSafe(RequesterPS));
+		UE_LOG(LogMosesPickup, Warning,
+			TEXT("[PICKUP][SV] Weapon FAIL Guard Actor=%s Player=%s"),
+			*GetNameSafe(this),
+			*GetNameSafe(RequesterPS));
 		return false;
 	}
 
 	if (bConsumed)
 	{
-		UE_LOG(LogMosesPickup, Warning, TEXT("[PICKUP][SV] FAIL AlreadyConsumed Actor=%s"), *GetNameSafe(this));
+		UE_LOG(LogMosesPickup, Warning,
+			TEXT("[PICKUP][SV] Weapon FAIL AlreadyConsumed Actor=%s"),
+			*GetNameSafe(this));
 		return false;
 	}
 
 	if (!PickupData)
 	{
-		UE_LOG(LogMosesPickup, Error, TEXT("[PICKUP][SV] FAIL NoPickupData Actor=%s"), *GetNameSafe(this));
+		UE_LOG(LogMosesPickup, Error,
+			TEXT("[PICKUP][SV] Weapon FAIL NoPickupData Actor=%s"),
+			*GetNameSafe(this));
 		return false;
 	}
 
-	UMosesSlotOwnershipComponent* Slots = RequesterPS ? RequesterPS->GetSlotOwnershipComponent() : nullptr;
+	UMosesSlotOwnershipComponent* Slots =
+		RequesterPS ? RequesterPS->GetSlotOwnershipComponent() : nullptr;
 	if (!Slots)
 	{
-		UE_LOG(LogMosesPickup, Error, TEXT("[PICKUP][SV] FAIL MissingSlots Actor=%s Player=%s"),
-			*GetNameSafe(this), *GetNameSafe(RequesterPS));
+		UE_LOG(LogMosesPickup, Error,
+			TEXT("[PICKUP][SV] Weapon FAIL MissingSlotOwnership PS=%s"),
+			*GetNameSafe(RequesterPS));
 		return false;
 	}
 
-	// ✅ [STEP4] CombatComponent(SSOT)도 반드시 있어야 한다.
-	UMosesCombatComponent* Combat = RequesterPS ? RequesterPS->GetCombatComponent() : nullptr;
+	UMosesCombatComponent* Combat =
+		RequesterPS ? RequesterPS->GetCombatComponent() : nullptr;
 	if (!Combat)
 	{
-		UE_LOG(LogMosesPickup, Error, TEXT("[PICKUP][SV] FAIL MissingCombatComponent Actor=%s Player=%s"),
-			*GetNameSafe(this), *GetNameSafe(RequesterPS));
+		UE_LOG(LogMosesPickup, Error,
+			TEXT("[PICKUP][SV] Weapon FAIL MissingCombatComponent PS=%s"),
+			*GetNameSafe(RequesterPS));
 		return false;
 	}
 
-	// -----------------------------------------------------------------------------
-	// 원자성 판정: OK 1 / FAIL 1
-	// -----------------------------------------------------------------------------
+	// ---------------------------------------------------------------------
+	// 원자성 보장 (OK 1 / FAIL 1)
+	// ---------------------------------------------------------------------
 	bConsumed = true;
 
-	// 1) 슬롯 소유 기록 (로비/기타 UI 확장용으로 유지)
+	// 1) 슬롯 소유 기록 (보조 정보)
 	Slots->ServerAcquireSlot(PickupData->SlotIndex, PickupData->ItemId);
 
-	// 2) ✅ [STEP4 핵심] Combat SSOT 갱신: Slot WeaponId 세팅 + Ammo 초기화
-	//    - Ammo 초기화는 STEP1의 WeaponData(MagSize/MaxReserve) 기반으로 자동 세팅된다.
-	Combat->ServerGrantWeaponToSlot(PickupData->SlotIndex, PickupData->ItemId, /*bInitializeAmmoIfEmpty*/ true);
+	// 2) Combat SSOT 갱신 (STEP4 핵심)
+	Combat->ServerGrantWeaponToSlot(
+		PickupData->SlotIndex,
+		PickupData->ItemId,
+		/*bInitializeAmmoIfEmpty*/ true);
 
-	const FText NameText = !PickupData->DisplayName.IsEmpty()
+	const FText NameText =
+		!PickupData->DisplayName.IsEmpty()
 		? PickupData->DisplayName
 		: FText::FromString(PickupData->ItemId.ToString());
 
-	OutAnnounceText = FText::Format(FText::FromString(TEXT("{0} 획득")), NameText);
+	OutAnnounceText = FText::Format(
+		FText::FromString(TEXT("{0} 획득")),
+		NameText);
 
-	UE_LOG(LogMosesPickup, Log, TEXT("[PICKUP][SV][STEP4] OK Player=%s Slot=%d Item=%s (SSOT updated)"),
-		*GetNameSafe(RequesterPS), PickupData->SlotIndex, *PickupData->ItemId.ToString());
+	UE_LOG(LogMosesPickup, Warning,
+		TEXT("[PICKUP][SV][STEP4] Weapon OK Player=%s Slot=%d Item=%s"),
+		*GetNameSafe(RequesterPS),
+		PickupData->SlotIndex,
+		*PickupData->ItemId.ToString());
 
 	Destroy();
 	return true;
 }
 
+bool AMosesPickupWeapon::CanPickup_Server(const AMosesPlayerState* RequesterPS) const
+{
+	return (RequesterPS != nullptr && PickupData != nullptr);
+}
+
+// ============================================================================
+// Local highlight
+// ============================================================================
+
+void AMosesPickupWeapon::SetLocalHighlight(bool bEnable)
+{
+	if (Mesh)
+	{
+		Mesh->SetRenderCustomDepth(bEnable);
+	}
+}
+
+// ============================================================================
+// Overlap handlers (Local)
+// ============================================================================
+
 void AMosesPickupWeapon::HandleSphereBeginOverlap(
-	UPrimitiveComponent* /*OverlappedComp*/,
+	UPrimitiveComponent*,
 	AActor* OtherActor,
-	UPrimitiveComponent* /*OtherComp*/,
-	int32 /*OtherBodyIndex*/,
-	bool /*bFromSweep*/,
-	const FHitResult& /*SweepResult*/)
+	UPrimitiveComponent*,
+	int32,
+	bool,
+	const FHitResult&)
 {
 	APawn* Pawn = Cast<APawn>(OtherActor);
-	if (!Pawn)
+	if (!Pawn || !Pawn->IsLocallyControlled())
 	{
 		return;
 	}
 
-	if (Pawn->IsLocallyControlled())
+	LocalPromptPawn = Pawn;
+
+	SetLocalHighlight(true);
+	ApplyPromptText_Local();
+	SetPromptVisible_Local(true);
+	StartPromptBillboard_Local();
+
+	if (UMosesInteractionComponent* IC = GetInteractionComponentFromPawn(Pawn))
 	{
-		LocalPromptPawn = Pawn;
-
-		SetLocalHighlight(true);
-		ApplyPromptText_Local();
-		SetPromptVisible_Local(true);
-		StartPromptBillboard_Local();
-
-		if (UMosesInteractionComponent* IC = GetInteractionComponentFromPawn(Pawn))
-		{
-			IC->SetCurrentInteractTarget_Local(this);
-		}
-
-		UE_LOG(LogMosesPickup, Verbose, TEXT("[PICKUP][CL] Prompt+Target Show Actor=%s Pawn=%s"),
-			*GetNameSafe(this), *GetNameSafe(Pawn));
+		IC->SetCurrentInteractTarget_Local(this);
 	}
+
+	UE_LOG(LogMosesPickup, Verbose,
+		TEXT("[PICKUP][CL] Weapon Prompt SHOW Actor=%s Pawn=%s"),
+		*GetNameSafe(this),
+		*GetNameSafe(Pawn));
 }
 
 void AMosesPickupWeapon::HandleSphereEndOverlap(
-	UPrimitiveComponent* /*OverlappedComp*/,
+	UPrimitiveComponent*,
 	AActor* OtherActor,
-	UPrimitiveComponent* /*OtherComp*/,
-	int32 /*OtherBodyIndex*/)
+	UPrimitiveComponent*,
+	int32)
 {
 	APawn* Pawn = Cast<APawn>(OtherActor);
-	if (!Pawn)
+	if (!Pawn || !Pawn->IsLocallyControlled())
 	{
 		return;
 	}
 
-	if (Pawn->IsLocallyControlled())
+	if (LocalPromptPawn.Get() == Pawn)
 	{
-		if (LocalPromptPawn.Get() == Pawn)
-		{
-			LocalPromptPawn = nullptr;
-		}
-
-		SetLocalHighlight(false);
-		SetPromptVisible_Local(false);
-		StopPromptBillboard_Local();
-
-		if (UMosesInteractionComponent* IC = GetInteractionComponentFromPawn(Pawn))
-		{
-			IC->ClearCurrentInteractTarget_Local(this);
-		}
-
-		UE_LOG(LogMosesPickup, Verbose, TEXT("[PICKUP][CL] Prompt+Target Hide Actor=%s Pawn=%s"),
-			*GetNameSafe(this), *GetNameSafe(Pawn));
+		LocalPromptPawn = nullptr;
 	}
+
+	SetLocalHighlight(false);
+	SetPromptVisible_Local(false);
+	StopPromptBillboard_Local();
+
+	if (UMosesInteractionComponent* IC = GetInteractionComponentFromPawn(Pawn))
+	{
+		IC->ClearCurrentInteractTarget_Local(this);
+	}
+
+	UE_LOG(LogMosesPickup, Verbose,
+		TEXT("[PICKUP][CL] Weapon Prompt HIDE Actor=%s Pawn=%s"),
+		*GetNameSafe(this),
+		*GetNameSafe(Pawn));
 }
+
+// ============================================================================
+// Prompt UI
+// ============================================================================
 
 void AMosesPickupWeapon::SetPromptVisible_Local(bool bVisible)
 {
@@ -248,20 +286,17 @@ void AMosesPickupWeapon::ApplyPromptText_Local()
 		return;
 	}
 
-	const FText InteractText = !PickupData->InteractText.IsEmpty()
+	const FText InteractText =
+		!PickupData->InteractText.IsEmpty()
 		? PickupData->InteractText
 		: FText::FromString(TEXT("E : 줍기"));
 
-	const FText NameText = !PickupData->DisplayName.IsEmpty()
+	const FText NameText =
+		!PickupData->DisplayName.IsEmpty()
 		? PickupData->DisplayName
 		: FText::FromString(PickupData->ItemId.ToString());
 
 	Prompt->SetPromptTexts(InteractText, NameText);
-}
-
-bool AMosesPickupWeapon::CanPickup_Server(const AMosesPlayerState* RequesterPS) const
-{
-	return (RequesterPS != nullptr && PickupData != nullptr);
 }
 
 UMosesInteractionComponent* AMosesPickupWeapon::GetInteractionComponentFromPawn(APawn* Pawn) const
@@ -298,8 +333,6 @@ void AMosesPickupWeapon::StartPromptBillboard_Local()
 		&ThisClass::TickPromptBillboard_Local,
 		PromptBillboardInterval,
 		true);
-
-	UE_LOG(LogMosesPickup, VeryVerbose, TEXT("[PICKUP][CL] Billboard START Actor=%s"), *GetNameSafe(this));
 }
 
 void AMosesPickupWeapon::StopPromptBillboard_Local()
@@ -307,7 +340,6 @@ void AMosesPickupWeapon::StopPromptBillboard_Local()
 	if (GetWorldTimerManager().IsTimerActive(TimerHandle_PromptBillboard))
 	{
 		GetWorldTimerManager().ClearTimer(TimerHandle_PromptBillboard);
-		UE_LOG(LogMosesPickup, VeryVerbose, TEXT("[PICKUP][CL] Billboard STOP Actor=%s"), *GetNameSafe(this));
 	}
 }
 
@@ -330,7 +362,7 @@ void AMosesPickupWeapon::ApplyBillboardRotation_Local()
 	}
 
 	APlayerController* PC = Cast<APlayerController>(Pawn->GetController());
-	if (!PC || !PC->IsLocalController() || !PC->PlayerCameraManager)
+	if (!PC || !PC->PlayerCameraManager)
 	{
 		return;
 	}
@@ -345,8 +377,6 @@ void AMosesPickupWeapon::ApplyBillboardRotation_Local()
 	}
 
 	FRotator LookRot = ToCam.Rotation();
-
-	// UI는 눕지 않게 Yaw만
 	LookRot.Pitch = 0.f;
 	LookRot.Roll = 0.f;
 

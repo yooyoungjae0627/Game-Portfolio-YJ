@@ -250,6 +250,10 @@ private:
 	void Server_StartReload(const UMosesWeaponData* WeaponData);
 	void Server_FinishReload();
 
+
+private:
+	bool Server_IsZombieTarget(const AActor* TargetActor) const;
+
 private:
 	// =========================================================================
 	// Replicated SSOT state

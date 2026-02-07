@@ -4,13 +4,14 @@
 
 #include "UE5_Multi_Shooter/Match/Components/MosesInteractionComponent.h"
 
+#include "UE5_Multi_Shooter/MosesPlayerController.h"
+#include "UE5_Multi_Shooter/MosesPlayerState.h"
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
 
 #include "UE5_Multi_Shooter/Match/Flag/MosesFlagSpot.h"
 #include "UE5_Multi_Shooter/Match/Pickup/MosesPickupWeapon.h"
 #include "UE5_Multi_Shooter/Match/Pickup/MosesPickupAmmo.h"
 
-#include "UE5_Multi_Shooter/MosesPlayerState.h"
 #include "UE5_Multi_Shooter/Match/GameState/MosesMatchGameState.h"
 
 #include "Components/SphereComponent.h"
@@ -49,8 +50,8 @@ void UMosesInteractionComponent::EndPlay(const EEndPlayReason::Type EndPlayReaso
 
 void UMosesInteractionComponent::SetCurrentInteractTarget_Local(AActor* NewTarget)
 {
-	APawn* Pawn = GetOwningPawn();
-	if (!Pawn || !Pawn->IsLocallyControlled())
+	APawn* OwnerPawn = GetOwningPawn();
+	if (!OwnerPawn || !OwnerPawn->IsLocallyControlled())
 	{
 		return;
 	}
@@ -83,8 +84,8 @@ void UMosesInteractionComponent::SetCurrentInteractTarget_Local(AActor* NewTarge
 
 void UMosesInteractionComponent::ClearCurrentInteractTarget_Local(AActor* ExpectedTarget)
 {
-	APawn* Pawn = GetOwningPawn();
-	if (!Pawn || !Pawn->IsLocallyControlled())
+	APawn* OwnerPawn = GetOwningPawn();
+	if (!OwnerPawn || !OwnerPawn->IsLocallyControlled())
 	{
 		return;
 	}
@@ -201,19 +202,19 @@ void UMosesInteractionComponent::HandleInteractPressed_Server(AActor* TargetActo
 	}
 
 	// ---------------------------------------------------------------------
-	// FlagSpot
+	// FlagSpot (Capture)
 	// ---------------------------------------------------------------------
 	if (AMosesFlagSpot* Flag = Cast<AMosesFlagSpot>(TargetActor))
 	{
 		// 서버에서 "실제 Zone 안"을 1회 더 확인 (stale target 방지)
-		const APawn* Pawn = GetOwningPawn();
+		const APawn* OwnerPawn = GetOwningPawn();
 		bool bInZone = false;
 
-		if (Pawn)
+		if (OwnerPawn)
 		{
 			if (USphereComponent* Zone = Flag->GetCaptureZone())
 			{
-				bInZone = Zone->IsOverlappingActor(Pawn);
+				bInZone = Zone->IsOverlappingActor(OwnerPawn);
 			}
 		}
 
@@ -233,14 +234,14 @@ void UMosesInteractionComponent::HandleInteractPressed_Server(AActor* TargetActo
 	}
 
 	// ---------------------------------------------------------------------
-	// PickupWeapon
+	// PickupWeapon (OwnerOnly toast)
 	// ---------------------------------------------------------------------
 	if (AMosesPickupWeapon* Pickup = Cast<AMosesPickupWeapon>(TargetActor))
 	{
-		const APawn* Pawn = GetOwningPawn();
-		const float Dist = Pawn ? FVector::Distance(Pawn->GetActorLocation(), Pickup->GetActorLocation()) : -1.0f;
+		const APawn* OwnerPawn = GetOwningPawn();
+		const float Dist = OwnerPawn ? FVector::Distance(OwnerPawn->GetActorLocation(), Pickup->GetActorLocation()) : -1.0f;
 
-		UE_LOG(LogMosesPickup, Log, TEXT("[PICKUP][SV] Try Player=%s Target=%s Dist=%.1f"),
+		UE_LOG(LogMosesPickup, Log, TEXT("[PICKUP][SV] Try Weapon Player=%s Target=%s Dist=%.1f"),
 			*GetNameSafe(PS),
 			*GetNameSafe(Pickup),
 			Dist);
@@ -248,40 +249,41 @@ void UMosesInteractionComponent::HandleInteractPressed_Server(AActor* TargetActo
 		FText AnnounceText;
 		const bool bOK = Pickup->ServerTryPickup(PS, AnnounceText);
 
-		UE_LOG(LogMosesPickup, Log, TEXT("[PICKUP][SV] Result Player=%s Actor=%s OK=%d"),
+		UE_LOG(LogMosesPickup, Log, TEXT("[PICKUP][SV] Weapon Result Player=%s Actor=%s OK=%d"),
 			*GetNameSafe(PS), *GetNameSafe(Pickup), bOK ? 1 : 0);
 
-		// 성공 시 중앙 Announcement (RepNotify -> Delegate -> HUD)
 		if (bOK)
 		{
-			AMosesMatchGameState* GS = GetMatchGameState();
-			if (GS)
+			if (AMosesPlayerController* MPC = ResolvePickerPC_Server(PS))
 			{
-				GS->ServerStartAnnouncementText(AnnounceText, 4);
-
-				UE_LOG(LogMosesPhase, Warning, TEXT("[ANN][SV] Set Text=\"%s\" Dur=4"),
-					*AnnounceText.ToString());
-			}
-			else
-			{
-				UE_LOG(LogMosesPhase, Warning, TEXT("[ANN][SV] FAIL NoMatchGameState (cannot broadcast)"));
+				MPC->Client_ShowPickupToast_OwnerOnly(AnnounceText, 1.2f);
 			}
 		}
 
 		return;
 	}
 
-	// ✅ PickupAmmo
+	// ---------------------------------------------------------------------
+	// PickupAmmo (OwnerOnly toast)
+	// ---------------------------------------------------------------------
 	if (AMosesPickupAmmo* Ammo = Cast<AMosesPickupAmmo>(TargetActor))
 	{
 		FText AnnounceText;
 		const bool bOK = Ammo->ServerTryPickup(PS, AnnounceText);
 
+		UE_LOG(LogMosesPickup, Log, TEXT("[PICKUP][SV] Ammo Result Player=%s Actor=%s OK=%d"),
+			*GetNameSafe(PS), *GetNameSafe(Ammo), bOK ? 1 : 0);
+
 		if (bOK)
 		{
-			if (AMosesMatchGameState* GS = GetMatchGameState())
+			if (AMosesPlayerController* MPC = ResolvePickerPC_Server(PS))
 			{
-				GS->ServerStartAnnouncementText(AnnounceText, 4);
+				MPC->Client_ShowPickupToast_OwnerOnly(AnnounceText, 1.2f);
+
+				UE_LOG(LogMosesPickup, Warning,
+					TEXT("[PICKUP][SV] AmmoToast -> OwnerOnly OK Text=%s PC=%s"),
+					*AnnounceText.ToString(),
+					*GetNameSafe(MPC));
 			}
 		}
 
@@ -316,8 +318,8 @@ void UMosesInteractionComponent::HandleInteractReleased_Server(AActor* TargetAct
 
 bool UMosesInteractionComponent::IsWithinUseDistance_Server(const AActor* TargetActor) const
 {
-	const APawn* Pawn = GetOwningPawn();
-	if (!Pawn || !TargetActor)
+	const APawn* OwnerPawn = GetOwningPawn();
+	if (!OwnerPawn || !TargetActor)
 	{
 		return false;
 	}
@@ -333,14 +335,14 @@ bool UMosesInteractionComponent::IsWithinUseDistance_Server(const AActor* Target
 		}
 	}
 
-	const float DistSq = FVector::DistSquared(Pawn->GetActorLocation(), TargetLoc);
+	const float DistSq = FVector::DistSquared(OwnerPawn->GetActorLocation(), TargetLoc);
 	const bool bOK = (DistSq <= FMath::Square(MaxUseDistance));
 
 	UE_LOG(LogMosesCombat, Warning, TEXT("[INTERACT][SV][DIST] OK=%d Dist=%.1f Max=%.1f PlayerPawn=%s Target=%s"),
 		bOK ? 1 : 0,
 		FMath::Sqrt(DistSq),
 		MaxUseDistance,
-		*GetNameSafe(Pawn),
+		*GetNameSafe(OwnerPawn),
 		*GetNameSafe(TargetActor));
 
 	return bOK;
@@ -353,14 +355,14 @@ APawn* UMosesInteractionComponent::GetOwningPawn() const
 
 APlayerController* UMosesInteractionComponent::GetOwningPC() const
 {
-	APawn* Pawn = GetOwningPawn();
-	return Pawn ? Cast<APlayerController>(Pawn->GetController()) : nullptr;
+	APawn* OwnerPawn = GetOwningPawn();
+	return OwnerPawn ? Cast<APlayerController>(OwnerPawn->GetController()) : nullptr;
 }
 
 AMosesPlayerState* UMosesInteractionComponent::GetMosesPlayerState() const
 {
-	APawn* Pawn = GetOwningPawn();
-	return Pawn ? Pawn->GetPlayerState<AMosesPlayerState>() : nullptr;
+	APawn* OwnerPawn = GetOwningPawn();
+	return OwnerPawn ? OwnerPawn->GetPlayerState<AMosesPlayerState>() : nullptr;
 }
 
 AMosesMatchGameState* UMosesInteractionComponent::GetMatchGameState() const
@@ -394,10 +396,29 @@ EMosesInteractTargetType UMosesInteractionComponent::ResolveTargetType(AActor* T
 	return EMosesInteractTargetType::None;
 }
 
+AMosesPlayerController* UMosesInteractionComponent::ResolvePickerPC_Server(AMosesPlayerState* PS)
+{
+	if (!PS)
+	{
+		return nullptr;
+	}
+
+	APlayerController* PC = Cast<APlayerController>(PS->GetOwner());
+	if (!PC)
+	{
+		if (APawn* PSPawn = PS->GetPawn())
+		{
+			PC = Cast<APlayerController>(PSPawn->GetController());
+		}
+	}
+
+	return Cast<AMosesPlayerController>(PC);
+}
+
 void UMosesInteractionComponent::ForceReleaseInteract_Local(AActor* ExpectedTarget, const TCHAR* ReasonTag)
 {
-	APawn* Pawn = GetOwningPawn();
-	if (!Pawn || !Pawn->IsLocallyControlled())
+	APawn* OwnerPawn = GetOwningPawn();
+	if (!OwnerPawn || !OwnerPawn->IsLocallyControlled())
 	{
 		return;
 	}

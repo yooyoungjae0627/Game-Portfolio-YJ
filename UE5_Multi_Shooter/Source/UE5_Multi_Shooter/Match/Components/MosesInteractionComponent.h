@@ -3,9 +3,9 @@
 // ----------------------------------------------------------------------------
 // 역할
 // - Overlap 기반 상호작용 타겟 시스템 (Trace/Timer 금지)
-// - PickupWeapon / FlagSpot이 Overlap Begin/End에서 로컬 타겟 Set/Clear
+// - PickupWeapon / PickupAmmo / FlagSpot이 Overlap Begin/End에서 로컬 타겟 Set/Clear
 // - E Press/Release 입력을 서버 RPC로 전달
-// - 서버는 거리/권한 Guard 후 FlagSpot(Capture) 또는 PickupWeapon(Pickup) 처리
+// - 서버는 거리/권한 Guard 후 FlagSpot(Capture) 또는 Pickup(Pickup) 처리
 //
 // 설계 원칙
 // - Server Authority 100%
@@ -21,6 +21,8 @@
 
 class AMosesFlagSpot;
 class AMosesPickupWeapon;
+class AMosesPickupAmmo;
+class AMosesPlayerController;
 class AMosesPlayerState;
 class AMosesMatchGameState;
 class APawn;
@@ -34,7 +36,6 @@ enum class EMosesInteractTargetType : uint8
 	PickupWeapon,
 	PickupAmmo,
 };
-
 
 USTRUCT()
 struct FMosesInteractTarget
@@ -59,11 +60,7 @@ public:
 	// =========================================================================
 	// Client: Target Set/Clear (Overlap에서 호출)
 	// =========================================================================
-
-	/** 로컬 플레이어가 Overlap 진입했을 때 타겟 설정 */
 	void SetCurrentInteractTarget_Local(AActor* NewTarget);
-
-	/** 로컬 플레이어가 Overlap 이탈했을 때 타겟 해제 */
 	void ClearCurrentInteractTarget_Local(AActor* ExpectedTarget);
 
 	// =========================================================================
@@ -90,16 +87,21 @@ private:
 	void HandleInteractPressed_Server(AActor* TargetActor);
 	void HandleInteractReleased_Server(AActor* TargetActor);
 
-	// Guard
+private:
+	// =========================================================================
+	// Guards / Helpers
+	// =========================================================================
 	bool IsWithinUseDistance_Server(const AActor* TargetActor) const;
 
-	// Helpers
 	APawn* GetOwningPawn() const;
 	APlayerController* GetOwningPC() const;
 	AMosesPlayerState* GetMosesPlayerState() const;
 	AMosesMatchGameState* GetMatchGameState() const;
 
 	static EMosesInteractTargetType ResolveTargetType(AActor* TargetActor);
+
+	// ✅ 서버에서 “획득자 PC”를 안전하게 해석 (OwnerOnly Toast)
+	static AMosesPlayerController* ResolvePickerPC_Server(AMosesPlayerState* PS);
 
 	// Target을 잃었거나 상태가 꼬였을 때 로컬 홀드 상태 강제 해제
 	void ForceReleaseInteract_Local(AActor* ExpectedTarget, const TCHAR* ReasonTag);
