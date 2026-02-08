@@ -84,5 +84,22 @@ void UMosesMatchAnnouncementWidget::UpdateAnnouncement(const FMosesAnnouncementS
 
 void UMosesMatchAnnouncementWidget::SetActive(bool bActive)
 {
-	SetVisibility(bActive ? ESlateVisibility::SelfHitTestInvisible : ESlateVisibility::Collapsed);
+	if (bActive)
+	{
+		if (GetVisibility() == ESlateVisibility::SelfHitTestInvisible)
+		{
+			return;
+		}
+
+		SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+	}
+	else
+	{
+		if (GetVisibility() == ESlateVisibility::Collapsed)
+		{
+			return;
+		}
+
+		SetVisibility(ESlateVisibility::Collapsed);
+	}
 }

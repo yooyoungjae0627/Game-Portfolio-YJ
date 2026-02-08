@@ -1,12 +1,3 @@
-// ============================================================================
-// MosesSpotRespawnManager.h (FULL)  [MOD]
-// ----------------------------------------------------------------------------
-// [MOD] Changes
-//  - ServerOnSpotCaptured: BlueprintAuthorityOnly + param rename for clarity
-//  - Added authority misuse logs for evidence/debug
-//  - Minor guard/ensure messages for "NULL 0개" 정책 보강
-// ============================================================================
-
 #pragma once
 
 #include "CoreMinimal.h"
@@ -73,6 +64,9 @@ private:
 
 	UPROPERTY(Transient)
 	float RespawnEndServerTime = 0.f;
+
+	UPROPERTY()
+	int32 LastBroadcastRemainingSec = -1;
 
 	FTimerHandle CountdownTimerHandle;
 };

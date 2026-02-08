@@ -1,14 +1,4 @@
-﻿// ============================================================================
-// MosesMatchGameState.h (FULL)
-// - Match 전용 GameState (Phase / RemainingSeconds / Announcement / ResultState)
-// - 부모: AMosesGameState (ExperienceManagerComponent 공통 보장)
-// - 정책:
-//   - 서버만 변경(Server Authority 100%)
-//   - 클라는 RepNotify -> Delegate로 HUD 갱신 (Tick/Binding 금지)
-// - PushModel 대응: 서버에서 값 변경 시 Dirty 마킹/ForceNetUpdate를 사용한다.
-// ============================================================================
-
-#pragma once
+﻿#pragma once
 
 #include "CoreMinimal.h"
 #include "Net/UnrealNetwork.h"
@@ -27,7 +17,6 @@ DECLARE_MULTICAST_DELEGATE_OneParam(FOnMosesMatchTimeChangedNative, int32 /*Rema
 DECLARE_MULTICAST_DELEGATE_OneParam(FOnMosesMatchPhaseChangedNative, EMosesMatchPhase /*Phase*/);
 DECLARE_MULTICAST_DELEGATE_OneParam(FOnMosesAnnouncementChangedNative, const FMosesAnnouncementState& /*State*/);
 
-// [MOD] Result
 UENUM(BlueprintType)
 enum class EMosesResultReason : uint8
 {
@@ -84,8 +73,6 @@ public:
 	FOnMosesMatchTimeChangedNative OnMatchTimeChanged;
 	FOnMosesMatchPhaseChangedNative OnMatchPhaseChanged;
 	FOnMosesAnnouncementChangedNative OnAnnouncementChanged;
-
-	// [MOD]
 	FOnMosesResultStateChangedNative OnResultStateChanged;
 
 public:
@@ -95,8 +82,6 @@ public:
 	int32 GetRemainingSeconds() const { return RemainingSeconds; }
 	EMosesMatchPhase GetMatchPhase() const { return MatchPhase; }
 	const FMosesAnnouncementState& GetAnnouncementState() const { return AnnouncementState; }
-
-	// [MOD]
 	const FMosesMatchResultState& GetResultState() const { return ResultState; }
 
 	// [MOD] ResultPhase 여부 (서버 Guard 기준)
@@ -111,16 +96,14 @@ public:
 	// -------------------------------------------------------------------------
 	void ServerSetRemainingSeconds(int32 NewSeconds);
 	void ServerSetMatchPhase(EMosesMatchPhase NewPhase);
-
 	void ServerStartAnnouncementText(const FText& InText, int32 DurationSeconds);
 	void ServerStartAnnouncementCountdown(const FText& PrefixText, int32 CountdownFromSeconds);
 	void ServerStopAnnouncement();
-
 	void ServerStartMatchTimer(int32 TotalSeconds);
 	void ServerStopMatchTimer();
-
-	// [MOD] Result state replicate
 	void ServerSetResultState(const FMosesMatchResultState& NewState);
+	/** 카운트다운 전용 (깜빡임 없는 In-Place Update) */
+	void ServerSetCountdownAnnouncement(int32 RemainingSec);
 
 public:
 	// -------------------------------------------------------------------------
@@ -156,7 +139,6 @@ private:
 	UFUNCTION()
 	void OnRep_AnnouncementState();
 
-	// [MOD]
 	UFUNCTION()
 	void OnRep_ResultState();
 
