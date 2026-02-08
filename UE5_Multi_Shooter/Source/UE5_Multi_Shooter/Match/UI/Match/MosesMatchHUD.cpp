@@ -1,8 +1,4 @@
-﻿// ============================================================================
-// UE5_Multi_Shooter/Match/UI/Match/MosesMatchHUD.cpp (FULL)
-// ============================================================================
-
-#include "UE5_Multi_Shooter/Match/UI/Match/MosesMatchHUD.h"
+﻿#include "UE5_Multi_Shooter/Match/UI/Match/MosesMatchHUD.h"
 
 #include "UE5_Multi_Shooter/MosesPlayerController.h"
 #include "UE5_Multi_Shooter/MosesPlayerState.h"
@@ -1134,4 +1130,115 @@ void UMosesMatchHUD::StopLocalHeadshotToast_Internal()
 	}
 
 	bLocalHeadshotToastActive = false;
+}
+
+static AMosesMatchGameState* MosesHUD_GetMatchGS(UWorld* World)
+{
+	return World ? World->GetGameState<AMosesMatchGameState>() : nullptr;
+}
+
+void UMosesMatchHUD::HandleResultStateChanged_Local(const FMosesMatchResultState& State)
+{
+	// 이 함수는 GameState Delegate에서 호출되어야 함.
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	AMosesPlayerController* PC = Cast<AMosesPlayerController>(GetOwningPlayer());
+	if (!PC)
+	{
+		return;
+	}
+
+	AMosesPlayerState* MyPS = PC->GetPlayerState<AMosesPlayerState>();
+	if (!MyPS)
+	{
+		return;
+	}
+
+	AMosesMatchGameState* GS = MosesHUD_GetMatchGS(World);
+	if (!GS)
+	{
+		return;
+	}
+
+	// Result가 아닐 때는 무시
+	if (!State.bIsResult && !GS->IsResultPhase())
+	{
+		return;
+	}
+
+	// ------------------------------------------------------------
+	// 내/상대 PlayerState 추출 (2~4인 대응)
+	// - 요청사항은 "내/상대" 표기이므로:
+	//   2인 매치: 상대 1명
+	//   3~4인: 일단 "내가 아닌 첫 상대"를 Opponent로 표기(원하면 UI를 리스트로 확장)
+	// ------------------------------------------------------------
+	AMosesPlayerState* OppPS = nullptr;
+
+	for (APlayerState* Raw : GS->PlayerArray)
+	{
+		AMosesPlayerState* PS = Cast<AMosesPlayerState>(Raw);
+		if (!PS || PS == MyPS)
+		{
+			continue;
+		}
+
+		OppPS = PS;
+		break;
+	}
+
+	const FString MyId = MyPS->GetPersistentId().ToString(EGuidFormats::DigitsWithHyphens);
+	const FString OppId = OppPS ? OppPS->GetPersistentId().ToString(EGuidFormats::DigitsWithHyphens) : FString(TEXT(""));
+
+	const bool bIsDraw = State.bIsDraw;
+
+	// Winner 판단: Draw면 무조건 false 처리(표시는 DRAW로)
+	bool bIsWinner = false;
+	if (!bIsDraw && !State.WinnerPersistentId.IsEmpty())
+	{
+		bIsWinner = (State.WinnerPersistentId == MyId);
+	}
+
+	UE_LOG(LogMosesPhase, Warning,
+		TEXT("[RESULT][CL] HUD OpenPopup Draw=%d WinnerPid=%s MyPid=%s bIsWinner=%d"),
+		bIsDraw ? 1 : 0,
+		*State.WinnerPersistentId,
+		*MyId,
+		bIsWinner ? 1 : 0);
+
+	// ------------------------------------------------------------
+	// UI 표시 (Tick/Binding 금지)
+	// - BP_ShowResultPopup에서 텍스트 세팅 + 팝업 visible
+	// ------------------------------------------------------------
+	BP_ShowResultPopup(
+		bIsDraw,
+		bIsWinner,
+		MyId,
+		MyPS->GetCaptures(),
+		MyPS->GetZombieKills(),
+		MyPS->GetPvPKills(),
+		MyPS->GetTotalScore(),
+		OppId,
+		OppPS ? OppPS->GetCaptures() : 0,
+		OppPS ? OppPS->GetZombieKills() : 0,
+		OppPS ? OppPS->GetPvPKills() : 0,
+		OppPS ? OppPS->GetTotalScore() : 0);
+}
+
+void UMosesMatchHUD::UI_OnClickedConfirmReturnToLobby()
+{
+	AMosesPlayerController* PC = Cast<AMosesPlayerController>(GetOwningPlayer());
+	if (!PC)
+	{
+		return;
+	}
+
+	// 클라는 “요청”만, 결정은 서버(GameMode)
+	UE_LOG(LogMosesPhase, Warning, TEXT("[RESULT][CL] Confirm clicked -> Server_RequestReturnToLobby PC=%s"),
+		*GetNameSafe(PC));
+
+	PC->Server_RequestReturnToLobby();
 }

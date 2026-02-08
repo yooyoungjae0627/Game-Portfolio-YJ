@@ -311,6 +311,15 @@ void AMosesMatchGameMode::SetMatchPhase(EMosesMatchPhase NewPhase)
 
 	CurrentPhase = NewPhase;
 
+	// [ADD] 새 매치 흐름 시작(Warmup)에서 Result/Persist 가드 리셋
+	if (CurrentPhase == EMosesMatchPhase::Warmup)
+	{
+		bRecordSavedThisMatch = false;
+		bResultComputedThisMatch = false;
+
+		UE_LOG(LogMosesPhase, Warning, TEXT("[PHASE][SV] Reset Match Guards (Result/Persist)"));
+	}
+
 	// 1) Phase에 맞춰 Experience 전환
 	ServerSwitchExperienceByPhase(CurrentPhase);
 
@@ -343,7 +352,7 @@ void AMosesMatchGameMode::SetMatchPhase(EMosesMatchPhase NewPhase)
 		{
 			GS->ServerStartAnnouncementCountdown(FText::FromString(TEXT("로비 복귀까지")), FMath::Max(1, DurationInt));
 
-			// [MOD] Result 진입 즉시 서버 승패 확정
+			// [MOD] Result 진입 즉시 서버 승패 확정 (1회 가드 포함)
 			ServerDecideResult_OnEnterResultPhase();
 		}
 	}
@@ -413,6 +422,28 @@ void AMosesMatchGameMode::TravelToLobby()
 	UE_LOG(LogMosesSpawn, Warning, TEXT("%s [MatchGM] ServerTravel -> %s"), MOSES_TAG_COMBAT_SV, *URL);
 
 	GetWorld()->ServerTravel(URL, false);
+}
+
+bool AMosesMatchGameMode::Server_RequestReturnToLobbyFromPlayer(APlayerController* Requestor)
+{
+	if (!HasAuthority())
+	{
+		return false;
+	}
+
+	AMosesMatchGameState* GS = GetMatchGameState();
+	if (!GS || !GS->IsResultPhase())
+	{
+		UE_LOG(LogMosesPhase, Warning, TEXT("[RESULT][SV] ReturnToLobby BLOCK (NotResult) Req=%s"),
+			*GetNameSafe(Requestor));
+		return false;
+	}
+
+	UE_LOG(LogMosesPhase, Warning, TEXT("[RESULT][SV] ReturnToLobby APPROVED Req=%s -> TravelToLobby"),
+		*GetNameSafe(Requestor));
+
+	TravelToLobby();
+	return true;
 }
 
 void AMosesMatchGameMode::HandleAutoReturn()
@@ -680,6 +711,14 @@ void AMosesMatchGameMode::ServerDecideResult_OnEnterResultPhase()
 		return;
 	}
 
+	// [MOD] Result는 1회만 계산
+	if (bResultComputedThisMatch)
+	{
+		UE_LOG(LogMosesPhase, Warning, TEXT("[RESULT][SV] Decide SKIP (AlreadyComputed)"));
+		return;
+	}
+	bResultComputedThisMatch = true;
+
 	AMosesMatchGameState* MGS = GetMatchGameState();
 	if (!MGS)
 	{
@@ -699,7 +738,7 @@ void AMosesMatchGameMode::ServerDecideResult_OnEnterResultPhase()
 	}
 
 	// ---------------------------------------------------------------------
-	// [MOD] Result 진입 순간 1회 점수 계산/저장
+	// Result 진입 순간 1회 점수 계산/저장
 	// TotalScore = PvPKills*10 + Captures*20 + ZombieKills
 	// ---------------------------------------------------------------------
 	int32 MaxScore = INT32_MIN;
@@ -752,6 +791,8 @@ void AMosesMatchGameMode::ServerDecideResult_OnEnterResultPhase()
 		RS.bIsDraw = false;
 		RS.WinnerPersistentId = WinnerPS->GetPersistentId().ToString(EGuidFormats::DigitsWithHyphens);
 		RS.WinnerNickname = WinnerPS->GetPlayerNickName();
+
+		// [MOD] 이번 기획은 "합산 점수"가 최우선 판정
 		RS.ResultReason = TEXT("TotalScore");
 
 		UE_LOG(LogMosesPhase, Warning, TEXT("[RESULT][SV] Winner PS=%s Nick=%s Total=%d"),

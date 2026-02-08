@@ -1,9 +1,6 @@
-﻿// ============================================================================
-// UE5_Multi_Shooter/MosesPlayerController.cpp (FULL)
-// ============================================================================
+﻿#include "UE5_Multi_Shooter/MosesPlayerController.h"
 
-#include "UE5_Multi_Shooter/MosesPlayerController.h"
-
+#include "UE5_Multi_Shooter/Match/GameMode/MosesMatchGameMode.h"
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
 #include "UE5_Multi_Shooter/MosesPlayerState.h"
 #include "UE5_Multi_Shooter/MosesStartGameMode.h"
@@ -14,6 +11,7 @@
 #include "UE5_Multi_Shooter/Lobby/GameMode/MosesLobbyGameMode.h"
 #include "UE5_Multi_Shooter/Lobby/GameState/MosesLobbyGameState.h"
 
+#include "UE5_Multi_Shooter/Match/GameState/MosesMatchGameState.h"
 #include "UE5_Multi_Shooter/Match/GameMode/MosesMatchGameMode.h"
 #include "UE5_Multi_Shooter/Match/Components/MosesCombatComponent.h"
 #include "UE5_Multi_Shooter/Match/Weapon/MosesWeaponRegistrySubsystem.h"
@@ -1566,4 +1564,35 @@ void AMosesPlayerController::HandlePickupToastRetryTimer_Local()
 		// headshot pending만 남았을 수 있으니 한 번 더
 		TryFlushPendingHeadshotToast_Local();
 	}
+}
+
+void AMosesPlayerController::Server_RequestReturnToLobby_Implementation()
+{
+	if (!HasAuthority())
+	{
+		UE_LOG(LogMosesAuth, Warning, TEXT("[RESULT][CL] Server_RequestReturnToLobby called on non-authority PC=%s"),
+			*GetNameSafe(this));
+		return;
+	}
+
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	AMosesMatchGameMode* GM = World->GetAuthGameMode<AMosesMatchGameMode>();
+	if (!GM)
+	{
+		UE_LOG(LogMosesPhase, Warning, TEXT("[RESULT][SV] ReturnToLobby FAIL (NoMatchGM) PC=%s"),
+			*GetNameSafe(this));
+		return;
+	}
+
+	// Server only 승인 + Travel
+	const bool bOk = GM->Server_RequestReturnToLobbyFromPlayer(this);
+
+	UE_LOG(LogMosesPhase, Warning, TEXT("[RESULT][SV] ReturnToLobby Request PC=%s Result=%s"),
+		*GetNameSafe(this),
+		bOk ? TEXT("OK") : TEXT("FAIL"));
 }

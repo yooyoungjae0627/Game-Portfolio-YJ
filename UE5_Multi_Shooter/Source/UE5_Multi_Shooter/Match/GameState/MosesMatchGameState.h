@@ -10,9 +10,9 @@
 
 #include "MosesMatchGameState.generated.h"
 
-class USoundBase; // ✅ KillFeed 시그니처
+class USoundBase;
 
-// HUD 갱신: RepNotify -> Delegate
+// HUD 갱신: RepNotify -> Delegate (Tick/Binding 금지)
 DECLARE_MULTICAST_DELEGATE_OneParam(FOnMosesMatchTimeChangedNative, int32 /*RemainingSeconds*/);
 DECLARE_MULTICAST_DELEGATE_OneParam(FOnMosesMatchPhaseChangedNative, EMosesMatchPhase /*Phase*/);
 DECLARE_MULTICAST_DELEGATE_OneParam(FOnMosesAnnouncementChangedNative, const FMosesAnnouncementState& /*State*/);
@@ -20,12 +20,12 @@ DECLARE_MULTICAST_DELEGATE_OneParam(FOnMosesAnnouncementChangedNative, const FMo
 UENUM(BlueprintType)
 enum class EMosesResultReason : uint8
 {
-	None		UMETA(DisplayName = "None"),
-	Captures	UMETA(DisplayName = "Captures"),
-	PvPKills	UMETA(DisplayName = "PvP Kills"),
-	ZombieKills	UMETA(DisplayName = "Zombie Kills"),
-	Headshots	UMETA(DisplayName = "Headshots"),
-	Draw		UMETA(DisplayName = "Draw"),
+	None        UMETA(DisplayName = "None"),
+	Captures    UMETA(DisplayName = "Captures"),
+	PvPKills    UMETA(DisplayName = "PvP Kills"),
+	ZombieKills UMETA(DisplayName = "Zombie Kills"),
+	Headshots   UMETA(DisplayName = "Headshots"),
+	Draw        UMETA(DisplayName = "Draw"),
 };
 
 USTRUCT(BlueprintType)
@@ -39,20 +39,20 @@ struct FMosesMatchResultState
 	UPROPERTY(BlueprintReadOnly)
 	bool bIsDraw = false;
 
-	// ✅ Winner PersistentId (FGuid string)
+	// Winner PersistentId (FGuid string)
 	UPROPERTY(BlueprintReadOnly)
 	FString WinnerPersistentId;
 
-	// ✅ Winner Nickname (for UI)
+	// Winner Nickname (for UI)
 	UPROPERTY(BlueprintReadOnly)
 	FString WinnerNickname;
 
-	// ✅ Reason string (Captures / PvPKills / ZombieKills / Headshots / Draw)
+	// Reason string (Captures / PvPKills / ZombieKills / Headshots / Draw / TotalScore)
 	UPROPERTY(BlueprintReadOnly)
 	FString ResultReason;
 };
 
-DECLARE_MULTICAST_DELEGATE_OneParam(FOnMosesResultStateChangedNative, const FMosesMatchResultState& /*State*/); // [MOD]
+DECLARE_MULTICAST_DELEGATE_OneParam(FOnMosesResultStateChangedNative, const FMosesMatchResultState& /*State*/);
 
 UCLASS()
 class UE5_MULTI_SHOOTER_API AMosesMatchGameState : public AMosesGameState
@@ -84,7 +84,7 @@ public:
 	const FMosesAnnouncementState& GetAnnouncementState() const { return AnnouncementState; }
 	const FMosesMatchResultState& GetResultState() const { return ResultState; }
 
-	// [MOD] ResultPhase 여부 (서버 Guard 기준)
+	// ResultPhase 여부 (서버 Guard 기준)
 	bool IsResultPhase() const
 	{
 		return (MatchPhase == EMosesMatchPhase::Result) || ResultState.bIsResult;
@@ -96,12 +96,17 @@ public:
 	// -------------------------------------------------------------------------
 	void ServerSetRemainingSeconds(int32 NewSeconds);
 	void ServerSetMatchPhase(EMosesMatchPhase NewPhase);
+
 	void ServerStartAnnouncementText(const FText& InText, int32 DurationSeconds);
 	void ServerStartAnnouncementCountdown(const FText& PrefixText, int32 CountdownFromSeconds);
 	void ServerStopAnnouncement();
+
 	void ServerSetCountdownAnnouncement_External(int32 RemainingSec);
+
 	void ServerStartMatchTimer(int32 TotalSeconds);
 	void ServerStopMatchTimer();
+
+	// [MOD] Result
 	void ServerSetResultState(const FMosesMatchResultState& NewState);
 
 public:
@@ -109,20 +114,12 @@ public:
 	// Compatibility Wrappers
 	// -------------------------------------------------------------------------
 	// ===================== Announcement =====================
-	/** 코어 버전 (실제 구현) */
 	void ServerPushAnnouncement(const FText& Msg, float DurationSeconds = 1.0f);
-
-	/** 기존 호출부 호환: FString */
 	void ServerPushAnnouncement(const FString& Msg, float DurationSeconds = 1.0f);
 
 	// ===================== KillFeed =====================
-	/** 코어 버전 (실제 구현) */
 	void ServerPushKillFeed(const FText& Msg, bool bHeadshot, USoundBase* HeadshotSound);
-
-	/** 단순 메시지 버전 (Headshot=false) */
 	void ServerPushKillFeed(const FText& Msg);
-
-	/** 기존 호출부 호환: FString */
 	void ServerPushKillFeed(const FString& Msg);
 
 private:
@@ -146,6 +143,7 @@ private:
 	// Server tick (1초)
 	// -------------------------------------------------------------------------
 	void ServerTick_1s();
+
 	void BroadcastAnnouncementLocal_Server();
 	void BroadcastMatchTimeLocal_Server();
 	void BroadcastMatchPhaseLocal_Server();
@@ -164,7 +162,6 @@ private:
 	UPROPERTY(ReplicatedUsing = OnRep_AnnouncementState)
 	FMosesAnnouncementState AnnouncementState;
 
-	// [MOD]
 	UPROPERTY(ReplicatedUsing = OnRep_ResultState)
 	FMosesMatchResultState ResultState;
 
@@ -173,6 +170,7 @@ private:
 	// Server-only
 	// -------------------------------------------------------------------------
 	FTimerHandle MatchTimerHandle;
+
 	FText ServerAnnouncePrefixText;
 	bool bAnnouncementExternallyDriven = false;
 };

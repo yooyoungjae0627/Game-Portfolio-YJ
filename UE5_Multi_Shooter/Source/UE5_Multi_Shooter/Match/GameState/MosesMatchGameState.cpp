@@ -38,7 +38,6 @@ void AMosesMatchGameState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>&
 
 void AMosesMatchGameState::ServerStartMatchTimer(int32 TotalSeconds)
 {
-	// “진짜 호출되는지”부터 강제 로그
 	UE_LOG(LogMosesPhase, Warning, TEXT("[MatchTime][SV] ServerStartMatchTimer CALLED Total=%d HasAuth=%d World=%s"),
 		TotalSeconds,
 		HasAuthority() ? 1 : 0,
@@ -82,15 +81,12 @@ void AMosesMatchGameState::ServerTick_1s()
 	MARK_PROPERTY_DIRTY_FROM_NAME(AMosesMatchGameState, RemainingSeconds, this);
 	ForceNetUpdate();
 
-	// [MOD] 서버 로컬 UI 갱신은 RepNotify 직접 호출 금지 -> Delegate 직접 방송
+	// 서버 로컬 UI 갱신은 RepNotify 직접 호출 금지 -> Delegate 직접 방송
 	BroadcastMatchTimeLocal_Server();
 
 	// ---------------------------------------------------------------------
-	// [MOD] Announcement tick (IMPORTANT FIX)
+	// Announcement tick
 	// ---------------------------------------------------------------------
-	// ✅ bAnnouncementExternallyDriven == true 인 동안에는
-	//    여기서 RemainingSeconds를 감소시키거나 Stop하면 안 된다.
-	//    (RespawnManager가 매초 값을 넣는데 여기서도 감소/Stop하면 깜빡임)
 	if (AnnouncementState.bActive && !bAnnouncementExternallyDriven)
 	{
 		AnnouncementState.RemainingSeconds = FMath::Max(0, AnnouncementState.RemainingSeconds - 1);
@@ -140,7 +136,6 @@ void AMosesMatchGameState::ServerSetRemainingSeconds(int32 NewSeconds)
 
 	RemainingSeconds = NewSeconds;
 
-	// PushModel dirty
 	MARK_PROPERTY_DIRTY_FROM_NAME(AMosesMatchGameState, RemainingSeconds, this);
 	ForceNetUpdate();
 
@@ -161,7 +156,6 @@ void AMosesMatchGameState::ServerSetMatchPhase(EMosesMatchPhase NewPhase)
 
 	MatchPhase = NewPhase;
 
-	// PushModel dirty
 	MARK_PROPERTY_DIRTY_FROM_NAME(AMosesMatchGameState, MatchPhase, this);
 	ForceNetUpdate();
 
@@ -183,7 +177,7 @@ void AMosesMatchGameState::ServerSetCountdownAnnouncement_External(int32 Remaini
 
 	RemainingSec = FMath::Max(0, RemainingSec);
 
-	// [MOD] 외부 구동 카운트다운 시작/유지 플래그 ON
+	// 외부 구동 카운트다운 시작/유지 플래그 ON
 	bAnnouncementExternallyDriven = true;
 
 	const FText Text = FText::Format(
@@ -198,22 +192,17 @@ void AMosesMatchGameState::ServerSetCountdownAnnouncement_External(int32 Remaini
 	MARK_PROPERTY_DIRTY_FROM_NAME(AMosesMatchGameState, AnnouncementState, this);
 	ForceNetUpdate();
 
-	// 서버 로컬 UI
 	BroadcastAnnouncementLocal_Server();
 
 	UE_LOG(LogMosesPhase, Verbose, TEXT("[ANN][SV] ExternalCountdown Update Remaining=%d"), RemainingSec);
 
-	// [MOD] RemainingSec==0이 되는 순간 “여기서” Stop하는 게 안전
-	// (내부 Tick과 충돌 X)
 	if (RemainingSec <= 0)
 	{
 		ServerStopAnnouncement();
 	}
 }
 
-void AMosesMatchGameState::ServerStartAnnouncementText(
-	const FText& InText,
-	int32 DurationSeconds)
+void AMosesMatchGameState::ServerStartAnnouncementText(const FText& InText, int32 DurationSeconds)
 {
 	if (!HasAuthority())
 	{
@@ -227,16 +216,12 @@ void AMosesMatchGameState::ServerStartAnnouncementText(
 	AnnouncementState.Text = InText;
 	AnnouncementState.RemainingSeconds = DurationSeconds;
 
-	MARK_PROPERTY_DIRTY_FROM_NAME(
-		AMosesMatchGameState,
-		AnnouncementState,
-		this);
-
+	MARK_PROPERTY_DIRTY_FROM_NAME(AMosesMatchGameState, AnnouncementState, this);
 	ForceNetUpdate();
 
-	UE_LOG(LogMosesPhase, Warning,
-		TEXT("[ANN][SV] Start Text Duration=%d"),
-		DurationSeconds);
+	UE_LOG(LogMosesPhase, Warning, TEXT("[ANN][SV] Start Text Duration=%d"), DurationSeconds);
+
+	OnRep_AnnouncementState();
 }
 
 void AMosesMatchGameState::ServerStartAnnouncementCountdown(const FText& PrefixText, int32 CountdownFromSeconds)
@@ -248,6 +233,9 @@ void AMosesMatchGameState::ServerStartAnnouncementCountdown(const FText& PrefixT
 
 	CountdownFromSeconds = FMath::Max(1, CountdownFromSeconds);
 
+	// [MOD] 내부 tick이 카운트다운을 구동하는 경우에는 외부 구동 OFF
+	bAnnouncementExternallyDriven = false;
+
 	ServerAnnouncePrefixText = PrefixText;
 
 	AnnouncementState.bActive = true;
@@ -258,7 +246,6 @@ void AMosesMatchGameState::ServerStartAnnouncementCountdown(const FText& PrefixT
 		ServerAnnouncePrefixText,
 		FText::AsNumber(AnnouncementState.RemainingSeconds));
 
-	// PushModel dirty
 	MARK_PROPERTY_DIRTY_FROM_NAME(AMosesMatchGameState, AnnouncementState, this);
 	ForceNetUpdate();
 
@@ -281,7 +268,9 @@ void AMosesMatchGameState::ServerStopAnnouncement()
 
 	AnnouncementState = FMosesAnnouncementState();
 
-	// PushModel dirty
+	// [MOD] 외부 구동 플래그도 해제
+	bAnnouncementExternallyDriven = false;
+
 	MARK_PROPERTY_DIRTY_FROM_NAME(AMosesMatchGameState, AnnouncementState, this);
 	ForceNetUpdate();
 
@@ -291,7 +280,7 @@ void AMosesMatchGameState::ServerStopAnnouncement()
 }
 
 // ============================================================================
-// [MOD] Result
+// Result
 // ============================================================================
 
 void AMosesMatchGameState::ServerSetResultState(const FMosesMatchResultState& NewState)
@@ -303,7 +292,6 @@ void AMosesMatchGameState::ServerSetResultState(const FMosesMatchResultState& Ne
 
 	ResultState = NewState;
 
-	// PushModel dirty
 	MARK_PROPERTY_DIRTY_FROM_NAME(AMosesMatchGameState, ResultState, this);
 	ForceNetUpdate();
 
@@ -342,7 +330,7 @@ void AMosesMatchGameState::OnRep_ResultState()
 }
 
 // ============================================================================
-// Server-local delegate broadcast (NO OnRep direct call)
+// Server-local delegate broadcast
 // ============================================================================
 
 void AMosesMatchGameState::BroadcastMatchTimeLocal_Server()
@@ -377,7 +365,6 @@ void AMosesMatchGameState::ServerPushAnnouncement(const FText& Msg, float Durati
 	}
 
 	const int32 Seconds = FMath::Max(1, FMath::CeilToInt(DurationSeconds));
-
 	UE_LOG(LogMosesPhase, Warning, TEXT("[ANN][SV] Push Text Seconds=%d"), Seconds);
 
 	ServerStartAnnouncementText(Msg, Seconds);
@@ -400,8 +387,7 @@ void AMosesMatchGameState::ServerPushKillFeed(const FText& Msg, bool bHeadshot, 
 		bHeadshot ? 1 : 0,
 		*GetNameSafe(HeadshotSound));
 
-	// TODO:
-	// KillFeed 전용 RepState(Array/Queue) 구현 예정
+	// TODO: KillFeed 전용 RepState(Array/Queue) 구현 예정
 	// 현재는 Announcement로 대체 출력
 	ServerStartAnnouncementText(Msg, 2);
 }

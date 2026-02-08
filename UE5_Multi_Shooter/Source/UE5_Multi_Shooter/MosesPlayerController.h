@@ -65,6 +65,9 @@ public:
 	UFUNCTION(Server, Reliable) void Server_SetLobbyNickname(const FString& Nick);
 	UFUNCTION(Server, Reliable) void Server_SendLobbyChat(const FString& Text);
 
+	// Result Confirm -> Return to Lobby
+	UFUNCTION(Server, Reliable) void Server_RequestReturnToLobby();
+
 	/*====================================================
 	= JoinRoom Result (Server → Client)
 	====================================================*/

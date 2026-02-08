@@ -1,8 +1,4 @@
-﻿// ============================================================================
-// UE5_Multi_Shooter/Match/GameMode/MosesMatchGameMode.h  (FULL - UPDATED)
-// ============================================================================
-
-#pragma once
+﻿#pragma once
 
 #include "CoreMinimal.h"
 #include "UE5_Multi_Shooter/MosesGameModeBase.h"
@@ -28,12 +24,12 @@ class AMosesPlayerState;
  * - 서버 권위 Phase 머신(WaitingForPlayers → Warmup → Combat → Result)
  * - Phase에 맞춰 Experience 전환
  * - MatchGameState에 Phase/RemainingSeconds/Announcement 확정
- * - DAY11: Respawn 스케줄 + Result 승패 판정 확정(Combat→Result 진입 시)
+ * - Respawn 스케줄 + Result 승패 판정 확정(Combat→Result 진입 시)
  *
  * 정책:
  * - Server Authority 100%
  * - GameMode=결정(Phase/Experience/ServerTravel/Respawn/Result)
- * - GameState=복제(HUD 갱신용 데이터)
+ * - GameState=복제(HUD 갱신용 최소 데이터)
  */
 UCLASS()
 class UE5_MULTI_SHOOTER_API AMosesMatchGameMode : public AMosesGameModeBase
@@ -46,6 +42,9 @@ public:
 	/** 디버그용: 서버에서 즉시 로비로 */
 	UFUNCTION(Exec)
 	void TravelToLobby();
+
+	// [ADD] Result 팝업 Confirm -> 즉시 로비 복귀 (Server only)
+	bool Server_RequestReturnToLobbyFromPlayer(APlayerController* Requestor);
 
 	UPROPERTY(EditDefaultsOnly, Category = "Match|Debug")
 	float AutoReturnToLobbySeconds = 0.0f;
@@ -107,20 +106,14 @@ private:
 
 public:
 	// -------------------------------------------------------------------------
-	// DAY11 [MOD] Respawn schedule (Server only)
-	// - PlayerState(GAS Death 확정) -> GameMode가 RestartPlayer를 확정한다.
-	// - [FIX] OldPawn을 UnPossess + Destroy 하지 않으면
-	//         PS↔Pawn 매핑이 흔들리며(로그에서 PS가 다른 Pawn으로 붙음)
-	//         죽음 애니/DeadChanged가 엉뚱한 Pawn에서 터진다.
+	// Respawn schedule (Server only)
 	// -------------------------------------------------------------------------
 	void ServerScheduleRespawn(AController* Controller, float DelaySeconds);
 
 private:
-	// [MOD] Respawn 타이머를 Controller별로 보관하여 중복 스케줄/핸들 누수를 방지한다.
 	UPROPERTY()
 	TMap<TWeakObjectPtr<AController>, FTimerHandle> RespawnTimerHandlesByController;
 
-	// [MOD] 실제 리스폰 수행(타이머 콜백에서 호출)
 	void ServerExecuteRespawn(AController* Controller);
 
 private:
@@ -134,6 +127,7 @@ private:
 		FString& OutWinnerId,
 		EMosesResultReason& OutReason) const;
 
+private:
 	// -------------------------------------------------------------------------
 	// Travel / Debug
 	// -------------------------------------------------------------------------
@@ -145,6 +139,7 @@ private:
 
 	bool CanDoServerTravel() const;
 
+private:
 	// -------------------------------------------------------------------------
 	// PlayerStart helpers
 	// -------------------------------------------------------------------------
@@ -154,11 +149,13 @@ private:
 	void ReleaseReservedStart(AController* Player);
 	void DumpReservedStarts(const TCHAR* Where) const;
 
+private:
 	// -------------------------------------------------------------------------
 	// PawnClass Resolve
 	// -------------------------------------------------------------------------
 	UClass* ResolvePawnClassFromSelectedId(int32 SelectedId) const;
 
+private:
 	// -------------------------------------------------------------------------
 	// Experience Ready Poll (Tick 금지)
 	// -------------------------------------------------------------------------
@@ -174,6 +171,7 @@ private:
 	static constexpr float ExperienceReadyPollInterval = 0.2f;
 	static constexpr int32  ExperienceReadyPollMaxCount = 50; // 10초
 
+private:
 	// -------------------------------------------------------------------------
 	// Phase config
 	// -------------------------------------------------------------------------
@@ -186,6 +184,7 @@ private:
 	UPROPERTY(EditDefaultsOnly, Category = "Match|Phase")
 	float ResultSeconds = 30.0f;
 
+private:
 	// -------------------------------------------------------------------------
 	// Phase runtime (Server only)
 	// -------------------------------------------------------------------------
@@ -194,11 +193,13 @@ private:
 	FTimerHandle PhaseTimerHandle;
 	double PhaseEndTimeSeconds = 0.0;
 
+private:
 	// -------------------------------------------------------------------------
 	// Misc timers
 	// -------------------------------------------------------------------------
 	FTimerHandle AutoReturnTimerHandle;
 
+private:
 	// -------------------------------------------------------------------------
 	// PlayerStart reservation
 	// -------------------------------------------------------------------------
@@ -208,6 +209,7 @@ private:
 	UPROPERTY()
 	TMap<TWeakObjectPtr<AController>, TWeakObjectPtr<APlayerStart>> AssignedStartByController;
 
+private:
 	// -------------------------------------------------------------------------
 	// Assets
 	// -------------------------------------------------------------------------
@@ -220,5 +222,12 @@ private:
 	UPROPERTY(EditDefaultsOnly, Category = "Moses|CharacterSelect")
 	TSubclassOf<APawn> FallbackPawnClass;
 
+private:
+	// -------------------------------------------------------------------------
+	// Persist / Result guards
+	// -------------------------------------------------------------------------
 	bool bRecordSavedThisMatch = false;
+
+	// [MOD] Result 계산은 Result 진입 순간 1회만
+	bool bResultComputedThisMatch = false;
 };
