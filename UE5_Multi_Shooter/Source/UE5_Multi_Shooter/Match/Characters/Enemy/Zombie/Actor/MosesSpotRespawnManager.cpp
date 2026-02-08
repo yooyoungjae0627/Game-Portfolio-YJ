@@ -79,13 +79,14 @@ void AMosesSpotRespawnManager::StartCountdown_Server(AMosesZombieSpawnSpot* Targ
 		return;
 	}
 
-	// 진행 중이던 카운트다운이 있으면 최신으로 교체
 	const bool bWasActive = GetWorldTimerManager().IsTimerActive(CountdownTimerHandle);
 
 	PendingRespawnSpot = TargetSpot;
 
 	const float Now = World->GetTimeSeconds();
 	RespawnEndServerTime = Now + static_cast<float>(RespawnCountdownSeconds);
+
+	LastBroadcastRemainingSec = -1; // [MOD] 시작 시 캐시 리셋
 
 	UE_LOG(LogMosesAnnounce, Warning,
 		TEXT("[ANN][SV] RespawnCountdown Start Spot=%s EndTime=%.2f WasActive=%d Seconds=%d"),
@@ -94,11 +95,9 @@ void AMosesSpotRespawnManager::StartCountdown_Server(AMosesZombieSpawnSpot* Targ
 		bWasActive ? 1 : 0,
 		RespawnCountdownSeconds);
 
-	// [MOD] 기존 타이머 정리 후 즉시 1회 방송(10초부터 보여주기)
 	StopCountdown_Server();
 	ServerTickRespawnCountdown();
 
-	// 1초 타이머
 	GetWorldTimerManager().SetTimer(
 		CountdownTimerHandle,
 		this,
@@ -145,10 +144,7 @@ void AMosesSpotRespawnManager::ServerTickRespawnCountdown()
 		*GetNameSafe(PendingRespawnSpot),
 		RemainingSec);
 
-	// ---------------------------------------------------------------------
-	// [MOD] 깜빡임 방지: "남은 초가 바뀔 때만" 브로드캐스트한다.
-	// - 기존 코드는 매 Tick마다 StartText(1초)를 다시 시작해서 UI가 리셋 → 깜빡임
-	// ---------------------------------------------------------------------
+	// 같은 초면 갱신 스킵
 	if (RemainingSec != LastBroadcastRemainingSec)
 	{
 		LastBroadcastRemainingSec = RemainingSec;
@@ -175,9 +171,8 @@ void AMosesSpotRespawnManager::BroadcastCountdown_Server(int32 RemainingSec)
 		return;
 	}
 
-	// [MOD] "Start(새 공지)"를 매초 호출하지 말고,
-	//       "카운트다운 공지" 상태를 In-Place로 업데이트한다.
-	MGS->ServerSetCountdownAnnouncement(RemainingSec);
+	// [MOD] 외부 구동 카운트다운 API 사용 (GameState 내부 Tick과 충돌 제거)
+	MGS->ServerSetCountdownAnnouncement_External(RemainingSec);
 }
 
 void AMosesSpotRespawnManager::ExecuteCountdown_Server()

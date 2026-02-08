@@ -84,22 +84,11 @@ void UMosesMatchAnnouncementWidget::UpdateAnnouncement(const FMosesAnnouncementS
 
 void UMosesMatchAnnouncementWidget::SetActive(bool bActive)
 {
-	if (bActive)
+	// [MOD] 절대 Remove/Add 하지 말고 Visibility만 변경
+	const ESlateVisibility Desired = bActive ? ESlateVisibility::SelfHitTestInvisible : ESlateVisibility::Collapsed;
+	if (GetVisibility() == Desired)
 	{
-		if (GetVisibility() == ESlateVisibility::SelfHitTestInvisible)
-		{
-			return;
-		}
-
-		SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+		return;
 	}
-	else
-	{
-		if (GetVisibility() == ESlateVisibility::Collapsed)
-		{
-			return;
-		}
-
-		SetVisibility(ESlateVisibility::Collapsed);
-	}
+	SetVisibility(Desired);
 }

@@ -99,11 +99,10 @@ public:
 	void ServerStartAnnouncementText(const FText& InText, int32 DurationSeconds);
 	void ServerStartAnnouncementCountdown(const FText& PrefixText, int32 CountdownFromSeconds);
 	void ServerStopAnnouncement();
+	void ServerSetCountdownAnnouncement_External(int32 RemainingSec);
 	void ServerStartMatchTimer(int32 TotalSeconds);
 	void ServerStopMatchTimer();
 	void ServerSetResultState(const FMosesMatchResultState& NewState);
-	/** 카운트다운 전용 (깜빡임 없는 In-Place Update) */
-	void ServerSetCountdownAnnouncement(int32 RemainingSec);
 
 public:
 	// -------------------------------------------------------------------------
@@ -147,6 +146,10 @@ private:
 	// Server tick (1초)
 	// -------------------------------------------------------------------------
 	void ServerTick_1s();
+	void BroadcastAnnouncementLocal_Server();
+	void BroadcastMatchTimeLocal_Server();
+	void BroadcastMatchPhaseLocal_Server();
+	void BroadcastResultLocal_Server();
 
 private:
 	// -------------------------------------------------------------------------
@@ -171,4 +174,5 @@ private:
 	// -------------------------------------------------------------------------
 	FTimerHandle MatchTimerHandle;
 	FText ServerAnnouncePrefixText;
+	bool bAnnouncementExternallyDriven = false;
 };

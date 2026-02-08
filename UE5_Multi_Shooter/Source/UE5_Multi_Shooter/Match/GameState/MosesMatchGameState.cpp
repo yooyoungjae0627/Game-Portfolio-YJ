@@ -29,8 +29,6 @@ void AMosesMatchGameState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>&
 	DOREPLIFETIME(AMosesMatchGameState, RemainingSeconds);
 	DOREPLIFETIME(AMosesMatchGameState, MatchPhase);
 	DOREPLIFETIME(AMosesMatchGameState, AnnouncementState);
-
-	// [MOD]
 	DOREPLIFETIME(AMosesMatchGameState, ResultState);
 }
 
@@ -81,17 +79,19 @@ void AMosesMatchGameState::ServerTick_1s()
 	// ---------------------------------------------------------------------
 	RemainingSeconds = FMath::Max(0, RemainingSeconds - 1);
 
-	// PushModel: Replicated 변경 Dirty 마킹 필수
 	MARK_PROPERTY_DIRTY_FROM_NAME(AMosesMatchGameState, RemainingSeconds, this);
 	ForceNetUpdate();
 
-	// 서버에서도 UI 갱신을 위해 RepNotify를 직접 호출(Delegate 목적)
-	OnRep_RemainingSeconds();
+	// [MOD] 서버 로컬 UI 갱신은 RepNotify 직접 호출 금지 -> Delegate 직접 방송
+	BroadcastMatchTimeLocal_Server();
 
 	// ---------------------------------------------------------------------
-	// Announcement tick
+	// [MOD] Announcement tick (IMPORTANT FIX)
 	// ---------------------------------------------------------------------
-	if (AnnouncementState.bActive)
+	// ✅ bAnnouncementExternallyDriven == true 인 동안에는
+	//    여기서 RemainingSeconds를 감소시키거나 Stop하면 안 된다.
+	//    (RespawnManager가 매초 값을 넣는데 여기서도 감소/Stop하면 깜빡임)
+	if (AnnouncementState.bActive && !bAnnouncementExternallyDriven)
 	{
 		AnnouncementState.RemainingSeconds = FMath::Max(0, AnnouncementState.RemainingSeconds - 1);
 
@@ -103,11 +103,10 @@ void AMosesMatchGameState::ServerTick_1s()
 				FText::AsNumber(AnnouncementState.RemainingSeconds));
 		}
 
-		// PushModel: struct도 Dirty 마킹
 		MARK_PROPERTY_DIRTY_FROM_NAME(AMosesMatchGameState, AnnouncementState, this);
 		ForceNetUpdate();
 
-		OnRep_AnnouncementState();
+		BroadcastAnnouncementLocal_Server();
 
 		if (AnnouncementState.RemainingSeconds <= 0)
 		{
@@ -174,7 +173,8 @@ void AMosesMatchGameState::ServerSetMatchPhase(EMosesMatchPhase NewPhase)
 // ============================================================================
 // Announcement
 // ============================================================================
-void AMosesMatchGameState::ServerSetCountdownAnnouncement(int32 RemainingSec)
+
+void AMosesMatchGameState::ServerSetCountdownAnnouncement_External(int32 RemainingSec)
 {
 	if (!HasAuthority())
 	{
@@ -183,26 +183,32 @@ void AMosesMatchGameState::ServerSetCountdownAnnouncement(int32 RemainingSec)
 
 	RemainingSec = FMath::Max(0, RemainingSec);
 
+	// [MOD] 외부 구동 카운트다운 시작/유지 플래그 ON
+	bAnnouncementExternallyDriven = true;
+
 	const FText Text = FText::Format(
 		FText::FromString(TEXT("좀비 리스폰까지 {0}초")),
 		FText::AsNumber(RemainingSec));
 
-	// [MOD] 같은 공지 유지 + 값만 갱신
 	AnnouncementState.bActive = true;
 	AnnouncementState.bCountdown = true;
 	AnnouncementState.Text = Text;
 	AnnouncementState.RemainingSeconds = RemainingSec;
 
-	MARK_PROPERTY_DIRTY_FROM_NAME(
-		AMosesMatchGameState,
-		AnnouncementState,
-		this);
-
+	MARK_PROPERTY_DIRTY_FROM_NAME(AMosesMatchGameState, AnnouncementState, this);
 	ForceNetUpdate();
 
-	UE_LOG(LogMosesPhase, Verbose,
-		TEXT("[ANN][SV] Countdown Update Remaining=%d"),
-		RemainingSec);
+	// 서버 로컬 UI
+	BroadcastAnnouncementLocal_Server();
+
+	UE_LOG(LogMosesPhase, Verbose, TEXT("[ANN][SV] ExternalCountdown Update Remaining=%d"), RemainingSec);
+
+	// [MOD] RemainingSec==0이 되는 순간 “여기서” Stop하는 게 안전
+	// (내부 Tick과 충돌 X)
+	if (RemainingSec <= 0)
+	{
+		ServerStopAnnouncement();
+	}
 }
 
 void AMosesMatchGameState::ServerStartAnnouncementText(
@@ -331,6 +337,30 @@ void AMosesMatchGameState::OnRep_AnnouncementState()
 }
 
 void AMosesMatchGameState::OnRep_ResultState()
+{
+	OnResultStateChanged.Broadcast(ResultState);
+}
+
+// ============================================================================
+// Server-local delegate broadcast (NO OnRep direct call)
+// ============================================================================
+
+void AMosesMatchGameState::BroadcastMatchTimeLocal_Server()
+{
+	OnMatchTimeChanged.Broadcast(RemainingSeconds);
+}
+
+void AMosesMatchGameState::BroadcastMatchPhaseLocal_Server()
+{
+	OnMatchPhaseChanged.Broadcast(MatchPhase);
+}
+
+void AMosesMatchGameState::BroadcastAnnouncementLocal_Server()
+{
+	OnAnnouncementChanged.Broadcast(AnnouncementState);
+}
+
+void AMosesMatchGameState::BroadcastResultLocal_Server()
 {
 	OnResultStateChanged.Broadcast(ResultState);
 }
