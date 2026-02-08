@@ -1,5 +1,7 @@
 ﻿// ============================================================================
 // UE5_Multi_Shooter/Match/UI/Match/MosesMatchHUD.h (FULL)  [MOD]
+// - ResultPopupWidget: HUD에 미리 배치(박아두기) + 평소 Collapsed + Result 때 Visible
+// - Tick/Binding 금지, RepNotify->Delegate 기반 유지
 // ============================================================================
 
 #pragma once
@@ -10,7 +12,7 @@
 
 #include "UE5_Multi_Shooter/Match/MosesMatchPhase.h"
 #include "UE5_Multi_Shooter/Match/GameState/MosesMatchGameState.h"
-#include "UE5_Multi_Shooter/Match/UI/Match/MosesResultPopupWidget.h"
+#include "UE5_Multi_Shooter/Match/UI/Match/MosesResultPopupWidget.h" // [MOD] Result popup widget
 
 #include "MosesMatchHUD.generated.h"
 
@@ -48,7 +50,7 @@ public:
 	// ✅ Pickup toast (Owner only)
 	void ShowPickupToast_Local(const FText& Text, float DurationSeconds);
 
-	// ✅ Headshot toast (Owner only)  [MOD]
+	// ✅ Headshot toast (Owner only)
 	void ShowHeadshotToast_Local(const FText& Text, float DurationSeconds);
 
 protected:
@@ -63,7 +65,7 @@ private:
 private:
 	// Bind / Retry
 	void BindToPlayerState();
-	void BindToGameState_Match();
+	void BindToGameState_Match();                 // [MOD] Result delegate + 즉시 반영(FIX)
 	void BindToCombatComponent_FromPlayerState();
 	void UnbindCombatComponent();
 
@@ -139,6 +141,13 @@ private:
 	void TryBroadcastCaptureSuccess_Once();
 
 private:
+	// -------------------------------------------------------------------------
+	// [MOD] Result Popup (HUD에 미리 박아두고 Visible 토글)
+	// -------------------------------------------------------------------------
+	void HandleResultStateChanged_Local(const FMosesMatchResultState& State);
+	void ShowResultPopup_Local(const FMosesMatchResultState& State);
+
+private:
 	// Widgets
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UProgressBar> HealthBar = nullptr;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> HealthText = nullptr;
@@ -186,7 +195,11 @@ private:
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> Text_Slot4_Reloading = nullptr;
 
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UMosesCaptureProgressWidget> CaptureProgress = nullptr;
-	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UOverlay> Overlay_CenterLayer = nullptr;
+
+	// [MOD] HUD 안에 미리 배치한 ResultPopup 위젯
+	// - WBP_CombatHUD에서 위젯 이름을 "ResultPopupWidget"으로 맞춰줘야 함
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UMosesResultPopupWidget> ResultPopupWidget = nullptr;
 
 private:
 	// Cached refs
@@ -234,7 +247,7 @@ private:
 	void StopLocalPickupToast_Internal();
 
 private:
-	// ✅ Headshot toast (Owner only) - block global announcements while active  [MOD]
+	// ✅ Headshot toast (Owner only) - block global announcements while active
 	FTimerHandle LocalHeadshotToastTimerHandle;
 	bool bLocalHeadshotToastActive = false;
 
@@ -249,22 +262,7 @@ private:
 	UPROPERTY(Transient) bool bCaptureInternalCached = false;
 	bool bCaptureSuccessAnnounced_Local = false;
 
-protected:
-	// [ADD] Result Popup class 지정 (BP에서 WBP_ResultPopup 연결)
-	UPROPERTY(EditDefaultsOnly, Category = "Moses|UI")
-	TSubclassOf<UMosesResultPopupWidget> ResultPopupClass;
-
-	// [ADD] 생성된 팝업 인스턴스
-	UPROPERTY(Transient)
-	TObjectPtr<UMosesResultPopupWidget> ResultPopupInstance = nullptr;
-
-	// [ADD] 중복 오픈 방지
+private:
+	// [MOD] Result popup state
 	bool bResultPopupShown = false;
-
-	// [ADD] Result delegate handler
-	void HandleResultStateChanged_Local(const FMosesMatchResultState& State);
-
-	// [ADD] Popup show helper
-	void ShowResultPopup_Local(const FMosesMatchResultState& State);
-
 };

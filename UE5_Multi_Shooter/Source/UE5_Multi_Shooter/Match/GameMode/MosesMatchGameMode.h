@@ -176,10 +176,10 @@ private:
 	// Phase config
 	// -------------------------------------------------------------------------
 	UPROPERTY(EditDefaultsOnly, Category = "Match|Phase")
-	float WarmupSeconds = 120.0f;
+	float WarmupSeconds = 20.0f;
 
 	UPROPERTY(EditDefaultsOnly, Category = "Match|Phase")
-	float CombatSeconds = 240.0f;
+	float CombatSeconds = 60.0f;
 
 	UPROPERTY(EditDefaultsOnly, Category = "Match|Phase")
 	float ResultSeconds = 30.0f;

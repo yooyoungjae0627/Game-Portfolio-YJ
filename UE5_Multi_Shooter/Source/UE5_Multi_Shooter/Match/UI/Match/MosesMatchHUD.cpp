@@ -108,10 +108,16 @@ void UMosesMatchHUD::NativeOnInitialized()
 	// 바인딩 완료 전까지 숨김
 	SetVisibility(ESlateVisibility::Collapsed);
 
+	// [MOD] ResultPopup은 항상 기본 Collapsed 강제 (에디터 실수 방지)
+	if (ResultPopupWidget)
+	{
+		ResultPopupWidget->SetVisibility(ESlateVisibility::Collapsed);
+	}
+
 	CacheCaptureProgress_InternalWidgets();
 
 	BindToPlayerState();
-	BindToGameState_Match();
+	BindToGameState_Match();                 // ✅ 여기서 Result delegate + 즉시 반영(FIX) 수행
 	BindToCombatComponent_FromPlayerState();
 	BindToCaptureComponent_FromPlayerState();
 
@@ -124,15 +130,23 @@ void UMosesMatchHUD::NativeOnInitialized()
 	UpdateAimWidgets_Immediate();
 }
 
+
 void UMosesMatchHUD::NativeDestruct()
 {
 	StopRespawnNotice_Local();
 	StopLocalPickupToast_Internal();
+	StopLocalHeadshotToast_Internal();
 
 	UnbindCaptureComponent();
 	StopBindRetry();
 	StopCrosshairUpdate();
 	UnbindCombatComponent();
+
+	// [MOD] ResultPopup 정리 (안전)
+	if (ResultPopupWidget)
+	{
+		ResultPopupWidget->SetVisibility(ESlateVisibility::Collapsed);
+	}
 
 	if (AMosesPlayerState* PS = CachedPlayerState.Get())
 	{
@@ -153,6 +167,9 @@ void UMosesMatchHUD::NativeDestruct()
 		GS->OnMatchTimeChanged.RemoveAll(this);
 		GS->OnMatchPhaseChanged.RemoveAll(this);
 		GS->OnAnnouncementChanged.RemoveAll(this);
+
+		// [MOD] Result delegate 해제
+		GS->OnResultStateChanged.RemoveAll(this);
 	}
 
 	CachedPlayerState.Reset();
@@ -429,6 +446,9 @@ void UMosesMatchHUD::BindToGameState_Match()
 		OldGS->OnMatchTimeChanged.RemoveAll(this);
 		OldGS->OnMatchPhaseChanged.RemoveAll(this);
 		OldGS->OnAnnouncementChanged.RemoveAll(this);
+
+		// [MOD] Result delegate 해제
+		OldGS->OnResultStateChanged.RemoveAll(this);
 	}
 
 	CachedMatchGameState = GS;
@@ -437,7 +457,25 @@ void UMosesMatchHUD::BindToGameState_Match()
 	GS->OnMatchPhaseChanged.AddUObject(this, &ThisClass::HandleMatchPhaseChanged);
 	GS->OnAnnouncementChanged.AddUObject(this, &ThisClass::HandleAnnouncementChanged);
 
+	// [MOD] Result delegate 구독
+	GS->OnResultStateChanged.AddUObject(this, &ThisClass::HandleResultStateChanged_Local);
+
 	ApplySnapshotFromMatchGameState();
+
+	// =========================================================
+	// [FIX] Experience 전환 등으로 HUD가 늦게 붙어서
+	// Result RepNotify 이벤트를 놓친 경우 복구:
+	// 바인딩 직후 현재 ResultState를 즉시 반영한다.
+	// =========================================================
+	if (!bResultPopupShown)
+	{
+		const FMosesMatchResultState& Cur = GS->GetResultState();
+		if (Cur.bIsResult || GS->IsResultPhase())
+		{
+			UE_LOG(LogMosesHUD, Warning, TEXT("[HUD][CL] Result already decided before HUD bind -> ForceShowResultPopup"));
+			HandleResultStateChanged_Local(Cur);
+		}
+	}
 }
 
 void UMosesMatchHUD::ApplySnapshotFromMatchGameState()
@@ -1152,7 +1190,7 @@ void UMosesMatchHUD::HandleResultStateChanged_Local(const FMosesMatchResultState
 		return;
 	}
 
-	AMosesMatchGameState* GS = MosesHUD_GetMatchGS(World);
+	AMosesMatchGameState* GS = World->GetGameState<AMosesMatchGameState>();
 	if (!GS)
 	{
 		return;
@@ -1169,12 +1207,6 @@ void UMosesMatchHUD::HandleResultStateChanged_Local(const FMosesMatchResultState
 
 void UMosesMatchHUD::ShowResultPopup_Local(const FMosesMatchResultState& State)
 {
-	UWorld* World = GetWorld();
-	if (!World)
-	{
-		return;
-	}
-
 	AMosesPlayerController* PC = Cast<AMosesPlayerController>(GetOwningPlayer());
 	if (!PC)
 	{
@@ -1187,13 +1219,13 @@ void UMosesMatchHUD::ShowResultPopup_Local(const FMosesMatchResultState& State)
 		return;
 	}
 
-	AMosesMatchGameState* GS = MosesHUD_GetMatchGS(World);
+	AMosesMatchGameState* GS = GetWorld() ? GetWorld()->GetGameState<AMosesMatchGameState>() : nullptr;
 	if (!GS)
 	{
 		return;
 	}
 
-	// Opponent = PlayerArray에서 나 제외 첫 번째
+	// Opponent = PlayerArray에서 나 제외 첫 번째 (2인 기준)
 	AMosesPlayerState* OppPS = nullptr;
 	for (APlayerState* Raw : GS->PlayerArray)
 	{
@@ -1206,37 +1238,30 @@ void UMosesMatchHUD::ShowResultPopup_Local(const FMosesMatchResultState& State)
 		break;
 	}
 
-	if (!ResultPopupClass)
+	if (!ResultPopupWidget)
 	{
-		UE_LOG(LogMosesPhase, Warning, TEXT("[RESULT][CL] ResultPopupClass is null. Set it in HUD defaults."));
+		UE_LOG(LogMosesHUD, Error,
+			TEXT("[RESULT][CL] ResultPopupWidget is null. "
+				"Place WBP_ResultPopup inside WBP_CombatHUD and name it 'ResultPopupWidget'."));
 		return;
 	}
 
-	if (!ResultPopupInstance)
-	{
-		ResultPopupInstance = CreateWidget<UMosesResultPopupWidget>(PC, ResultPopupClass);
-		if (!ResultPopupInstance)
-		{
-			return;
-		}
+	// 1) UI 채움 1회 (Tick/Binding 금지)
+	ResultPopupWidget->ApplyResultOnce(State, MyPS, OppPS);
 
-		if (Overlay_CenterLayer)
-		{
-			Overlay_CenterLayer->AddChild(ResultPopupInstance);
-		}
-	}
+	// 2) 이제 보이기
+	ResultPopupWidget->SetVisibility(ESlateVisibility::Visible);
 
-	// UI 채움 1회
-	ResultPopupInstance->ApplyResultOnce(State, MyPS, OppPS);
-
-	// 중복 오픈 방지
+	// 3) 중복 방지
 	bResultPopupShown = true;
 
-	UE_LOG(LogMosesPhase, Warning, TEXT("[RESULT][CL] ResultPopup OPENED My=%s Opp=%s"),
+	UE_LOG(LogMosesHUD, Warning, TEXT("[RESULT][CL] ResultPopup SHOWN My=%s Opp=%s Draw=%d WinnerPid=%s"),
 		*MyPS->GetPersistentId().ToString(EGuidFormats::DigitsWithHyphens),
-		OppPS ? *OppPS->GetPersistentId().ToString(EGuidFormats::DigitsWithHyphens) : TEXT("None"));
+		OppPS ? *OppPS->GetPersistentId().ToString(EGuidFormats::DigitsWithHyphens) : TEXT("None"),
+		State.bIsDraw ? 1 : 0,
+		*State.WinnerPersistentId);
 
-	// (선택) 마우스 커서/UI 입력 모드
+	// 4) 입력 모드: UIOnly + 커서 ON
 	PC->bShowMouseCursor = true;
 
 	FInputModeUIOnly Mode;
