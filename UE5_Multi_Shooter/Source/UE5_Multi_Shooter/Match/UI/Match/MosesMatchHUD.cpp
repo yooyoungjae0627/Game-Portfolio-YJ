@@ -17,6 +17,7 @@
 #include "UE5_Multi_Shooter/Match/Flag/MosesFlagSpot.h"
 #include "UE5_Multi_Shooter/Match/UI/Match/MosesCaptureProgressWidget.h"
 
+#include "Components/Overlay.h"
 #include "Components/ProgressBar.h"
 #include "Components/TextBlock.h"
 #include "Components/Image.h"
@@ -1139,7 +1140,35 @@ static AMosesMatchGameState* MosesHUD_GetMatchGS(UWorld* World)
 
 void UMosesMatchHUD::HandleResultStateChanged_Local(const FMosesMatchResultState& State)
 {
-	// 이 함수는 GameState Delegate에서 호출되어야 함.
+	// Result 팝업은 1회만
+	if (bResultPopupShown)
+	{
+		return;
+	}
+
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	AMosesMatchGameState* GS = MosesHUD_GetMatchGS(World);
+	if (!GS)
+	{
+		return;
+	}
+
+	// Result가 아니라면 무시
+	if (!State.bIsResult && !GS->IsResultPhase())
+	{
+		return;
+	}
+
+	ShowResultPopup_Local(State);
+}
+
+void UMosesMatchHUD::ShowResultPopup_Local(const FMosesMatchResultState& State)
+{
 	UWorld* World = GetWorld();
 	if (!World)
 	{
@@ -1164,20 +1193,8 @@ void UMosesMatchHUD::HandleResultStateChanged_Local(const FMosesMatchResultState
 		return;
 	}
 
-	// Result가 아닐 때는 무시
-	if (!State.bIsResult && !GS->IsResultPhase())
-	{
-		return;
-	}
-
-	// ------------------------------------------------------------
-	// 내/상대 PlayerState 추출 (2~4인 대응)
-	// - 요청사항은 "내/상대" 표기이므로:
-	//   2인 매치: 상대 1명
-	//   3~4인: 일단 "내가 아닌 첫 상대"를 Opponent로 표기(원하면 UI를 리스트로 확장)
-	// ------------------------------------------------------------
+	// Opponent = PlayerArray에서 나 제외 첫 번째
 	AMosesPlayerState* OppPS = nullptr;
-
 	for (APlayerState* Raw : GS->PlayerArray)
 	{
 		AMosesPlayerState* PS = Cast<AMosesPlayerState>(Raw);
@@ -1185,60 +1202,44 @@ void UMosesMatchHUD::HandleResultStateChanged_Local(const FMosesMatchResultState
 		{
 			continue;
 		}
-
 		OppPS = PS;
 		break;
 	}
 
-	const FString MyId = MyPS->GetPersistentId().ToString(EGuidFormats::DigitsWithHyphens);
-	const FString OppId = OppPS ? OppPS->GetPersistentId().ToString(EGuidFormats::DigitsWithHyphens) : FString(TEXT(""));
-
-	const bool bIsDraw = State.bIsDraw;
-
-	// Winner 판단: Draw면 무조건 false 처리(표시는 DRAW로)
-	bool bIsWinner = false;
-	if (!bIsDraw && !State.WinnerPersistentId.IsEmpty())
+	if (!ResultPopupClass)
 	{
-		bIsWinner = (State.WinnerPersistentId == MyId);
-	}
-
-	UE_LOG(LogMosesPhase, Warning,
-		TEXT("[RESULT][CL] HUD OpenPopup Draw=%d WinnerPid=%s MyPid=%s bIsWinner=%d"),
-		bIsDraw ? 1 : 0,
-		*State.WinnerPersistentId,
-		*MyId,
-		bIsWinner ? 1 : 0);
-
-	// ------------------------------------------------------------
-	// UI 표시 (Tick/Binding 금지)
-	// - BP_ShowResultPopup에서 텍스트 세팅 + 팝업 visible
-	// ------------------------------------------------------------
-	BP_ShowResultPopup(
-		bIsDraw,
-		bIsWinner,
-		MyId,
-		MyPS->GetCaptures(),
-		MyPS->GetZombieKills(),
-		MyPS->GetPvPKills(),
-		MyPS->GetTotalScore(),
-		OppId,
-		OppPS ? OppPS->GetCaptures() : 0,
-		OppPS ? OppPS->GetZombieKills() : 0,
-		OppPS ? OppPS->GetPvPKills() : 0,
-		OppPS ? OppPS->GetTotalScore() : 0);
-}
-
-void UMosesMatchHUD::UI_OnClickedConfirmReturnToLobby()
-{
-	AMosesPlayerController* PC = Cast<AMosesPlayerController>(GetOwningPlayer());
-	if (!PC)
-	{
+		UE_LOG(LogMosesPhase, Warning, TEXT("[RESULT][CL] ResultPopupClass is null. Set it in HUD defaults."));
 		return;
 	}
 
-	// 클라는 “요청”만, 결정은 서버(GameMode)
-	UE_LOG(LogMosesPhase, Warning, TEXT("[RESULT][CL] Confirm clicked -> Server_RequestReturnToLobby PC=%s"),
-		*GetNameSafe(PC));
+	if (!ResultPopupInstance)
+	{
+		ResultPopupInstance = CreateWidget<UMosesResultPopupWidget>(PC, ResultPopupClass);
+		if (!ResultPopupInstance)
+		{
+			return;
+		}
 
-	PC->Server_RequestReturnToLobby();
+		if (Overlay_CenterLayer)
+		{
+			Overlay_CenterLayer->AddChild(ResultPopupInstance);
+		}
+	}
+
+	// UI 채움 1회
+	ResultPopupInstance->ApplyResultOnce(State, MyPS, OppPS);
+
+	// 중복 오픈 방지
+	bResultPopupShown = true;
+
+	UE_LOG(LogMosesPhase, Warning, TEXT("[RESULT][CL] ResultPopup OPENED My=%s Opp=%s"),
+		*MyPS->GetPersistentId().ToString(EGuidFormats::DigitsWithHyphens),
+		OppPS ? *OppPS->GetPersistentId().ToString(EGuidFormats::DigitsWithHyphens) : TEXT("None"));
+
+	// (선택) 마우스 커서/UI 입력 모드
+	PC->bShowMouseCursor = true;
+
+	FInputModeUIOnly Mode;
+	Mode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+	PC->SetInputMode(Mode);
 }

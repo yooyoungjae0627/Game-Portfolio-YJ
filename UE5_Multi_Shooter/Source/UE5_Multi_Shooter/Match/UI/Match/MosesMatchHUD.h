@@ -10,12 +10,14 @@
 
 #include "UE5_Multi_Shooter/Match/MosesMatchPhase.h"
 #include "UE5_Multi_Shooter/Match/GameState/MosesMatchGameState.h"
+#include "UE5_Multi_Shooter/Match/UI/Match/MosesResultPopupWidget.h"
 
 #include "MosesMatchHUD.generated.h"
 
 class UProgressBar;
 class UTextBlock;
 class UImage;
+class UOverlay;
 
 class AMosesPlayerState;
 class AMosesMatchGameState;
@@ -136,30 +138,6 @@ private:
 	void HandleCaptureStateChanged(bool bActive, float Progress01, float WarningFloat, TWeakObjectPtr<AMosesFlagSpot> Spot);
 	void TryBroadcastCaptureSuccess_Once();
 
-	// HUD: Result delegate handler
-	void HandleResultStateChanged_Local(const FMosesMatchResultState& State);
-
-protected:
-	// BP 이벤트로 UI 업데이트 (바인딩 금지)
-	UFUNCTION(BlueprintImplementableEvent)
-	void BP_ShowResultPopup(
-		bool bIsDraw,
-		bool bIsWinner,
-		const FString& MyId,
-		int32 MyCaptures,
-		int32 MyZombieKills,
-		int32 MyPvPKills,
-		int32 MyTotalScore,
-		const FString& OpponentId,
-		int32 OppCaptures,
-		int32 OppZombieKills,
-		int32 OppPvPKills,
-		int32 OppTotalScore);
-
-	// Confirm 버튼에서 PC 호출 (BP에서 이 함수를 호출하면 됨)
-	UFUNCTION(BlueprintCallable)
-	void UI_OnClickedConfirmReturnToLobby();
-
 private:
 	// Widgets
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UProgressBar> HealthBar = nullptr;
@@ -208,6 +186,7 @@ private:
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> Text_Slot4_Reloading = nullptr;
 
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UMosesCaptureProgressWidget> CaptureProgress = nullptr;
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UOverlay> Overlay_CenterLayer = nullptr;
 
 private:
 	// Cached refs
@@ -269,4 +248,23 @@ private:
 
 	UPROPERTY(Transient) bool bCaptureInternalCached = false;
 	bool bCaptureSuccessAnnounced_Local = false;
+
+protected:
+	// [ADD] Result Popup class 지정 (BP에서 WBP_ResultPopup 연결)
+	UPROPERTY(EditDefaultsOnly, Category = "Moses|UI")
+	TSubclassOf<UMosesResultPopupWidget> ResultPopupClass;
+
+	// [ADD] 생성된 팝업 인스턴스
+	UPROPERTY(Transient)
+	TObjectPtr<UMosesResultPopupWidget> ResultPopupInstance = nullptr;
+
+	// [ADD] 중복 오픈 방지
+	bool bResultPopupShown = false;
+
+	// [ADD] Result delegate handler
+	void HandleResultStateChanged_Local(const FMosesMatchResultState& State);
+
+	// [ADD] Popup show helper
+	void ShowResultPopup_Local(const FMosesMatchResultState& State);
+
 };

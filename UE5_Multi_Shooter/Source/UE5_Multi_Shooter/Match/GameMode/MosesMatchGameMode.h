@@ -179,7 +179,7 @@ private:
 	float WarmupSeconds = 120.0f;
 
 	UPROPERTY(EditDefaultsOnly, Category = "Match|Phase")
-	float CombatSeconds = 600.0f;
+	float CombatSeconds = 240.0f;
 
 	UPROPERTY(EditDefaultsOnly, Category = "Match|Phase")
 	float ResultSeconds = 30.0f;
