@@ -12,11 +12,12 @@
 #include "UE5_Multi_Shooter/Lobby/GameState/MosesLobbyGameState.h"
 
 #include "UE5_Multi_Shooter/Match/GameState/MosesMatchGameState.h"
-#include "UE5_Multi_Shooter/Match/GameMode/MosesMatchGameMode.h"
 #include "UE5_Multi_Shooter/Match/Components/MosesCombatComponent.h"
 #include "UE5_Multi_Shooter/Match/Weapon/MosesWeaponRegistrySubsystem.h"
 #include "UE5_Multi_Shooter/Match/Weapon/MosesWeaponData.h"
 #include "UE5_Multi_Shooter/Match/UI/Match/MosesMatchHUD.h"
+#include "UE5_Multi_Shooter/Perf/MosesPerfCheatManager.h"
+#include "UE5_Multi_Shooter/Perf/MosesPerfTestSubsystem.h"
 
 #include "UE5_Multi_Shooter/System/MosesLobbyLocalPlayerSubsystem.h"
 
@@ -45,6 +46,7 @@ AMosesPlayerController::AMosesPlayerController(const FObjectInitializer& ObjectI
 	: Super(ObjectInitializer)
 {
 	PlayerCameraManagerClass = AMosesPlayerCameraManager::StaticClass();
+	CheatClass = UMosesPerfCheatManager::StaticClass();
 }
 
 // =========================================================
@@ -1595,4 +1597,91 @@ void AMosesPlayerController::Server_RequestReturnToLobby_Implementation()
 	UE_LOG(LogMosesPhase, Warning, TEXT("[RESULT][SV] ReturnToLobby Request PC=%s Result=%s"),
 		*GetNameSafe(this),
 		bOk ? TEXT("OK") : TEXT("FAIL"));
+}
+
+void AMosesPlayerController::Perf_Dump()
+{
+	if (UGameInstance* GI = GetGameInstance())
+	{
+		if (UMosesPerfTestSubsystem* Subsys = GI->GetSubsystem<UMosesPerfTestSubsystem>())
+		{
+			Subsys->DumpPerfBindingState(this);
+		}
+	}
+}
+
+void AMosesPlayerController::Perf_Marker(int32 MarkerIndex)
+{
+	// Marker 이동은 로컬 연출/측정용이므로 로컬에서만 OK
+	if (!IsLocalController())
+	{
+		return;
+	}
+
+	if (UGameInstance* GI = GetGameInstance())
+	{
+		if (UMosesPerfTestSubsystem* Subsys = GI->GetSubsystem<UMosesPerfTestSubsystem>())
+		{
+			// 네 기존 Bootstrap 로직과 동일하게 “Index→MarkerId” 매핑이 필요함.
+			// 가장 깔끔한 방법: Subsystem에 "TryMoveByIndex"를 추가하거나,
+			// Bootstrap이 가진 MarkerId를 Subsystem에 이미 등록하니,
+			// 여기서는 MarkerId를 문자열로 입력받는 방식(perf_marker Marker01)로 바꾸는 것도 추천.
+		}
+	}
+}
+
+void AMosesPlayerController::Perf_Spawn(int32 Count)
+{
+	// 스폰은 서버 권위
+	if (HasAuthority())
+	{
+		Server_PerfSpawn(Count); // 서버에서 호출해도 Implementation으로 들어감
+	}
+	else
+	{
+		Server_PerfSpawn(Count);
+	}
+}
+
+void AMosesPlayerController::Server_PerfSpawn_Implementation(int32 Count)
+{
+	if (UGameInstance* GI = GetGameInstance())
+	{
+		if (UMosesPerfTestSubsystem* Subsys = GI->GetSubsystem<UMosesPerfTestSubsystem>())
+		{
+			Subsys->TrySpawnZombies_ServerAuthority(Count);
+		}
+	}
+}
+
+void AMosesPlayerController::Perf_MeasureBegin(const FString& MeasureId, const FString& MarkerId, int32 SpawnCount, int32 TrialIndex, int32 TrialTotal, float DurationSec)
+{
+	Server_PerfMeasureBegin(MeasureId, MarkerId, SpawnCount, TrialIndex, TrialTotal, DurationSec);
+}
+
+void AMosesPlayerController::Server_PerfMeasureBegin_Implementation(const FString& MeasureId, const FString& MarkerId, int32 SpawnCount, int32 TrialIndex, int32 TrialTotal, float DurationSec)
+{
+	if (UGameInstance* GI = GetGameInstance())
+	{
+		if (UMosesPerfTestSubsystem* Subsys = GI->GetSubsystem<UMosesPerfTestSubsystem>())
+		{
+			Subsys->BeginMeasure(this, FName(*MeasureId), FName(*MarkerId), SpawnCount, TrialIndex, TrialTotal, DurationSec);
+		}
+	}
+}
+
+void AMosesPlayerController::Perf_MeasureEnd()
+{
+	Server_PerfMeasureEnd();
+}
+
+void AMosesPlayerController::Server_PerfMeasureEnd_Implementation()
+{
+	if (UGameInstance* GI = GetGameInstance())
+	{
+		if (UMosesPerfTestSubsystem* Subsys = GI->GetSubsystem<UMosesPerfTestSubsystem>())
+		{
+			Subsys->EndMeasure(this);
+		}
+	}
 }

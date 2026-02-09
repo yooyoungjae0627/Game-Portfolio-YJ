@@ -235,6 +235,25 @@ private:
 	UMosesCombatComponent* FindCombatComponent_Local() const;
 	UMosesCameraComponent* FindMosesCameraComponent_Local() const;
 
+	// [MOD] Perf Infra console entry points (called from CheatManager)
+public:
+	void Perf_Dump();
+	void Perf_Marker(int32 MarkerIndex);
+	void Perf_Spawn(int32 Count);
+	void Perf_MeasureBegin(const FString& MeasureId, const FString& MarkerId, int32 SpawnCount, int32 TrialIndex, int32 TrialTotal, float DurationSec);
+	void Perf_MeasureEnd();
+
+protected:
+	// [MOD] Server RPC (spawn/measure should be server authoritative)
+	UFUNCTION(Server, Reliable)
+	void Server_PerfSpawn(int32 Count);
+
+	UFUNCTION(Server, Reliable)
+	void Server_PerfMeasureBegin(const FString& MeasureId, const FString& MarkerId, int32 SpawnCount, int32 TrialIndex, int32 TrialTotal, float DurationSec);
+
+	UFUNCTION(Server, Reliable)
+	void Server_PerfMeasureEnd();
+
 private:
 	/*====================================================
 	= Lobby Preview Camera policy vars
