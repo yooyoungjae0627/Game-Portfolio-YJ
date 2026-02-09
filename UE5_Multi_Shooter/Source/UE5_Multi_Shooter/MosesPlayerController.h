@@ -243,10 +243,14 @@ public:
 	void Perf_MeasureBegin(const FString& MeasureId, const FString& MarkerId, int32 SpawnCount, int32 TrialIndex, int32 TrialTotal, float DurationSec);
 	void Perf_MeasureEnd();
 
-protected:
-	// [MOD] Server RPC (spawn/measure should be server authoritative)
+	UFUNCTION(Server, Reliable)
+	void Server_PerfMarker(const FName MarkerId);
+
 	UFUNCTION(Server, Reliable)
 	void Server_PerfSpawn(int32 Count);
+
+
+protected:
 
 	UFUNCTION(Server, Reliable)
 	void Server_PerfMeasureBegin(const FString& MeasureId, const FString& MarkerId, int32 SpawnCount, int32 TrialIndex, int32 TrialTotal, float DurationSec);

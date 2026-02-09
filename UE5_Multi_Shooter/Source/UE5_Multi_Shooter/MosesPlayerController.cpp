@@ -1643,17 +1643,6 @@ void AMosesPlayerController::Perf_Spawn(int32 Count)
 	}
 }
 
-void AMosesPlayerController::Server_PerfSpawn_Implementation(int32 Count)
-{
-	if (UGameInstance* GI = GetGameInstance())
-	{
-		if (UMosesPerfTestSubsystem* Subsys = GI->GetSubsystem<UMosesPerfTestSubsystem>())
-		{
-			Subsys->TrySpawnZombies_ServerAuthority(Count);
-		}
-	}
-}
-
 void AMosesPlayerController::Perf_MeasureBegin(const FString& MeasureId, const FString& MarkerId, int32 SpawnCount, int32 TrialIndex, int32 TrialTotal, float DurationSec)
 {
 	Server_PerfMeasureBegin(MeasureId, MarkerId, SpawnCount, TrialIndex, TrialTotal, DurationSec);
@@ -1684,4 +1673,72 @@ void AMosesPlayerController::Server_PerfMeasureEnd_Implementation()
 			Subsys->EndMeasure(this);
 		}
 	}
+}
+
+void AMosesPlayerController::Server_PerfMarker_Implementation(const FName MarkerId)
+{
+	APawn* LocalPawn = GetPawn(); // [MOD] Pawn -> LocalPawn (C4458 fix)
+	if (!LocalPawn)
+	{
+		return;
+	}
+
+	UGameInstance* GI = GetGameInstance();
+	if (!GI)
+	{
+		return;
+	}
+
+	UMosesPerfTestSubsystem* Subsys = GI->GetSubsystem<UMosesPerfTestSubsystem>();
+	if (!Subsys)
+	{
+		return;
+	}
+
+	FTransform MarkerTransform;
+	if (!Subsys->TryGetMarkerTransform(MarkerId, MarkerTransform)) // [MOD] FindMarker_ForServer 제거
+	{
+		UE_LOG(LogMosesAuth, Warning, TEXT("[PERF][MOVE][SV] FAIL Marker not found Id=%s"), *MarkerId.ToString());
+		return;
+	}
+
+	const FVector Loc = MarkerTransform.GetLocation();
+	const FRotator Rot = MarkerTransform.Rotator();
+
+	// ✅ 서버 권위 텔레포트
+	LocalPawn->TeleportTo(Loc, Rot, false, true);
+
+	// ✅ 시점까지 확실히 맞추고 싶으면 (원하면 유지)
+	SetControlRotation(Rot);
+
+	LocalPawn->ForceNetUpdate();
+
+	UE_LOG(LogMosesAuth, Warning,
+		TEXT("[PERF][MOVE][SV] OK Marker=%s Pawn=%s Loc=%s Rot=%s"),
+		*MarkerId.ToString(),
+		*GetNameSafe(LocalPawn),
+		*Loc.ToString(),
+		*Rot.ToString());
+}
+
+void AMosesPlayerController::Server_PerfSpawn_Implementation(int32 Count)
+{
+	UGameInstance* GI = GetGameInstance();
+	if (!GI)
+	{
+		return;
+	}
+
+	UMosesPerfTestSubsystem* Subsys = GI->GetSubsystem<UMosesPerfTestSubsystem>();
+	if (!Subsys)
+	{
+		return;
+	}
+
+	const bool bOK = Subsys->TrySpawnZombies_ServerAuthority(Count);
+
+	UE_LOG(LogMosesAuth, Warning,
+		TEXT("[PERF][SPAWN][SV] %s Count=%d"),
+		bOK ? TEXT("OK") : TEXT("FAIL"),
+		Count);
 }

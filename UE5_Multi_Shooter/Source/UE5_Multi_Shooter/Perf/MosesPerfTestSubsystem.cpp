@@ -182,3 +182,16 @@ void UMosesPerfTestSubsystem::EndMeasure(const UObject* WorldContext)
 
 	ActiveMeasure = FMosesPerfMeasureContext();
 }
+
+// [MOD] Marker Transform getter (server/client both can use via Subsystem)
+bool UMosesPerfTestSubsystem::TryGetMarkerTransform(FName MarkerId, FTransform& OutTransform) const
+{
+	const AMosesPerfMarker* Marker = FindMarker(MarkerId);
+	if (!Marker)
+	{
+		return false;
+	}
+
+	OutTransform = Marker->GetMarkerTransform();
+	return true;
+}

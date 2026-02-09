@@ -1,4 +1,3 @@
-// MosesPerfTestSubsystem.h
 #pragma once
 
 #include "CoreMinimal.h"
@@ -65,6 +64,11 @@ public:
 	void DumpPerfBindingState(const UObject* WorldContext) const;
 
 	// ---------------------------------------------------------------------
+	// [MOD] Server-side helper (avoid exposing AMosesPerfMarker in PC code)
+	// ---------------------------------------------------------------------
+	bool TryGetMarkerTransform(FName MarkerId, FTransform& OutTransform) const; // [MOD]
+
+	// ---------------------------------------------------------------------
 	// Measurement context (Evidence-First)
 	// ---------------------------------------------------------------------
 	void BeginMeasure(const UObject* WorldContext, FName MeasureId, FName MarkerId, int32 SpawnCount, int32 TrialIndex, int32 TrialTotal, float DurationSec);
@@ -74,9 +78,6 @@ private:
 	AMosesPerfMarker* FindMarker(FName MarkerId) const;
 
 private:
-	// ---------------------------------------------------------------------
-	// SSOT of PerfTest
-	// ---------------------------------------------------------------------
 	UPROPERTY()
 	TObjectPtr<AMosesPerfSpawner> PerfSpawner;
 
