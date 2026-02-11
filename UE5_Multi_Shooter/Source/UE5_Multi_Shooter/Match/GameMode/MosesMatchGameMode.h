@@ -1,36 +1,32 @@
-﻿#pragma once
+﻿// ============================================================================
+// UE5_Multi_Shooter/Match/GameMode/MosesMatchGameMode.h  (CLEANED)
+// - Server authoritative match flow (Waiting -> Warmup -> Combat -> Result)
+// - Phase -> Experience switch
+// - Respawn + Result decide + Auto return
+// ============================================================================
+
+#pragma once
 
 #include "CoreMinimal.h"
 #include "UE5_Multi_Shooter/MosesGameModeBase.h"
 #include "UE5_Multi_Shooter/Match/MosesMatchPhase.h"
-#include "UE5_Multi_Shooter/Match/GameState/MosesMatchGameState.h"
 
 #include "MosesMatchGameMode.generated.h"
 
 class APlayerStart;
 class AController;
 class APlayerController;
+
 class UMosesPawnData;
 class UMSCharacterCatalog;
 class UMosesExperienceManagerComponent;
 class UMosesExperienceDefinition;
+
 class AMosesMatchGameState;
 class AMosesPlayerState;
 
-/**
- * AMosesMatchGameMode
- *
- * 역할:
- * - 서버 권위 Phase 머신(WaitingForPlayers → Warmup → Combat → Result)
- * - Phase에 맞춰 Experience 전환
- * - MatchGameState에 Phase/RemainingSeconds/Announcement 확정
- * - Respawn 스케줄 + Result 승패 판정 확정(Combat→Result 진입 시)
- *
- * 정책:
- * - Server Authority 100%
- * - GameMode=결정(Phase/Experience/ServerTravel/Respawn/Result)
- * - GameState=복제(HUD 갱신용 최소 데이터)
- */
+enum class EMosesResultReason : uint8;
+
 UCLASS()
 class UE5_MULTI_SHOOTER_API AMosesMatchGameMode : public AMosesGameModeBase
 {
@@ -39,20 +35,19 @@ class UE5_MULTI_SHOOTER_API AMosesMatchGameMode : public AMosesGameModeBase
 public:
 	AMosesMatchGameMode();
 
-	/** 디버그용: 서버에서 즉시 로비로 */
-	UFUNCTION(Exec)
-	void TravelToLobby();
+	// Debug: server 즉시 로비
+	UFUNCTION(Exec) void TravelToLobby();
 
-	// [ADD] Result 팝업 Confirm -> 즉시 로비 복귀 (Server only)
+	// Result Confirm -> Return Lobby (Server only)
 	bool Server_RequestReturnToLobbyFromPlayer(APlayerController* Requestor);
 
 	UPROPERTY(EditDefaultsOnly, Category = "Match|Debug")
 	float AutoReturnToLobbySeconds = 0.0f;
 
 protected:
-	// -------------------------------------------------------------------------
+	// =========================================================================
 	// Engine
-	// -------------------------------------------------------------------------
+	// =========================================================================
 	virtual void InitGame(const FString& MapName, const FString& Options, FString& ErrorMessage) override;
 	virtual void BeginPlay() override;
 
@@ -68,58 +63,57 @@ protected:
 	virtual UClass* GetDefaultPawnClassForController_Implementation(AController* InController) override;
 
 protected:
-	// -------------------------------------------------------------------------
-	// Experience READY Hook
-	// -------------------------------------------------------------------------
+	// =========================================================================
+	// Experience READY hook
+	// =========================================================================
 	virtual void HandleDoD_AfterExperienceReady(const UMosesExperienceDefinition* CurrentExperience) override;
 
 private:
-	// -------------------------------------------------------------------------
-	// Match Phase (Server Authoritative)
-	// -------------------------------------------------------------------------
+	// =========================================================================
+	// Match phase machine (Server only)
+	// =========================================================================
 	void StartMatchFlow_AfterExperienceReady();
 	void SetMatchPhase(EMosesMatchPhase NewPhase);
 	void AdvancePhase();
 	void HandlePhaseTimerExpired();
-
 	float GetPhaseDurationSeconds(EMosesMatchPhase Phase) const;
 
 private:
-	// -------------------------------------------------------------------------
-	// Phase -> Experience Switch
-	// -------------------------------------------------------------------------
+	// =========================================================================
+	// Phase -> Experience switch
+	// =========================================================================
 	static FName GetExperienceNameForPhase(EMosesMatchPhase Phase);
 	void ServerSwitchExperienceByPhase(EMosesMatchPhase Phase);
 	UMosesExperienceManagerComponent* GetExperienceManager() const;
 
 private:
-	// -------------------------------------------------------------------------
-	// MatchGameState access
-	// -------------------------------------------------------------------------
+	// =========================================================================
+	// GameState access
+	// =========================================================================
 	AMosesMatchGameState* GetMatchGameState() const;
 
 private:
-	// -------------------------------------------------------------------------
-	// Match default loadout (Server only)
-	// -------------------------------------------------------------------------
+	// =========================================================================
+	// Default loadout (Server only)
+	// =========================================================================
 	void Server_EnsureDefaultMatchLoadout(APlayerController* PC, const TCHAR* FromWhere);
 
 public:
-	// -------------------------------------------------------------------------
+	// =========================================================================
 	// Respawn schedule (Server only)
-	// -------------------------------------------------------------------------
+	// =========================================================================
 	void ServerScheduleRespawn(AController* Controller, float DelaySeconds);
 
 private:
+	void ServerExecuteRespawn(AController* Controller);
+
 	UPROPERTY()
 	TMap<TWeakObjectPtr<AController>, FTimerHandle> RespawnTimerHandlesByController;
 
-	void ServerExecuteRespawn(AController* Controller);
-
 private:
-	// -------------------------------------------------------------------------
+	// =========================================================================
 	// Result decide (Server only)
-	// -------------------------------------------------------------------------
+	// =========================================================================
 	void ServerDecideResult_OnEnterResultPhase();
 
 	bool TryChooseWinnerByReason_Server(
@@ -128,21 +122,20 @@ private:
 		EMosesResultReason& OutReason) const;
 
 private:
-	// -------------------------------------------------------------------------
+	// =========================================================================
 	// Travel / Debug
-	// -------------------------------------------------------------------------
+	// =========================================================================
 	FString GetLobbyMapURL() const;
 	void HandleAutoReturn();
 
 	void DumpPlayerStates(const TCHAR* Prefix) const;
 	void DumpAllDODPlayerStates(const TCHAR* Where) const;
-
 	bool CanDoServerTravel() const;
 
 private:
-	// -------------------------------------------------------------------------
-	// PlayerStart helpers
-	// -------------------------------------------------------------------------
+	// =========================================================================
+	// PlayerStart reservation
+	// =========================================================================
 	void CollectMatchPlayerStarts(TArray<APlayerStart*>& OutStarts) const;
 	void FilterFreeStarts(const TArray<APlayerStart*>& InAll, TArray<APlayerStart*>& OutFree) const;
 	void ReserveStartForController(AController* Player, APlayerStart* Start);
@@ -150,69 +143,60 @@ private:
 	void DumpReservedStarts(const TCHAR* Where) const;
 
 private:
-	// -------------------------------------------------------------------------
-	// PawnClass Resolve
-	// -------------------------------------------------------------------------
+	// =========================================================================
+	// PawnClass resolve
+	// =========================================================================
 	UClass* ResolvePawnClassFromSelectedId(int32 SelectedId) const;
 
 private:
-	// -------------------------------------------------------------------------
+	// =========================================================================
 	// Experience Ready Poll (Tick 금지)
-	// -------------------------------------------------------------------------
+	// =========================================================================
 	void StartWarmup_WhenExperienceReady();
 	void PollExperienceReady_AndStartWarmup();
 
 	void ServerSaveRecord_Once_OnEnterResult();
 
 private:
-	FTimerHandle ExperienceReadyPollHandle;
-	int32 ExperienceReadyPollCount = 0;
-
-	static constexpr float ExperienceReadyPollInterval = 0.2f;
-	static constexpr int32  ExperienceReadyPollMaxCount = 50; // 10초
-
-private:
-	// -------------------------------------------------------------------------
-	// Phase config
-	// -------------------------------------------------------------------------
-	UPROPERTY(EditDefaultsOnly, Category = "Match|Phase")
-	float WarmupSeconds = 20.0f;
-
-	UPROPERTY(EditDefaultsOnly, Category = "Match|Phase")
-	float CombatSeconds = 60.0f;
-
-	UPROPERTY(EditDefaultsOnly, Category = "Match|Phase")
-	float ResultSeconds = 30.0f;
+	// =========================================================================
+	// Config: phase durations
+	// =========================================================================
+	UPROPERTY(EditDefaultsOnly, Category = "Match|Phase") float WarmupSeconds = 20.0f;
+	UPROPERTY(EditDefaultsOnly, Category = "Match|Phase") float CombatSeconds = 60.0f;
+	UPROPERTY(EditDefaultsOnly, Category = "Match|Phase") float ResultSeconds = 30.0f;
 
 private:
-	// -------------------------------------------------------------------------
-	// Phase runtime (Server only)
-	// -------------------------------------------------------------------------
+	// =========================================================================
+	// Runtime: phase
+	// =========================================================================
 	EMosesMatchPhase CurrentPhase = EMosesMatchPhase::WaitingForPlayers;
 
 	FTimerHandle PhaseTimerHandle;
 	double PhaseEndTimeSeconds = 0.0;
 
 private:
-	// -------------------------------------------------------------------------
-	// Misc timers
-	// -------------------------------------------------------------------------
+	// =========================================================================
+	// Runtime: misc timers
+	// =========================================================================
+	FTimerHandle ExperienceReadyPollHandle;
+	int32 ExperienceReadyPollCount = 0;
+
+	static constexpr float ExperienceReadyPollInterval = 0.2f;
+	static constexpr int32  ExperienceReadyPollMaxCount = 50;
+
 	FTimerHandle AutoReturnTimerHandle;
 
 private:
-	// -------------------------------------------------------------------------
-	// PlayerStart reservation
-	// -------------------------------------------------------------------------
-	UPROPERTY()
-	TSet<TWeakObjectPtr<APlayerStart>> ReservedPlayerStarts;
-
-	UPROPERTY()
-	TMap<TWeakObjectPtr<AController>, TWeakObjectPtr<APlayerStart>> AssignedStartByController;
+	// =========================================================================
+	// PlayerStart reservation maps
+	// =========================================================================
+	UPROPERTY() TSet<TWeakObjectPtr<APlayerStart>> ReservedPlayerStarts;
+	UPROPERTY() TMap<TWeakObjectPtr<AController>, TWeakObjectPtr<APlayerStart>> AssignedStartByController;
 
 private:
-	// -------------------------------------------------------------------------
+	// =========================================================================
 	// Assets
-	// -------------------------------------------------------------------------
+	// =========================================================================
 	UPROPERTY(EditDefaultsOnly, Category = "Match|Pawn")
 	TObjectPtr<UMosesPawnData> MatchPawnData = nullptr;
 
@@ -223,11 +207,9 @@ private:
 	TSubclassOf<APawn> FallbackPawnClass;
 
 private:
-	// -------------------------------------------------------------------------
+	// =========================================================================
 	// Persist / Result guards
-	// -------------------------------------------------------------------------
+	// =========================================================================
 	bool bRecordSavedThisMatch = false;
-
-	// [MOD] Result 계산은 Result 진입 순간 1회만
 	bool bResultComputedThisMatch = false;
 };

@@ -1,10 +1,6 @@
-﻿// ============================================================================
-// MosesLobbyWidget.h
-// ============================================================================
+﻿#pragma once
 
-#pragma once
-
-
+#include "CoreMinimal.h"
 #include "Blueprint/UserWidget.h"
 #include "MosesLobbyWidget.generated.h"
 
@@ -17,14 +13,16 @@ class UListView;
 class UVerticalBox;
 class UHorizontalBox;
 class UTextBlock;
-class UEditableText;
+class UEditableText;              
 class UUserWidget;
+
 class UMosesMatchRulePopupWidget;
+class UMSCreateRoomPopupWidget;
+
 class AMosesLobbyGameState;
 class AMosesPlayerState;
 class AMosesPlayerController;
 class UMosesLobbyLocalPlayerSubsystem;
-class UMSCreateRoomPopupWidget;
 
 /**
  * UMosesLobbyWidget
@@ -133,7 +131,7 @@ protected:
 	UFUNCTION()
 	void HandleRulesClicked();
 
-	// ChatEditText(EditableTextBox)에서 Enter 치면 호출되는 커밋 이벤트
+	/** ChatEditText(EditableText)에서 Enter 치면 호출되는 커밋 이벤트 */
 	UFUNCTION()
 	void OnChatTextCommitted(const FText& Text, ETextCommit::Type CommitMethod);
 
@@ -230,7 +228,6 @@ private:
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UMosesMatchRulePopupWidget> RulePopupWidget = nullptr;
 
-
 	// ---------------------------
 	// Chat
 	// ---------------------------
@@ -282,11 +279,13 @@ private:
 	FGuid PendingJoinRoomId;
 	bool bPendingJoinAfterLogin = false;
 
-
+private:
+	/*====================================================
+	= Local flags
+	====================================================*/
 	UPROPERTY(Transient)
 	bool bChatEventsBound = false;
 
-	// HUD 내부 토글 상태 (PopupRoot가 Collapsed인지 여부)
+	// ✅ .cpp가 bRulesPopupVisible로 접근 중 → 그대로 유지
 	bool bRulesPopupVisible = false;
-
 };

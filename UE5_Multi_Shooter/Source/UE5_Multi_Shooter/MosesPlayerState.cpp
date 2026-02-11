@@ -1,13 +1,4 @@
-﻿// ============================================================================
-// UE5_Multi_Shooter/MosesPlayerState.cpp  (FULL - UPDATED)  [MOD]
-// ----------------------------------------------------------------------------
-// [MOD] Changes
-//  - Player respawn delay: 10.0f -> 5.0f
-//  - On death confirm (server): push announcement "5초 뒤에 리스폰 됩니다." (1 sec)
-//  - Keep SSOT: bIsDead + RespawnEndServerTime + GM->ServerScheduleRespawn stay consistent
-// ============================================================================
-
-#include "UE5_Multi_Shooter/MosesPlayerState.h"
+﻿#include "UE5_Multi_Shooter/MosesPlayerState.h"
 
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
 #include "UE5_Multi_Shooter/System/MosesAuthorityGuards.h"
@@ -17,8 +8,7 @@
 #include "UE5_Multi_Shooter/Match/Components/MosesCombatComponent.h"
 #include "UE5_Multi_Shooter/Match/Components/MosesSlotOwnershipComponent.h"
 #include "UE5_Multi_Shooter/Match/Flag/MosesCaptureComponent.h"
-
-#include "UE5_Multi_Shooter/Match/GameState/MosesMatchGameState.h" // ✅ [MOD] Announcement 출력용
+#include "UE5_Multi_Shooter/Match/GameState/MosesMatchGameState.h"
 
 #include "UE5_Multi_Shooter/GAS/Components/MosesAbilitySystemComponent.h"
 #include "UE5_Multi_Shooter/GAS/AttributeSet/MosesAttributeSet.h"
@@ -47,7 +37,7 @@ AMosesPlayerState::AMosesPlayerState(const FObjectInitializer& ObjectInitializer
 	CombatComponent = CreateDefaultSubobject<UMosesCombatComponent>(TEXT("MosesCombatComponent"));
 	SlotOwnershipComponent = CreateDefaultSubobject<UMosesSlotOwnershipComponent>(TEXT("MosesSlotOwnershipComponent"));
 
-	UE_LOG(LogMosesPlayer, Warning, TEXT("[PS][CTOR] SSOT Components Created Combat=%s Slots=%s ASC=%s"),
+	UE_LOG(LogMosesPlayer, Warning, TEXT("[PS][CTOR] Components Created Combat=%s Slots=%s ASC=%s"),
 		*GetNameSafe(CombatComponent),
 		*GetNameSafe(SlotOwnershipComponent),
 		*GetNameSafe(MosesAbilitySystemComponent));
@@ -75,10 +65,10 @@ void AMosesPlayerState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& Ou
 	DOREPLIFETIME(AMosesPlayerState, ZombieKills);
 	DOREPLIFETIME(AMosesPlayerState, PvPKills);
 	DOREPLIFETIME(AMosesPlayerState, Headshots);
+	DOREPLIFETIME(AMosesPlayerState, TotalScore);
 
 	DOREPLIFETIME(AMosesPlayerState, bIsDead);
 	DOREPLIFETIME(AMosesPlayerState, RespawnEndServerTime);
-	DOREPLIFETIME(AMosesPlayerState, TotalScore); 
 }
 
 void AMosesPlayerState::CopyProperties(APlayerState* NewPlayerState)
@@ -105,6 +95,7 @@ void AMosesPlayerState::CopyProperties(APlayerState* NewPlayerState)
 	NewPS->ZombieKills = ZombieKills;
 	NewPS->PvPKills = PvPKills;
 	NewPS->Headshots = Headshots;
+	NewPS->TotalScore = TotalScore;
 
 	NewPS->bIsDead = bIsDead;
 	NewPS->RespawnEndServerTime = RespawnEndServerTime;
@@ -134,6 +125,7 @@ void AMosesPlayerState::OverrideWith(APlayerState* OldPlayerState)
 	ZombieKills = OldPS->ZombieKills;
 	PvPKills = OldPS->PvPKills;
 	Headshots = OldPS->Headshots;
+	TotalScore = OldPS->TotalScore;
 
 	bIsDead = OldPS->bIsDead;
 	RespawnEndServerTime = OldPS->RespawnEndServerTime;
@@ -149,10 +141,6 @@ UAbilitySystemComponent* AMosesPlayerState::GetAbilitySystemComponent() const
 {
 	return MosesAbilitySystemComponent;
 }
-
-// ============================================================================
-// GAS Init
-// ============================================================================
 
 void AMosesPlayerState::TryInitASC(AActor* InAvatarActor)
 {
@@ -179,7 +167,6 @@ void AMosesPlayerState::TryInitASC(AActor* InAvatarActor)
 	{
 		MosesAbilitySystemComponent->SetNumericAttributeBase(UMosesAttributeSet::GetMaxHealthAttribute(), 100.f);
 		MosesAbilitySystemComponent->SetNumericAttributeBase(UMosesAttributeSet::GetHealthAttribute(), 100.f);
-
 		MosesAbilitySystemComponent->SetNumericAttributeBase(UMosesAttributeSet::GetMaxShieldAttribute(), 100.f);
 		MosesAbilitySystemComponent->SetNumericAttributeBase(UMosesAttributeSet::GetShieldAttribute(), 100.f);
 
@@ -192,138 +179,139 @@ void AMosesPlayerState::TryInitASC(AActor* InAvatarActor)
 	BroadcastVitals_Initial();
 	BroadcastScore();
 	BroadcastDeaths();
-
 	BroadcastPlayerCaptures();
 	BroadcastPlayerZombieKills();
 	BroadcastPlayerPvPKills();
+	BroadcastPlayerHeadshots();
+	BroadcastTotalScore();
 	BroadcastAmmoAndGrenade();
 }
 
-void AMosesPlayerState::BindASCAttributeDelegates()
+void AMosesPlayerState::ServerNotifyDeathFromGAS()
 {
-	if (bASCDelegatesBound || !MosesAbilitySystemComponent)
+	if (!HasAuthority())
 	{
 		return;
 	}
 
-	bASCDelegatesBound = true;
+	if (bIsDead)
+	{
+		UE_LOG(LogMosesSpawn, Verbose, TEXT("[DEATH][SV][PS] SKIP AlreadyDead PS=%s"), *GetNameSafe(this));
+		return;
+	}
 
-	MosesAbilitySystemComponent->GetGameplayAttributeValueChangeDelegate(UMosesAttributeSet::GetHealthAttribute())
-		.AddUObject(this, &ThisClass::HandleHealthChanged_Internal);
+	bIsDead = true;
 
-	MosesAbilitySystemComponent->GetGameplayAttributeValueChangeDelegate(UMosesAttributeSet::GetMaxHealthAttribute())
-		.AddUObject(this, &ThisClass::HandleMaxHealthChanged_Internal);
+	if (UMosesCombatComponent* Combat = GetCombatComponent())
+	{
+		Combat->ServerMarkDead();
+	}
 
-	MosesAbilitySystemComponent->GetGameplayAttributeValueChangeDelegate(UMosesAttributeSet::GetShieldAttribute())
-		.AddUObject(this, &ThisClass::HandleShieldChanged_Internal);
+	const float Delay = 5.0f;
+	const float Now = (GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f);
+	RespawnEndServerTime = Now + Delay;
 
-	MosesAbilitySystemComponent->GetGameplayAttributeValueChangeDelegate(UMosesAttributeSet::GetMaxShieldAttribute())
-		.AddUObject(this, &ThisClass::HandleMaxShieldChanged_Internal);
+	ForceNetUpdate();
+	OnRep_DeathState();
 
-	UE_LOG(LogMosesGAS, Verbose, TEXT("[GAS][PS] Bound AttributeChange delegates PS=%s"), *GetNameSafe(this));
+	UE_LOG(LogMosesSpawn, Warning,
+		TEXT("[DEATH][SV][PS] MarkDead OK bIsDead=1 RespawnEnd=%.2f Delay=%.2f PS=%s Pawn=%s"),
+		RespawnEndServerTime, Delay, *GetNameSafe(this), *GetNameSafe(GetPawn()));
+
+	if (UWorld* World = GetWorld())
+	{
+		if (AMosesMatchGameState* MGS = World->GetGameState<AMosesMatchGameState>())
+		{
+			UE_LOG(LogMosesPhase, Warning, TEXT("[ANN][SV] DeathRespawnNotice -> 5 sec PS=%s"), *GetNameSafe(this));
+		}
+	}
+
+	APawn* Pawn = GetPawn();
+	AController* Controller = Pawn ? Pawn->GetController() : nullptr;
+
+	if (Controller)
+	{
+		if (AMosesMatchGameMode* GM = GetWorld() ? GetWorld()->GetAuthGameMode<AMosesMatchGameMode>() : nullptr)
+		{
+			GM->ServerScheduleRespawn(Controller, Delay);
+
+			UE_LOG(LogMosesSpawn, Warning,
+				TEXT("[RESPAWN][SV] Schedule REQ Delay=%.2f Controller=%s Pawn=%s PS=%s"),
+				Delay,
+				*GetNameSafe(Controller),
+				*GetNameSafe(Pawn),
+				*GetNameSafe(this));
+		}
+	}
 }
 
-void AMosesPlayerState::BroadcastVitals_Initial()
+void AMosesPlayerState::ServerStartShieldRegen()
 {
-	if (!MosesAbilitySystemComponent)
+	MOSES_GUARD_AUTHORITY_VOID(this, "ARMOR", TEXT("Client attempted ServerStartShieldRegen"));
+
+	if (TimerHandle_ShieldRegen.IsValid())
 	{
 		return;
 	}
 
-	const float CurHP = MosesAbilitySystemComponent->GetNumericAttribute(UMosesAttributeSet::GetHealthAttribute());
-	const float MaxHP = MosesAbilitySystemComponent->GetNumericAttribute(UMosesAttributeSet::GetMaxHealthAttribute());
+	GetWorldTimerManager().SetTimer(
+		TimerHandle_ShieldRegen,
+		[this]()
+		{
+			if (!HasAuthority() || !MosesAbilitySystemComponent)
+			{
+				return;
+			}
 
-	const float CurShield = MosesAbilitySystemComponent->GetNumericAttribute(UMosesAttributeSet::GetShieldAttribute());
-	const float MaxShield = MosesAbilitySystemComponent->GetNumericAttribute(UMosesAttributeSet::GetMaxShieldAttribute());
+			if (bIsDead)
+			{
+				return;
+			}
 
-	OnHealthChanged.Broadcast(CurHP, MaxHP);
-	OnShieldChanged.Broadcast(CurShield, MaxShield);
+			if (!GE_ShieldRegen_One)
+			{
+				UE_LOG(LogMosesCombat, Warning, TEXT("[ARMOR][SV] Regen SKIP (GE_ShieldRegen_One NULL) PS=%s"), *GetNameSafe(this));
+				return;
+			}
 
-	UE_LOG(LogMosesHP, Verbose, TEXT("%s InitialVitals HP=%.0f/%.0f Shield=%.0f/%.0f PS=%s"),
-		MOSES_TAG_HUD_CL, CurHP, MaxHP, CurShield, MaxShield, *GetNameSafe(this));
+			const float Cur = MosesAbilitySystemComponent->GetNumericAttribute(UMosesAttributeSet::GetShieldAttribute());
+			const float Max = MosesAbilitySystemComponent->GetNumericAttribute(UMosesAttributeSet::GetMaxShieldAttribute());
+
+			if (Cur >= Max)
+			{
+				return;
+			}
+
+			FGameplayEffectContextHandle Ctx = MosesAbilitySystemComponent->MakeEffectContext();
+			Ctx.AddSourceObject(this);
+
+			FGameplayEffectSpecHandle Spec = MosesAbilitySystemComponent->MakeOutgoingSpec(GE_ShieldRegen_One, 1.0f, Ctx);
+			if (Spec.IsValid())
+			{
+				MosesAbilitySystemComponent->ApplyGameplayEffectSpecToSelf(*Spec.Data.Get());
+
+				UE_LOG(LogMosesCombat, Warning, TEXT("[ARMOR][SV] Regen +1 Shield=%.0f/%.0f PS=%s"),
+					MosesAbilitySystemComponent->GetNumericAttribute(UMosesAttributeSet::GetShieldAttribute()),
+					Max,
+					*GetNameSafe(this));
+			}
+		},
+		15.0f,
+		true);
+
+	UE_LOG(LogMosesCombat, Warning, TEXT("[ARMOR][SV] RegenTimer START PS=%s"), *GetNameSafe(this));
 }
 
-void AMosesPlayerState::HandleHealthChanged_Internal(const FOnAttributeChangeData& Data)
+void AMosesPlayerState::ServerStopShieldRegen()
 {
-	const float Cur = Data.NewValue;
-	const float Max = MosesAbilitySystemComponent
-		? MosesAbilitySystemComponent->GetNumericAttribute(UMosesAttributeSet::GetMaxHealthAttribute())
-		: Cur;
+	MOSES_GUARD_AUTHORITY_VOID(this, "ARMOR", TEXT("Client attempted ServerStopShieldRegen"));
 
-	OnHealthChanged.Broadcast(Cur, Max);
-
-	UE_LOG(LogMosesHP, Verbose, TEXT("%s OnHealthChanged %.0f/%.0f PS=%s"),
-		MOSES_TAG_HUD_CL, Cur, Max, *GetNameSafe(this));
-}
-
-void AMosesPlayerState::HandleMaxHealthChanged_Internal(const FOnAttributeChangeData& Data)
-{
-	const float Max = Data.NewValue;
-	const float Cur = MosesAbilitySystemComponent
-		? MosesAbilitySystemComponent->GetNumericAttribute(UMosesAttributeSet::GetHealthAttribute())
-		: Max;
-
-	OnHealthChanged.Broadcast(Cur, Max);
-
-	UE_LOG(LogMosesHP, Verbose, TEXT("%s OnMaxHealthChanged %.0f/%.0f PS=%s"),
-		MOSES_TAG_HUD_CL, Cur, Max, *GetNameSafe(this));
-}
-
-void AMosesPlayerState::HandleShieldChanged_Internal(const FOnAttributeChangeData& Data)
-{
-	const float Cur = Data.NewValue;
-	const float Max = MosesAbilitySystemComponent
-		? MosesAbilitySystemComponent->GetNumericAttribute(UMosesAttributeSet::GetMaxShieldAttribute())
-		: Cur;
-
-	OnShieldChanged.Broadcast(Cur, Max);
-
-	UE_LOG(LogMosesHP, Verbose, TEXT("%s OnShieldChanged %.0f/%.0f PS=%s"),
-		MOSES_TAG_HUD_CL, Cur, Max, *GetNameSafe(this));
-}
-
-void AMosesPlayerState::HandleMaxShieldChanged_Internal(const FOnAttributeChangeData& Data)
-{
-	const float Max = Data.NewValue;
-	const float Cur = MosesAbilitySystemComponent
-		? MosesAbilitySystemComponent->GetNumericAttribute(UMosesAttributeSet::GetShieldAttribute())
-		: Max;
-
-	OnShieldChanged.Broadcast(Cur, Max);
-
-	UE_LOG(LogMosesHP, Verbose, TEXT("%s OnMaxShieldChanged %.0f/%.0f PS=%s"),
-		MOSES_TAG_HUD_CL, Cur, Max, *GetNameSafe(this));
-}
-
-// ============================================================================
-// AbilitySet Apply (Server only)
-// ============================================================================
-
-void AMosesPlayerState::ServerApplyCombatAbilitySetOnce(UMosesAbilitySet* InAbilitySet)
-{
-	MOSES_GUARD_AUTHORITY_VOID(this, "GAS", TEXT("Client attempted ServerApplyCombatAbilitySetOnce"));
-
-	if (bCombatAbilitySetApplied)
+	if (TimerHandle_ShieldRegen.IsValid())
 	{
-		return;
+		GetWorldTimerManager().ClearTimer(TimerHandle_ShieldRegen);
+		UE_LOG(LogMosesCombat, Warning, TEXT("[ARMOR][SV] RegenTimer STOP PS=%s"), *GetNameSafe(this));
 	}
-
-	if (!InAbilitySet || !MosesAbilitySystemComponent)
-	{
-		UE_LOG(LogMosesGAS, Warning, TEXT("[GAS][SV][PS] ApplyAbilitySet FAIL PS=%s"), *GetNameSafe(this));
-		return;
-	}
-
-	InAbilitySet->GiveToAbilitySystem(*MosesAbilitySystemComponent, CombatAbilitySetHandles);
-	bCombatAbilitySetApplied = true;
-
-	UE_LOG(LogMosesGAS, Warning, TEXT("[GAS][SV][PS] AbilitySet Applied PS=%s Set=%s"),
-		*GetNameSafe(this), *GetNameSafe(InAbilitySet));
 }
-
-// ============================================================================
-// Match default loadout: Rifle + 30/90 (Server)
-// ============================================================================
 
 void AMosesPlayerState::ServerEnsureMatchDefaultLoadout()
 {
@@ -355,9 +343,27 @@ void AMosesPlayerState::ServerEnsureMatchDefaultLoadout()
 	BroadcastAmmoAndGrenade();
 }
 
-// ============================================================================
-// Lobby / Info server functions
-// ============================================================================
+void AMosesPlayerState::ServerApplyCombatAbilitySetOnce(UMosesAbilitySet* InAbilitySet)
+{
+	MOSES_GUARD_AUTHORITY_VOID(this, "GAS", TEXT("Client attempted ServerApplyCombatAbilitySetOnce"));
+
+	if (bCombatAbilitySetApplied)
+	{
+		return;
+	}
+
+	if (!InAbilitySet || !MosesAbilitySystemComponent)
+	{
+		UE_LOG(LogMosesGAS, Warning, TEXT("[GAS][SV][PS] ApplyAbilitySet FAIL PS=%s"), *GetNameSafe(this));
+		return;
+	}
+
+	InAbilitySet->GiveToAbilitySystem(*MosesAbilitySystemComponent, CombatAbilitySetHandles);
+	bCombatAbilitySetApplied = true;
+
+	UE_LOG(LogMosesGAS, Warning, TEXT("[GAS][SV][PS] AbilitySet Applied PS=%s Set=%s"),
+		*GetNameSafe(this), *GetNameSafe(InAbilitySet));
+}
 
 void AMosesPlayerState::EnsurePersistentId_Server()
 {
@@ -486,10 +492,6 @@ void AMosesPlayerState::ServerAddDeath()
 	OnRep_Deaths();
 }
 
-// ============================================================================
-// Score SSOT
-// ============================================================================
-
 void AMosesPlayerState::ServerAddScore(int32 Delta, const TCHAR* Reason)
 {
 	MOSES_GUARD_AUTHORITY_VOID(this, "SCORE", TEXT("Client attempted ServerAddScore"));
@@ -503,7 +505,6 @@ void AMosesPlayerState::ServerAddScore(int32 Delta, const TCHAR* Reason)
 	const int32 NewScore = OldScore + Delta;
 
 	SetScore(static_cast<float>(NewScore));
-
 	OnScoreChanged.Broadcast(NewScore);
 
 	UE_LOG(LogMosesPlayer, Warning, TEXT("[SCORE][SV] %s Old=%d -> New=%d Delta=%d PS=%s"),
@@ -515,10 +516,6 @@ void AMosesPlayerState::ServerAddScore(int32 Delta, const TCHAR* Reason)
 
 	ForceNetUpdate();
 }
-
-// ============================================================================
-// Match stats (Server Authority ONLY)
-// ============================================================================
 
 void AMosesPlayerState::ServerAddCapture(int32 Delta)
 {
@@ -569,7 +566,6 @@ void AMosesPlayerState::ServerAddPvPKill(int32 Delta)
 
 	const int32 Old = PvPKills;
 	PvPKills = FMath::Max(0, PvPKills + Delta);
-
 	ForceNetUpdate();
 
 	UE_LOG(LogMosesPlayer, Warning, TEXT("[PVP][SV][PS] PvPKills %d -> %d Delta=%d PS=%s"),
@@ -592,89 +588,6 @@ void AMosesPlayerState::ServerAddHeadshot(int32 Delta)
 	OnRep_Headshots();
 }
 
-// ============================================================================
-// [FIX] Death / Respawn state (SSOT=PlayerState + CombatComponent)
-// ============================================================================
-
-void AMosesPlayerState::ServerNotifyDeathFromGAS()
-{
-	if (!HasAuthority())
-	{
-		return;
-	}
-
-	if (bIsDead)
-	{
-		UE_LOG(LogMosesSpawn, Verbose, TEXT("[DEATH][SV][PS] SKIP AlreadyDead PS=%s"), *GetNameSafe(this));
-		return;
-	}
-
-	// ---------------------------------------------------------------------
-	// 1) Dead state (SSOT)
-	// ---------------------------------------------------------------------
-	bIsDead = true;
-
-	if (UMosesCombatComponent* Combat = GetCombatComponent())
-	{
-		Combat->ServerMarkDead();
-	}
-
-	// ---------------------------------------------------------------------
-	// 2) Respawn time (5 seconds)
-	// ---------------------------------------------------------------------
-	const float Delay = 5.0f; // ✅ [MOD] 10 -> 5
-	const float Now = (GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f);
-	RespawnEndServerTime = Now + Delay;
-
-	ForceNetUpdate();
-
-	// ListenServer 즉시 UI 갱신
-	OnRep_DeathState();
-
-	UE_LOG(LogMosesSpawn, Warning,
-		TEXT("[DEATH][SV][PS] MarkDead OK bIsDead=1 RespawnEnd=%.2f Delay=%.2f PS=%s Pawn=%s"),
-		RespawnEndServerTime,
-		Delay,
-		*GetNameSafe(this),
-		*GetNameSafe(GetPawn()));
-
-	// ---------------------------------------------------------------------
-	// 3) Announcement (Server -> Rep to all clients)
-	// - "5초 뒤에 리스폰됩니다."를 5초 동안 표시
-	// ---------------------------------------------------------------------
-	if (UWorld* World = GetWorld())
-	{
-		if (AMosesMatchGameState* MGS = World->GetGameState<AMosesMatchGameState>())
-		{
-			// ✅ [MOD] 너가 원하는 한글 고정 문구
-			//MGS->ServerStartAnnouncementText(FText::FromString(TEXT("잠시 후 리스폰됩니다.")), 5);
-
-			UE_LOG(LogMosesPhase, Warning, TEXT("[ANN][SV] DeathRespawnNotice -> 5 sec PS=%s"), *GetNameSafe(this));
-		}
-	}
-
-	// ---------------------------------------------------------------------
-	// 4) Ask GameMode to schedule respawn
-	// ---------------------------------------------------------------------
-	APawn* Pawn = GetPawn();
-	AController* Controller = Pawn ? Pawn->GetController() : nullptr;
-
-	if (Controller)
-	{
-		if (AMosesMatchGameMode* GM = GetWorld() ? GetWorld()->GetAuthGameMode<AMosesMatchGameMode>() : nullptr)
-		{
-			GM->ServerScheduleRespawn(Controller, Delay);
-
-			UE_LOG(LogMosesSpawn, Warning,
-				TEXT("[RESPAWN][SV] Schedule REQ Delay=%.2f Controller=%s Pawn=%s PS=%s"),
-				Delay,
-				*GetNameSafe(Controller),
-				*GetNameSafe(Pawn),
-				*GetNameSafe(this));
-		}
-	}
-}
-
 void AMosesPlayerState::ServerSetTotalScore(int32 NewTotalScore)
 {
 	MOSES_GUARD_AUTHORITY_VOID(this, "RESULT", TEXT("Client attempted ServerSetTotalScore"));
@@ -694,9 +607,8 @@ void AMosesPlayerState::ServerSetTotalScore(int32 NewTotalScore)
 	UE_LOG(LogMosesPhase, Warning, TEXT("[RESULT][SV][PS] TotalScore %d -> %d PS=%s"),
 		Old, TotalScore, *GetNameSafe(this));
 
-	OnRep_TotalScore(); // ListenServer 즉시 반영 패턴
+	OnRep_TotalScore();
 }
-
 
 void AMosesPlayerState::ServerClearDeadAfterRespawn()
 {
@@ -724,82 +636,6 @@ void AMosesPlayerState::ServerClearDeadAfterRespawn()
 		*GetNameSafe(GetPawn()));
 }
 
-// ============================================================================
-// Shield Regen
-// ============================================================================
-
-void AMosesPlayerState::ServerStartShieldRegen()
-{
-	MOSES_GUARD_AUTHORITY_VOID(this, "ARMOR", TEXT("Client attempted ServerStartShieldRegen"));
-
-	if (TimerHandle_ShieldRegen.IsValid())
-	{
-		return;
-	}
-
-	GetWorldTimerManager().SetTimer(
-		TimerHandle_ShieldRegen,
-		[this]()
-		{
-			if (!HasAuthority() || !MosesAbilitySystemComponent)
-			{
-				return;
-			}
-
-			if (bIsDead)
-			{
-				return;
-			}
-
-			if (!GE_ShieldRegen_One)
-			{
-				UE_LOG(LogMosesCombat, Warning, TEXT("[ARMOR][SV] Regen SKIP (GE_ShieldRegen_One NULL) PS=%s"), *GetNameSafe(this));
-				return;
-			}
-
-			const float Cur = MosesAbilitySystemComponent->GetNumericAttribute(UMosesAttributeSet::GetShieldAttribute());
-			const float Max = MosesAbilitySystemComponent->GetNumericAttribute(UMosesAttributeSet::GetMaxShieldAttribute());
-
-			if (Cur >= Max)
-			{
-				return;
-			}
-
-			FGameplayEffectContextHandle Ctx = MosesAbilitySystemComponent->MakeEffectContext();
-			Ctx.AddSourceObject(this);
-
-			FGameplayEffectSpecHandle Spec = MosesAbilitySystemComponent->MakeOutgoingSpec(GE_ShieldRegen_One, 1.0f, Ctx);
-			if (Spec.IsValid())
-			{
-				MosesAbilitySystemComponent->ApplyGameplayEffectSpecToSelf(*Spec.Data.Get());
-
-				UE_LOG(LogMosesCombat, Warning, TEXT("[ARMOR][SV] Regen +1 Shield=%.0f/%.0f PS=%s"),
-					MosesAbilitySystemComponent->GetNumericAttribute(UMosesAttributeSet::GetShieldAttribute()),
-					Max,
-					*GetNameSafe(this));
-			}
-		},
-		15.0f,
-		true);
-
-	UE_LOG(LogMosesCombat, Warning, TEXT("[ARMOR][SV] RegenTimer START PS=%s"), *GetNameSafe(this));
-}
-
-void AMosesPlayerState::ServerStopShieldRegen()
-{
-	MOSES_GUARD_AUTHORITY_VOID(this, "ARMOR", TEXT("Client attempted ServerStopShieldRegen"));
-
-	if (TimerHandle_ShieldRegen.IsValid())
-	{
-		GetWorldTimerManager().ClearTimer(TimerHandle_ShieldRegen);
-		UE_LOG(LogMosesCombat, Warning, TEXT("[ARMOR][SV] RegenTimer STOP PS=%s"), *GetNameSafe(this));
-	}
-}
-
-// ============================================================================
-// RepNotifies
-// ============================================================================
-
 void AMosesPlayerState::OnRep_PersistentId() { NotifyLobbyPlayerStateChanged_Local(TEXT("OnRep_PersistentId")); }
 void AMosesPlayerState::OnRep_LoggedIn() { NotifyLobbyPlayerStateChanged_Local(TEXT("OnRep_LoggedIn")); }
 void AMosesPlayerState::OnRep_Ready() { NotifyLobbyPlayerStateChanged_Local(TEXT("OnRep_Ready")); }
@@ -816,10 +652,8 @@ void AMosesPlayerState::OnRep_PlayerNickName() { NotifyLobbyPlayerStateChanged_L
 void AMosesPlayerState::OnRep_Deaths() { BroadcastDeaths(); }
 void AMosesPlayerState::OnRep_Captures() { BroadcastPlayerCaptures(); }
 void AMosesPlayerState::OnRep_ZombieKills() { BroadcastPlayerZombieKills(); }
-
 void AMosesPlayerState::OnRep_PvPKills() { BroadcastPlayerPvPKills(); }
 void AMosesPlayerState::OnRep_Headshots() { BroadcastPlayerHeadshots(); }
-
 void AMosesPlayerState::OnRep_DeathState() { BroadcastDeathState(); }
 
 void AMosesPlayerState::OnRep_TotalScore()
@@ -827,19 +661,122 @@ void AMosesPlayerState::OnRep_TotalScore()
 	BroadcastTotalScore();
 }
 
-// ============================================================================
-// Broadcast
-// ============================================================================
-
-void AMosesPlayerState::BroadcastSelectedCharacterChanged(const TCHAR* Reason)
+void AMosesPlayerState::DOD_PS_Log(const UObject* Caller, const TCHAR* Phase) const
 {
-	const int32 NewId = SelectedCharacterId;
+	const TCHAR* CallerName = Caller ? *Caller->GetName() : TEXT("None");
+	const TCHAR* PhaseStr = Phase ? Phase : TEXT("None");
 
-	OnSelectedCharacterChangedNative.Broadcast(NewId);
-	OnSelectedCharacterChangedBP.Broadcast(NewId);
+	UE_LOG(LogMosesPlayer, Warning,
+		TEXT("[PS][DOD][%s] PS=%s Caller=%s Nick=%s Pid=%s RoomId=%s Host=%d Ready=%d LoggedIn=%d SelChar=%d Deaths=%d Captures=%d ZombieKills=%d PvPKills=%d Headshots=%d TotalScore=%d Score=%d"),
+		PhaseStr,
+		*GetNameSafe(this),
+		CallerName,
+		*PlayerNickName,
+		*PersistentId.ToString(EGuidFormats::DigitsWithHyphens),
+		*RoomId.ToString(EGuidFormats::DigitsWithHyphens),
+		bIsRoomHost ? 1 : 0,
+		bReady ? 1 : 0,
+		bLoggedIn ? 1 : 0,
+		SelectedCharacterId,
+		Deaths,
+		Captures,
+		ZombieKills,
+		PvPKills,
+		Headshots,
+		TotalScore,
+		FMath::RoundToInt(GetScore()));
+}
 
-	UE_LOG(LogMosesPlayer, Verbose, TEXT("[PS] SelectedCharacterChanged Reason=%s Id=%d"),
-		Reason ? Reason : TEXT("None"), NewId);
+TSubclassOf<UGameplayEffect> AMosesPlayerState::GetDamageGE_Player_SetByCaller() const
+{
+	return DamageGE_Player_SetByCaller.LoadSynchronous();
+}
+
+TSubclassOf<UGameplayEffect> AMosesPlayerState::GetDamageGE_Zombie_SetByCaller() const
+{
+	return DamageGE_Zombie_SetByCaller.LoadSynchronous();
+}
+
+void AMosesPlayerState::NotifyLobbyPlayerStateChanged_Local(const TCHAR* Reason) const
+{
+	APlayerController* PC = Cast<APlayerController>(GetOwner());
+	if (!PC || !PC->IsLocalController())
+	{
+		return;
+	}
+
+	ULocalPlayer* LP = PC->GetLocalPlayer();
+	if (!LP)
+	{
+		return;
+	}
+
+	UMosesLobbyLocalPlayerSubsystem* LPS = LP->GetSubsystem<UMosesLobbyLocalPlayerSubsystem>();
+	if (!LPS)
+	{
+		return;
+	}
+
+	UE_LOG(LogMosesPlayer, Verbose, TEXT("[LPS][NotifyFromPS] Reason=%s PS=%s"),
+		Reason ? Reason : TEXT("None"),
+		*GetNameSafe(this));
+
+	LPS->NotifyPlayerStateChanged();
+}
+
+void AMosesPlayerState::BindASCAttributeDelegates()
+{
+	if (bASCDelegatesBound || !MosesAbilitySystemComponent)
+	{
+		return;
+	}
+
+	bASCDelegatesBound = true;
+
+	MosesAbilitySystemComponent->GetGameplayAttributeValueChangeDelegate(UMosesAttributeSet::GetHealthAttribute())
+		.AddUObject(this, &ThisClass::HandleHealthChanged_Internal);
+
+	MosesAbilitySystemComponent->GetGameplayAttributeValueChangeDelegate(UMosesAttributeSet::GetMaxHealthAttribute())
+		.AddUObject(this, &ThisClass::HandleMaxHealthChanged_Internal);
+
+	MosesAbilitySystemComponent->GetGameplayAttributeValueChangeDelegate(UMosesAttributeSet::GetShieldAttribute())
+		.AddUObject(this, &ThisClass::HandleShieldChanged_Internal);
+
+	MosesAbilitySystemComponent->GetGameplayAttributeValueChangeDelegate(UMosesAttributeSet::GetMaxShieldAttribute())
+		.AddUObject(this, &ThisClass::HandleMaxShieldChanged_Internal);
+
+	UE_LOG(LogMosesGAS, Verbose, TEXT("[GAS][PS] Bound AttributeChange delegates PS=%s"), *GetNameSafe(this));
+}
+
+void AMosesPlayerState::BroadcastVitals_Initial()
+{
+	if (!MosesAbilitySystemComponent)
+	{
+		return;
+	}
+
+	const float CurHP = MosesAbilitySystemComponent->GetNumericAttribute(UMosesAttributeSet::GetHealthAttribute());
+	const float MaxHP = MosesAbilitySystemComponent->GetNumericAttribute(UMosesAttributeSet::GetMaxHealthAttribute());
+
+	const float CurShield = MosesAbilitySystemComponent->GetNumericAttribute(UMosesAttributeSet::GetShieldAttribute());
+	const float MaxShield = MosesAbilitySystemComponent->GetNumericAttribute(UMosesAttributeSet::GetMaxShieldAttribute());
+
+	OnHealthChanged.Broadcast(CurHP, MaxHP);
+	OnShieldChanged.Broadcast(CurShield, MaxShield);
+
+	UE_LOG(LogMosesHP, Verbose, TEXT("%s InitialVitals HP=%.0f/%.0f Shield=%.0f/%.0f PS=%s"),
+		MOSES_TAG_HUD_CL, CurHP, MaxHP, CurShield, MaxShield, *GetNameSafe(this));
+}
+
+void AMosesPlayerState::BroadcastScore()
+{
+	const int32 IntScore = FMath::RoundToInt(GetScore());
+	OnScoreChanged.Broadcast(IntScore);
+}
+
+void AMosesPlayerState::BroadcastDeaths()
+{
+	OnDeathsChanged.Broadcast(Deaths);
 }
 
 void AMosesPlayerState::BroadcastAmmoAndGrenade()
@@ -857,22 +794,22 @@ void AMosesPlayerState::BroadcastAmmoAndGrenade()
 	OnGrenadeChanged.Broadcast(0);
 }
 
-void AMosesPlayerState::BroadcastScore()
+void AMosesPlayerState::BroadcastSelectedCharacterChanged(const TCHAR* Reason)
 {
-	const int32 IntScore = FMath::RoundToInt(GetScore());
-	OnScoreChanged.Broadcast(IntScore);
-}
+	const int32 NewId = SelectedCharacterId;
 
-void AMosesPlayerState::BroadcastDeaths()
-{
-	OnDeathsChanged.Broadcast(Deaths);
+	OnSelectedCharacterChangedNative.Broadcast(NewId);
+	OnSelectedCharacterChangedBP.Broadcast(NewId);
+
+	UE_LOG(LogMosesPlayer, Verbose, TEXT("[PS] SelectedCharacterChanged Reason=%s Id=%d"),
+		Reason ? Reason : TEXT("None"), NewId);
 }
 
 void AMosesPlayerState::BroadcastPlayerCaptures()
 {
 	OnPlayerCapturesChanged.Broadcast(Captures);
 
-	UE_LOG(LogMosesPlayer, Verbose, TEXT("[CAPTURE][CL][PS] BroadcastPlayerCaptures=%d PS=%s"),
+	UE_LOG(LogMosesPlayer, Verbose, TEXT("[CAPTURE][CL][PS] Broadcast Captures=%d PS=%s"),
 		Captures, *GetNameSafe(this));
 }
 
@@ -880,7 +817,7 @@ void AMosesPlayerState::BroadcastPlayerZombieKills()
 {
 	OnPlayerZombieKillsChanged.Broadcast(ZombieKills);
 
-	UE_LOG(LogMosesPlayer, Verbose, TEXT("[ZOMBIE][CL][PS] BroadcastPlayerZombieKills=%d PS=%s"),
+	UE_LOG(LogMosesPlayer, Verbose, TEXT("[ZOMBIE][CL][PS] Broadcast ZombieKills=%d PS=%s"),
 		ZombieKills, *GetNameSafe(this));
 }
 
@@ -923,54 +860,56 @@ void AMosesPlayerState::BroadcastTotalScore()
 		TotalScore, *GetNameSafe(this));
 }
 
-void AMosesPlayerState::NotifyLobbyPlayerStateChanged_Local(const TCHAR* Reason) const
+void AMosesPlayerState::HandleHealthChanged_Internal(const FOnAttributeChangeData& Data)
 {
-	APlayerController* PC = Cast<APlayerController>(GetOwner());
-	if (!PC || !PC->IsLocalController())
-	{
-		return;
-	}
+	const float Cur = Data.NewValue;
+	const float Max = MosesAbilitySystemComponent
+		? MosesAbilitySystemComponent->GetNumericAttribute(UMosesAttributeSet::GetMaxHealthAttribute())
+		: Cur;
 
-	ULocalPlayer* LP = PC->GetLocalPlayer();
-	if (!LP)
-	{
-		return;
-	}
+	OnHealthChanged.Broadcast(Cur, Max);
 
-	UMosesLobbyLocalPlayerSubsystem* LPS = LP->GetSubsystem<UMosesLobbyLocalPlayerSubsystem>();
-	if (!LPS)
-	{
-		return;
-	}
-
-	UE_LOG(LogMosesPlayer, Verbose, TEXT("[LPS][NotifyFromPS] Reason=%s PS=%s"),
-		Reason ? Reason : TEXT("None"),
-		*GetNameSafe(this));
-
-	LPS->NotifyPlayerStateChanged();
+	UE_LOG(LogMosesHP, Verbose, TEXT("%s OnHealthChanged %.0f/%.0f PS=%s"),
+		MOSES_TAG_HUD_CL, Cur, Max, *GetNameSafe(this));
 }
 
-void AMosesPlayerState::DOD_PS_Log(const UObject* Caller, const TCHAR* Phase) const
+void AMosesPlayerState::HandleMaxHealthChanged_Internal(const FOnAttributeChangeData& Data)
 {
-	const TCHAR* CallerName = Caller ? *Caller->GetName() : TEXT("None");
-	const TCHAR* PhaseStr = Phase ? Phase : TEXT("None");
+	const float Max = Data.NewValue;
+	const float Cur = MosesAbilitySystemComponent
+		? MosesAbilitySystemComponent->GetNumericAttribute(UMosesAttributeSet::GetHealthAttribute())
+		: Max;
 
-	UE_LOG(LogMosesPlayer, Warning,
-		TEXT("[PS][DOD][%s] PS=%s Caller=%s Nick=%s Pid=%s RoomId=%s Host=%d Ready=%d LoggedIn=%d SelChar=%d Deaths=%d Captures=%d ZombieKills=%d Score=%d"),
-		PhaseStr,
-		*GetNameSafe(this),
-		CallerName,
-		*PlayerNickName,
-		*PersistentId.ToString(EGuidFormats::DigitsWithHyphens),
-		*RoomId.ToString(EGuidFormats::DigitsWithHyphens),
-		bIsRoomHost ? 1 : 0,
-		bReady ? 1 : 0,
-		bLoggedIn ? 1 : 0,
-		SelectedCharacterId,
-		Deaths,
-		Captures,
-		ZombieKills,
-		FMath::RoundToInt(GetScore()));
+	OnHealthChanged.Broadcast(Cur, Max);
+
+	UE_LOG(LogMosesHP, Verbose, TEXT("%s OnMaxHealthChanged %.0f/%.0f PS=%s"),
+		MOSES_TAG_HUD_CL, Cur, Max, *GetNameSafe(this));
+}
+
+void AMosesPlayerState::HandleShieldChanged_Internal(const FOnAttributeChangeData& Data)
+{
+	const float Cur = Data.NewValue;
+	const float Max = MosesAbilitySystemComponent
+		? MosesAbilitySystemComponent->GetNumericAttribute(UMosesAttributeSet::GetMaxShieldAttribute())
+		: Cur;
+
+	OnShieldChanged.Broadcast(Cur, Max);
+
+	UE_LOG(LogMosesHP, Verbose, TEXT("%s OnShieldChanged %.0f/%.0f PS=%s"),
+		MOSES_TAG_HUD_CL, Cur, Max, *GetNameSafe(this));
+}
+
+void AMosesPlayerState::HandleMaxShieldChanged_Internal(const FOnAttributeChangeData& Data)
+{
+	const float Max = Data.NewValue;
+	const float Cur = MosesAbilitySystemComponent
+		? MosesAbilitySystemComponent->GetNumericAttribute(UMosesAttributeSet::GetShieldAttribute())
+		: Max;
+
+	OnShieldChanged.Broadcast(Cur, Max);
+
+	UE_LOG(LogMosesHP, Verbose, TEXT("%s OnMaxShieldChanged %.0f/%.0f PS=%s"),
+		MOSES_TAG_HUD_CL, Cur, Max, *GetNameSafe(this));
 }
 
 float AMosesPlayerState::GetHealth_Current() const
@@ -999,18 +938,4 @@ float AMosesPlayerState::GetShield_Max() const
 	return MosesAbilitySystemComponent
 		? MosesAbilitySystemComponent->GetNumericAttribute(UMosesAttributeSet::GetMaxShieldAttribute())
 		: 0.f;
-}
-
-// ============================================================================
-// [MOD][DAMAGE_POLICY] Getters
-// ============================================================================
-
-TSubclassOf<UGameplayEffect> AMosesPlayerState::GetDamageGE_Player_SetByCaller() const
-{
-	return DamageGE_Player_SetByCaller.LoadSynchronous();
-}
-
-TSubclassOf<UGameplayEffect> AMosesPlayerState::GetDamageGE_Zombie_SetByCaller() const
-{
-	return DamageGE_Zombie_SetByCaller.LoadSynchronous();
 }

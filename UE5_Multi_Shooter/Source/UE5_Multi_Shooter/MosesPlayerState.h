@@ -1,26 +1,19 @@
-﻿// ============================================================================
-// UE5_Multi_Shooter/MosesPlayerState.h  (FULL - UPDATED)  [MOD: TotalScore]
-// ============================================================================
-
-#pragma once
+﻿#pragma once
 
 #include "CoreMinimal.h"
 #include "GameFramework/PlayerState.h"
 #include "AbilitySystemInterface.h"
 #include "GameplayEffectTypes.h"
-
 #include "UE5_Multi_Shooter/GAS/MosesAbilitySet.h"
-#include "UE5_Multi_Shooter/GAS/AttributeSet/MosesAttributeSet.h"
-
 #include "MosesPlayerState.generated.h"
 
+class UAbilitySystemComponent;
 class UMosesAbilitySystemComponent;
 class UMosesAttributeSet;
 class UMosesCombatComponent;
 class UMosesSlotOwnershipComponent;
-class UMosesAbilitySet;
-class UMosesPawnData;
 class UMosesCaptureComponent;
+class UMosesAbilitySet;
 class UGameplayEffect;
 
 DECLARE_MULTICAST_DELEGATE_TwoParams(FOnMosesHealthChangedNative, float /*Cur*/, float /*Max*/);
@@ -40,8 +33,6 @@ DECLARE_MULTICAST_DELEGATE_TwoParams(FOnMosesDeathStateChangedNative, bool /*bIs
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnMosesSelectedCharacterChangedBP, int32, SelectedId);
 
 DECLARE_MULTICAST_DELEGATE_OneParam(FOnTotalKillsChangedNative, int32 /*TotalKills*/);
-
-// [MOD] TotalScore
 DECLARE_MULTICAST_DELEGATE_OneParam(FOnMosesTotalScoreChangedNative, int32 /*TotalScore*/);
 
 UCLASS()
@@ -53,7 +44,6 @@ public:
 	AMosesPlayerState(const FObjectInitializer& ObjectInitializer);
 
 	virtual void PostInitializeComponents() override;
-
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 	virtual void CopyProperties(APlayerState* NewPlayerState) override;
 	virtual void OverrideWith(APlayerState* OldPlayerState) override;
@@ -86,8 +76,6 @@ public:
 	int32 GetZombieKills() const { return ZombieKills; }
 	int32 GetPvPKills() const { return PvPKills; }
 	int32 GetHeadshots() const { return Headshots; }
-
-	// [MOD] TotalScore getter
 	int32 GetTotalScore() const { return TotalScore; }
 
 	bool IsDead() const { return bIsDead; }
@@ -138,9 +126,7 @@ public:
 	void ServerAddPvPKill(int32 Delta = 1);
 	void ServerAddHeadshot(int32 Delta = 1);
 
-	// [MOD] TotalScore set (Result 진입 순간 1회)
 	void ServerSetTotalScore(int32 NewTotalScore);
-
 	void ServerClearDeadAfterRespawn();
 
 public:
@@ -177,8 +163,6 @@ public:
 
 	FOnMosesSelectedCharacterChangedNative OnSelectedCharacterChangedNative;
 	FOnTotalKillsChangedNative OnTotalKillsChanged;
-
-	// [MOD]
 	FOnMosesTotalScoreChangedNative OnTotalScoreChanged;
 
 	UPROPERTY(BlueprintAssignable)
@@ -236,7 +220,6 @@ private:
 
 	bool bASCInitialized = false;
 	bool bASCDelegatesBound = false;
-
 	bool bCombatAbilitySetApplied = false;
 
 	UPROPERTY() bool bMatchDefaultLoadoutGranted = false;
@@ -280,7 +263,6 @@ private:
 	UPROPERTY(ReplicatedUsing = OnRep_Headshots)
 	int32 Headshots = 0;
 
-	// [MOD] TotalScore
 	UPROPERTY(ReplicatedUsing = OnRep_TotalScore)
 	int32 TotalScore = 0;
 

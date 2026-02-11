@@ -1,8 +1,8 @@
 // ============================================================================
-// UE5_Multi_Shooter/Match/Components/MosesInteractionComponent.h  (FULL)
+// UE5_Multi_Shooter/Match/Components/MosesInteractionComponent.h  (CLEANED)
 // ----------------------------------------------------------------------------
 // 역할
-// - Overlap 기반 상호작용 타겟 시스템 (Trace/Timer 금지)
+// - Overlap 기반 상호작용 타겟 시스템 (Trace/Timer/Tick 금지)
 // - PickupWeapon / PickupAmmo / FlagSpot이 Overlap Begin/End에서 로컬 타겟 Set/Clear
 // - E Press/Release 입력을 서버 RPC로 전달
 // - 서버는 거리/권한 Guard 후 FlagSpot(Capture) 또는 Pickup(Pickup) 처리
@@ -19,16 +19,19 @@
 #include "Components/ActorComponent.h"
 #include "MosesInteractionComponent.generated.h"
 
-class AMosesFlagSpot;
-class AMosesPickupWeapon;
-class AMosesPickupAmmo;
-class AMosesPlayerController;
-class AMosesPlayerState;
-class AMosesMatchGameState;
+class AActor;
 class APawn;
 class APlayerController;
 
-UENUM()
+class AMosesFlagSpot;
+class AMosesPickupWeapon;
+class AMosesPickupAmmo;
+
+class AMosesPlayerController;
+class AMosesPlayerState;
+class AMosesMatchGameState;
+
+UENUM(BlueprintType)
 enum class EMosesInteractTargetType : uint8
 {
 	None,
@@ -37,7 +40,7 @@ enum class EMosesInteractTargetType : uint8
 	PickupAmmo,
 };
 
-USTRUCT()
+USTRUCT(BlueprintType)
 struct FMosesInteractTarget
 {
 	GENERATED_BODY()
@@ -64,7 +67,7 @@ public:
 	void ClearCurrentInteractTarget_Local(AActor* ExpectedTarget);
 
 	// =========================================================================
-	// Client Input Endpoints (E Press/Release)
+	// Client: Input Endpoints (E Press/Release)
 	// =========================================================================
 	void RequestInteractPressed();
 	void RequestInteractReleased();
@@ -75,7 +78,7 @@ protected:
 
 private:
 	// =========================================================================
-	// Server RPC
+	// RPC (Client -> Server)
 	// =========================================================================
 	UFUNCTION(Server, Reliable)
 	void ServerInteractPressed(AActor* TargetActor);
@@ -83,7 +86,7 @@ private:
 	UFUNCTION(Server, Reliable)
 	void ServerInteractReleased(AActor* TargetActor);
 
-	// Server handlers
+	// Server handlers (Authority only)
 	void HandleInteractPressed_Server(AActor* TargetActor);
 	void HandleInteractReleased_Server(AActor* TargetActor);
 
@@ -95,6 +98,7 @@ private:
 
 	APawn* GetOwningPawn() const;
 	APlayerController* GetOwningPC() const;
+
 	AMosesPlayerState* GetMosesPlayerState() const;
 	AMosesMatchGameState* GetMatchGameState() const;
 
@@ -107,15 +111,16 @@ private:
 	void ForceReleaseInteract_Local(AActor* ExpectedTarget, const TCHAR* ReasonTag);
 
 private:
-	// -------------------------------------------------------------------------
-	// Server guard
-	// -------------------------------------------------------------------------
+	// =========================================================================
+	// Tunables (Server Guard)
+	// =========================================================================
 	UPROPERTY(EditDefaultsOnly, Category = "Interaction")
 	float MaxUseDistance = 350.f;
 
-	// -------------------------------------------------------------------------
-	// Cached target set by overlap (no timer, no trace)
-	// -------------------------------------------------------------------------
+private:
+	// =========================================================================
+	// Local cached target (Overlap set/clear)
+	// =========================================================================
 	UPROPERTY(Transient)
 	FMosesInteractTarget CachedTarget;
 

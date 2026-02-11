@@ -1,5 +1,13 @@
 ﻿// ============================================================================
-// UE5_Multi_Shooter/MosesPlayerController.h (FULL)  [MOD]
+// UE5_Multi_Shooter/MosesPlayerController.h  (FULL / CLEANED)  [MOD]
+// - 역할: 입력/카메라/로컬 UI 정책 + Lobby RPC + Persist 요청/수신 + (OwnerOnly Toast)
+// - 주의: CombatComponent 델리게이트는 "Native multicast"로 바뀐 상태를 전제로
+//         (Combat->OnEquippedChanged.AddUObject(...) 그대로 유지 가능)
+//
+// [정리 포인트]
+// 1) include 최소화 + forward decl 정리
+// 2) 섹션을 "기능 단위"로 재배치 (Lobby / Persist / Toast / Scope / Perf / Map&UI)
+// 3) override/replication 구간을 상단에 모음
 // ============================================================================
 
 #pragma once
@@ -10,9 +18,11 @@
 #include "Net/UnrealNetwork.h"
 
 #include "UE5_Multi_Shooter/Persist/MosesMatchRecordTypes.h"
-
 #include "MosesPlayerController.generated.h"
 
+// ----------------------------------------------------------------------------
+// Forward Decls
+// ----------------------------------------------------------------------------
 class AMosesLobbyGameState;
 class AMosesLobbyGameMode;
 class AMosesStartGameMode;
@@ -27,6 +37,9 @@ class UMosesWeaponData;
 
 enum class EMosesRoomJoinResult : uint8;
 
+// ----------------------------------------------------------------------------
+// Blueprint delegates (Lobby/Persist UI용: BP 바인딩)
+// ----------------------------------------------------------------------------
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnLobbyNicknameChanged, const FString&, NewNick);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnJoinedRoom, EMosesRoomJoinResult, Result, const FGuid&, RoomId);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnMatchRecordsReceivedBP, const TArray<FMosesMatchRecordSummary>&, Records);
@@ -39,24 +52,35 @@ class UE5_MULTI_SHOOTER_API AMosesPlayerController : public APlayerController
 public:
 	AMosesPlayerController(const FObjectInitializer& ObjectInitializer = FObjectInitializer::Get());
 
-public:
+	// =========================================================================
+	// Engine overrides
+	// =========================================================================
+	virtual void BeginPlay() override;
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
+
 	virtual void ClientRestart_Implementation(APawn* NewPawn) override;
 
-	/*====================================================
-	= Debug Exec
-	====================================================*/
+	virtual void OnPossess(APawn* InPawn) override;
+	virtual void OnRep_PlayerState() override;
+	virtual void OnRep_Pawn() override;
+
+	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
+
+	// =========================================================================
+	// Debug Exec (GAS)
+	// =========================================================================
 	UFUNCTION(Exec) void gas_DumpTags();
 	UFUNCTION(Exec) void gas_DumpAttr();
 
-	/*====================================================
-	= Dev Exec Helpers
-	====================================================*/
+	// =========================================================================
+	// Dev Exec Helpers (Travel)
+	// =========================================================================
 	UFUNCTION(Exec) void TravelToMatch_Exec();
 	UFUNCTION(Exec) void TravelToLobby_Exec();
 
-	/*====================================================
-	= Client → Server RPC (Lobby)
-	====================================================*/
+	// =========================================================================
+	// Client -> Server RPC (Lobby)
+	// =========================================================================
 	UFUNCTION(Server, Reliable) void Server_CreateRoom(const FString& RoomTitle, int32 MaxPlayers);
 	UFUNCTION(Server, Reliable) void Server_JoinRoom(const FGuid& RoomId);
 	UFUNCTION(Server, Reliable) void Server_LeaveRoom();
@@ -68,26 +92,24 @@ public:
 	// Result Confirm -> Return to Lobby
 	UFUNCTION(Server, Reliable) void Server_RequestReturnToLobby();
 
-	/*====================================================
-	= JoinRoom Result (Server → Client)
-	====================================================*/
+	// JoinRoom Result (Server -> Client)
 	UFUNCTION(Client, Reliable) void Client_JoinRoomResult(EMosesRoomJoinResult Result, const FGuid& RoomId);
 
-	/*====================================================
-	= Travel Guard (Dev Exec → Server Only)
-	====================================================*/
+	// =========================================================================
+	// Travel Guard (Dev Exec -> Server Only)
+	// =========================================================================
 	UFUNCTION(Server, Reliable) void Server_TravelToMatch();
 	UFUNCTION(Server, Reliable) void Server_TravelToLobby();
 
-	/*====================================================
-	= Enter Lobby / Character Select
-	====================================================*/
+	// =========================================================================
+	// Enter Lobby / Character Select
+	// =========================================================================
 	UFUNCTION(Server, Reliable) void Server_RequestEnterLobby(const FString& Nickname);
 	UFUNCTION(Server, Reliable) void Server_SetSelectedCharacterId(int32 SelectedId);
 
-	/*====================================================
-	= [PERSIST] Lobby Records Request/Receive
-	====================================================*/
+	// =========================================================================
+	// [PERSIST] Lobby Records Request/Receive
+	// =========================================================================
 	UFUNCTION(BlueprintCallable, Category = "Persist")
 	void RequestMatchRecords_Local(const FString& NicknameFilter, int32 MaxCount = 50);
 
@@ -97,27 +119,24 @@ public:
 	UFUNCTION(Client, Reliable)
 	void Client_ReceiveMatchRecords(const TArray<FMosesMatchRecordSummary>& Records);
 
-	/*====================================================
-	= Pickup Toast (Owner Only)
-	====================================================*/
+	// =========================================================================
+	// OwnerOnly Toasts (Pickup / Headshot)
+	// =========================================================================
 	UFUNCTION(Client, Reliable)
 	void Client_ShowPickupToast_OwnerOnly(const FText& Text, float DurationSec);
 
-	/*====================================================
-	= Headshot Toast (Owner Only)  [MOD]
-	====================================================*/
 	UFUNCTION(Client, Reliable)
 	void Client_ShowHeadshotToast_OwnerOnly(const FText& Text, float DurationSec);
 
-	/*====================================================
-	= Local helpers (UI)
-	====================================================*/
+	// =========================================================================
+	// Local helpers (UI)
+	// =========================================================================
 	UFUNCTION(BlueprintCallable, Category = "Lobby")
 	void SetPendingLobbyNickname_Local(const FString& Nick);
 
-	/*====================================================
-	= Delegates for Blueprint/UI
-	====================================================*/
+	// =========================================================================
+	// Delegates for Blueprint/UI
+	// =========================================================================
 	UPROPERTY(BlueprintAssignable, Category = "Lobby")
 	FOnLobbyNicknameChanged OnLobbyNicknameChanged;
 
@@ -127,58 +146,66 @@ public:
 	UPROPERTY(BlueprintAssignable, Category = "Persist")
 	FOnMatchRecordsReceivedBP OnMatchRecordsReceivedBP;
 
-	/*====================================================
-	= [SCOPE] Local cosmetic only
-	====================================================*/
+	// =========================================================================
+	// [SCOPE] Local cosmetic only (Zoom/Blur etc)
+	// =========================================================================
 public:
 	void Scope_OnPressed_Local();
 	void Scope_OnReleased_Local();
-
 	bool IsScopeActive_Local() const { return bScopeActive_Local; }
 
+	// =========================================================================
+	// [PERF] Perf Infra console entry points (called from CheatManager)
+	// =========================================================================
+public:
+	void Perf_Dump();
+	void Perf_Marker(int32 MarkerIndex);
+	void Perf_Spawn(int32 Count);
+	void Perf_MeasureBegin(const FString& MeasureId, const FString& MarkerId, int32 SpawnCount, int32 TrialIndex, int32 TrialTotal, float DurationSec);
+	void Perf_MeasureEnd();
+
+	UFUNCTION(Server, Reliable)
+	void Server_PerfMarker(const FName MarkerId);
+
+	UFUNCTION(Server, Reliable)
+	void Server_PerfSpawn(int32 Count);
+
 protected:
-	virtual void BeginPlay() override;
-	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
+	UFUNCTION(Server, Reliable)
+	void Server_PerfMeasureBegin(const FString& MeasureId, const FString& MarkerId, int32 SpawnCount, int32 TrialIndex, int32 TrialTotal, float DurationSec);
 
-	virtual void OnPossess(APawn* InPawn) override;
-	virtual void OnRep_PlayerState() override;
-	virtual void OnRep_Pawn() override;
-
-	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
+	UFUNCTION(Server, Reliable)
+	void Server_PerfMeasureEnd();
 
 private:
-	/*====================================================
-	= Camera Policy (Local-only)
-	====================================================*/
+	// =========================================================================
+	// Camera Policy (Local-only)
+	// =========================================================================
 	void ApplyMatchCameraPolicy_LocalOnly(const TCHAR* Reason);
 	void RetryApplyMatchCameraPolicy_NextTick_LocalOnly();
 
-private:
-	/*====================================================
-	= Pending nickname send (Local-only)
-	====================================================*/
+	// =========================================================================
+	// Pending nickname send (Local-only)
+	// =========================================================================
 	void TrySendPendingLobbyNickname_Local();
 
-private:
-	/*====================================================
-	= Server-side Travel helpers
-	====================================================*/
+	// =========================================================================
+	// Server-side Travel helpers
+	// =========================================================================
 	void DoServerTravelToMatch();
 	void DoServerTravelToLobby();
 
-private:
-	/*====================================================
-	= Lobby/Match/Start Context 판정 (Local-only)
-	====================================================*/
+	// =========================================================================
+	// Context 판정 (Local-only)
+	// =========================================================================
 	bool IsLobbyContext() const;
 	bool IsLobbyMap_Local() const;
 	bool IsMatchMap_Local() const;
 	bool IsStartMap_Local() const;
 
-private:
-	/*====================================================
-	= Lobby Context / Camera / UI (Local-only)
-	====================================================*/
+	// =========================================================================
+	// Lobby Context / Camera / UI (Local-only)
+	// =========================================================================
 	void ApplyLobbyPreviewCamera();
 	void ActivateLobbyUI_LocalOnly();
 	void RestoreNonLobbyDefaults_LocalOnly();
@@ -190,35 +217,27 @@ private:
 	void ApplyStartInputMode_LocalOnly();
 	void ReapplyStartInputMode_NextTick_LocalOnly();
 
-private:
+	// =========================================================================
+	// Toast Pending (HUD 교체 타이밍 대비)
+	// =========================================================================
+	void TryFlushPendingPickupToast_Local();
+	void TryFlushPendingHeadshotToast_Local();
+	UMosesMatchHUD* FindMatchHUD_Local();
+
 	// [MOD] HUD가 아직 없을 때 재시도하기 위한 타이머/루프
 	void StartPickupToastRetryTimer_Local();
 	void StopPickupToastRetryTimer_Local();
 	void HandlePickupToastRetryTimer_Local();
 
-private:
-	/*====================================================
-	= Shared getters (null/log guard)
-	====================================================*/
+	// =========================================================================
+	// Shared getters (null/log guard)
+	// =========================================================================
 	AMosesLobbyGameState* GetLobbyGameStateChecked_Log(const TCHAR* Caller) const;
 	AMosesPlayerState* GetMosesPlayerStateChecked_Log(const TCHAR* Caller) const;
 
-private:
-	/*====================================================
-	= Pickup Toast pending (HUD 교체 타이밍 대비)
-	====================================================*/
-	void TryFlushPendingPickupToast_Local();
-	UMosesMatchHUD* FindMatchHUD_Local();
-
-	/*====================================================
-	= Headshot Toast pending (HUD 교체 타이밍 대비)  [MOD]
-	====================================================*/
-	void TryFlushPendingHeadshotToast_Local();
-
-private:
-	/*====================================================
-	= [SCOPE] weapon-change safety (local only)
-	====================================================*/
+	// =========================================================================
+	// [SCOPE] weapon-change safety (local only)
+	// =========================================================================
 	void BindScopeWeaponEvents_Local();
 	void UnbindScopeWeaponEvents_Local();
 
@@ -235,33 +254,10 @@ private:
 	UMosesCombatComponent* FindCombatComponent_Local() const;
 	UMosesCameraComponent* FindMosesCameraComponent_Local() const;
 
-	// [MOD] Perf Infra console entry points (called from CheatManager)
-public:
-	void Perf_Dump();
-	void Perf_Marker(int32 MarkerIndex);
-	void Perf_Spawn(int32 Count);
-	void Perf_MeasureBegin(const FString& MeasureId, const FString& MarkerId, int32 SpawnCount, int32 TrialIndex, int32 TrialTotal, float DurationSec);
-	void Perf_MeasureEnd();
-
-	UFUNCTION(Server, Reliable)
-	void Server_PerfMarker(const FName MarkerId);
-
-	UFUNCTION(Server, Reliable)
-	void Server_PerfSpawn(int32 Count);
-
-
-protected:
-
-	UFUNCTION(Server, Reliable)
-	void Server_PerfMeasureBegin(const FString& MeasureId, const FString& MarkerId, int32 SpawnCount, int32 TrialIndex, int32 TrialTotal, float DurationSec);
-
-	UFUNCTION(Server, Reliable)
-	void Server_PerfMeasureEnd();
-
 private:
-	/*====================================================
-	= Lobby Preview Camera policy vars
-	====================================================*/
+	// =========================================================================
+	// Lobby Preview Camera policy vars
+	// =========================================================================
 	UPROPERTY(EditDefaultsOnly, Category = "Lobby|Camera")
 	FName LobbyPreviewCameraTag = TEXT("LobbyPreviewCamera");
 
@@ -270,10 +266,9 @@ private:
 
 	FTimerHandle LobbyPreviewCameraTimerHandle;
 
-private:
-	/*====================================================
-	= Map Policy
-	====================================================*/
+	// =========================================================================
+	// Map Policy
+	// =========================================================================
 	UPROPERTY(EditDefaultsOnly, Category = "Lobby|Policy")
 	FName LobbyMapName = TEXT("LobbyLevel");
 
@@ -283,33 +278,29 @@ private:
 	UPROPERTY(EditDefaultsOnly, Category = "Start|Policy")
 	FName StartMapName = TEXT("StartGameLevel");
 
-private:
-	/*====================================================
-	= Local pending nickname
-	====================================================*/
+	// =========================================================================
+	// Local pending nickname
+	// =========================================================================
 	UPROPERTY(Transient)
 	FString PendingLobbyNickname_Local;
 
 	UPROPERTY(Transient)
 	bool bPendingLobbyNicknameSend_Local = false;
 
-private:
-	/*====================================================
-	= Replicated lobby-related state (주의: PS와 중복되면 안 됨)
-	====================================================*/
+	// =========================================================================
+	// Replicated lobby-related state (주의: PS와 중복되면 안 됨)
+	// =========================================================================
 	UPROPERTY(Replicated)
 	int32 SelectedCharacterId = INDEX_NONE;
 
 	UPROPERTY(Replicated)
 	bool bRep_IsReady = false;
 
-private:
 	FTimerHandle MatchCameraRetryTimerHandle;
 
-private:
-	/*====================================================
-	= Pending Pickup Toast
-	====================================================*/
+	// =========================================================================
+	// Pending Pickup Toast
+	// =========================================================================
 	UPROPERTY(Transient)
 	bool bPendingPickupToast = false;
 
@@ -319,10 +310,9 @@ private:
 	UPROPERTY(Transient)
 	float PendingPickupToastDuration = 0.f;
 
-private:
-	/*====================================================
-	= Pending Headshot Toast  [MOD]
-	====================================================*/
+	// =========================================================================
+	// Pending Headshot Toast  [MOD]
+	// =========================================================================
 	UPROPERTY(Transient)
 	bool bPendingHeadshotToast = false;
 
@@ -332,10 +322,9 @@ private:
 	UPROPERTY(Transient)
 	float PendingHeadshotToastDuration = 0.f;
 
-private:
-	/*====================================================
-	= [SCOPE] Local cosmetic state
-	====================================================*/
+	// =========================================================================
+	// [SCOPE] Local cosmetic state
+	// =========================================================================
 	UPROPERTY(EditDefaultsOnly, Category = "Scope|Policy")
 	float ScopeBlurUpdateInterval = 0.05f; // 20Hz
 
@@ -351,12 +340,12 @@ private:
 	bool bScopeActive_Local = false;
 	FTimerHandle ScopeBlurTimerHandle;
 
-	// [MOD] Retry timer state
+	// =========================================================================
+	// [MOD] Retry timer state (HUD 생성 지연 대비)
+	// =========================================================================
 	FTimerHandle TimerHandle_PickupToastRetry;
 	int32 PickupToastRetryCount = 0;
 
-	// [MOD] 안전장치 (무한 루프 방지)
 	static constexpr int32 MaxPickupToastRetryCount = 60;     // 60 * 0.1s = 6초
 	static constexpr float PickupToastRetryIntervalSec = 0.1f;
-
 };

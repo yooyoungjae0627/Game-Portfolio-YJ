@@ -1,4 +1,5 @@
 #include "UE5_Multi_Shooter/MosesGameState.h"
+#include "UE5_Multi_Shooter/MosesLogChannels.h"
 #include "UE5_Multi_Shooter/Experience/MosesExperienceManagerComponent.h"
 
 AMosesGameState::AMosesGameState(const FObjectInitializer& ObjectInitializer)

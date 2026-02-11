@@ -1,4 +1,10 @@
-﻿#pragma once
+﻿// ============================================================================
+// UE5_Multi_Shooter/GAS/AttributeSet/MosesAttributeSet.h  (CLEANED)
+// - Player Core Attributes + Meta(IncomingDamage/IncomingHeal)
+// - Server authoritative: split damage (Shield/Health) + death routing to PlayerState SSOT
+// ============================================================================
+
+#pragma once
 
 #include "CoreMinimal.h"
 #include "AttributeSet.h"
@@ -13,16 +19,11 @@ class AMosesPlayerState;
 /**
  * UMosesAttributeSet (Player Core Attributes)
  *
- * DAY11:
- * - Health/MaxHealth
- * - Shield/MaxShield (== Armor 역할)
- * - IncomingDamage (Meta)
- * - IncomingHeal   (Meta)
- *
- * 서버 권위:
- * - IncomingDamage를 Shield(80%) / Health(20%)로 분배해서 실제 값을 확정한다.
- * - Heal은 Health에 Add 한다.
- * - Health <= 0 되면 서버에서 PlayerState에 "Death"를 통지한다(중복 방지).
+ * 핵심 포인트
+ * - Health/Shield는 Replicate (HUD/클라 표시용)
+ * - IncomingDamage/IncomingHeal은 Meta (Replicate 안 함)
+ * - 실제 HP/Shield 확정은 서버에서만(PostGameplayEffectExecute)
+ * - 죽음 확정도 서버에서만, PlayerState(SSOT)로 라우팅
  */
 UCLASS()
 class UE5_MULTI_SHOOTER_API UMosesAttributeSet : public UAttributeSet
@@ -34,11 +35,10 @@ public:
 
 	//~UAttributeSet
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
-	virtual void PostGameplayEffectExecute(const FGameplayEffectModCallbackData& Data) override; // [MOD]
+	virtual void PostGameplayEffectExecute(const FGameplayEffectModCallbackData& Data) override;
 
-public:
 	// -------------------------------------------------------------------------
-	// Attributes
+	// Replicated Attributes (Client는 "표시/읽기" 목적)
 	// -------------------------------------------------------------------------
 	UPROPERTY(BlueprintReadOnly, Category = "Attr|Health", ReplicatedUsing = OnRep_Health)
 	FGameplayAttributeData Health;
@@ -61,33 +61,29 @@ public:
 	// - GE_Damage_SetByCaller -> IncomingDamage (Data.Damage)
 	// - GE_Heal_SetByCaller   -> IncomingHeal   (Data.Heal)
 	// -------------------------------------------------------------------------
-	UPROPERTY(BlueprintReadOnly, Category="Attr|Meta")
+	UPROPERTY(BlueprintReadOnly, Category = "Attr|Meta")
 	FGameplayAttributeData IncomingDamage;
 	ATTRIBUTE_ACCESSORS(UMosesAttributeSet, IncomingDamage)
 
-	UPROPERTY(BlueprintReadOnly, Category="Attr|Meta")
+	UPROPERTY(BlueprintReadOnly, Category = "Attr|Meta")
 	FGameplayAttributeData IncomingHeal;
 	ATTRIBUTE_ACCESSORS(UMosesAttributeSet, IncomingHeal)
 
 protected:
-	UFUNCTION()
-	void OnRep_Health(const FGameplayAttributeData& OldValue);
-
-	UFUNCTION()
-	void OnRep_MaxHealth(const FGameplayAttributeData& OldValue);
-
-	UFUNCTION()
-	void OnRep_Shield(const FGameplayAttributeData& OldValue);
-
-	UFUNCTION()
-	void OnRep_MaxShield(const FGameplayAttributeData& OldValue);
+	// RepNotify (ASC가 클라 HUD 갱신 트리거 가능)
+	UFUNCTION() void OnRep_Health(const FGameplayAttributeData& OldValue);
+	UFUNCTION() void OnRep_MaxHealth(const FGameplayAttributeData& OldValue);
+	UFUNCTION() void OnRep_Shield(const FGameplayAttributeData& OldValue);
+	UFUNCTION() void OnRep_MaxShield(const FGameplayAttributeData& OldValue);
 
 private:
-	// [MOD] 서버 권위 분배 로직
+	// -------------------------------------------------------------------------
+	// Server authoritative apply helpers
+	// -------------------------------------------------------------------------
 	void ApplySplitDamage_Server(UAbilitySystemComponent* ASC, float DamageAmount);
 	void ApplyHeal_Server(UAbilitySystemComponent* ASC, float HealAmount);
 	void ClampVitals();
 
-	// [MOD] Death 라우팅 (서버 전용)
-	void NotifyDeathIfNeeded_Server(UAbilitySystemComponent* ASC, const FGameplayEffectModCallbackData& Data); 
+	// 죽음 확정(서버 전용) + SSOT(PlayerState) 라우팅
+	void NotifyDeathIfNeeded_Server(UAbilitySystemComponent* ASC, const FGameplayEffectModCallbackData& Data);
 };

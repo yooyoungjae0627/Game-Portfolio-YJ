@@ -1,21 +1,24 @@
-﻿#pragma once
+﻿// ============================================================================
+// UE5_Multi_Shooter/MosesGameState.h  (CLEANED)
+// - Base GameState for Lobby/Match
+// - Owns ExperienceManagerComponent (must exist for seamless travel)
+// - Replicates "Global Phase" (Lobby / Match) for UI and travel boundaries
+// ============================================================================
+
+#pragma once
 
 #include "CoreMinimal.h"
 #include "GameFramework/GameStateBase.h"
 #include "Net/UnrealNetwork.h"
-
-#include "UE5_Multi_Shooter/MosesLogChannels.h"
 
 #include "MosesGameState.generated.h"
 
 class UMosesExperienceManagerComponent;
 
 /**
- * EMosesServerPhase
- *
- * 로비/매치의 "큰 단계"만 나타내는 전역 Phase.
- * - Lobby UI 및 ServerTravel 경계에서 사용
- * - Match의 Warmup/Combat/Result는 AMosesMatchGameState의 EMosesMatchPhase로 분리한다.
+ * Global server phase (큰 흐름만)
+ * - Lobby/Match 경계 (UI 정책 / ServerTravel guard)
+ * - Match 내부(Warmup/Combat/Result)는 AMosesMatchGameState의 EMosesMatchPhase로 분리
  */
 UENUM(BlueprintType)
 enum class EMosesServerPhase : uint8
@@ -28,13 +31,12 @@ enum class EMosesServerPhase : uint8
 /**
  * AMosesGameState
  *
- * 한 문장 요약:
- * - Lobby/Match에서 공통으로 필요한 "Experience 기반 파이프라인"을 GameState에 고정하는 베이스.
+ * 한 줄:
+ * - Lobby/Match 공통 "Experience 파이프라인"을 GameState에 고정해둔 베이스.
  *
- * 핵심:
- * - UMosesExperienceManagerComponent는 반드시 여기에서 CreateDefaultSubobject로 생성되어야 한다.
- * - GameModeBase(서버)는 InitGameState() 시점에 GameState에서 ExperienceManagerComponent를 찾아야 한다.
- * - SeamlessTravel에서도 InitGameState는 BeginPlay 이전에 호출될 수 있으므로 "런타임 AddComponent"는 금지한다.
+ * 정책:
+ * - ExperienceManagerComponent는 CreateDefaultSubobject로 "항상 존재"해야 한다.
+ * - GameModeBase(서버)는 InitGameState()에서 GameState로부터 ExperienceManager를 얻는다.
  */
 UCLASS()
 class UE5_MULTI_SHOOTER_API AMosesGameState : public AGameStateBase
@@ -49,43 +51,39 @@ protected:
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 
 public:
-	// -------------------------------------------------------------------------
+	// =========================================================================
 	// Experience
-	// -------------------------------------------------------------------------
-	/** GameMode/Subsystem이 Experience 흐름에 접근할 수 있도록 제공한다. */
+	// =========================================================================
 	UMosesExperienceManagerComponent* GetExperienceManagerComponent() const { return ExperienceManagerComponent; }
 
-public:
-	// -------------------------------------------------------------------------
-	// Server-only API (Global Phase)
-	// -------------------------------------------------------------------------
+	// =========================================================================
+	// Server-only API: Global Phase
+	// =========================================================================
 	void ServerSetPhase(EMosesServerPhase NewPhase);
 
-public:
-	// -------------------------------------------------------------------------
-	// Read-only accessors
-	// -------------------------------------------------------------------------
+	// =========================================================================
+	// Read-only
+	// =========================================================================
 	EMosesServerPhase GetCurrentPhase() const { return CurrentPhase; }
 
 private:
-	// -------------------------------------------------------------------------
-	// RepNotifies
-	// -------------------------------------------------------------------------
+	// =========================================================================
+	// RepNotify
+	// =========================================================================
 	UFUNCTION()
 	void OnRep_CurrentPhase();
 
 protected:
-	// -------------------------------------------------------------------------
-	// Components (Must exist on every derived GameState)
-	// -------------------------------------------------------------------------
-	/** Lyra 스타일 Experience 로딩/Ready 매니저. 모든 파생 GameState에서 반드시 존재해야 한다. */
+	// =========================================================================
+	// Components (must exist in derived GS)
+	// =========================================================================
 	UPROPERTY(VisibleAnywhere, Category = "Moses|Experience")
 	TObjectPtr<UMosesExperienceManagerComponent> ExperienceManagerComponent;
 
 private:
-	// -------------------------------------------------------------------------
+	// =========================================================================
 	// Replicated state
-	// -------------------------------------------------------------------------
+	// =========================================================================
 	UPROPERTY(ReplicatedUsing = OnRep_CurrentPhase)
 	EMosesServerPhase CurrentPhase = EMosesServerPhase::None;
 };
