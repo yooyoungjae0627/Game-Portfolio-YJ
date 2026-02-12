@@ -1,8 +1,9 @@
-// MosesPerfBootstrap.h
-#pragma once
+﻿#pragma once
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
+#include "UE5_Multi_Shooter/Perf/MosesPerfTestSubsystem.h"
+
 #include "MosesPerfBootstrap.generated.h"
 
 class AMosesPerfSpawner;
@@ -19,46 +20,33 @@ public:
 protected:
 	virtual void BeginPlay() override;
 
-	// ---------------------------------------------------------------------
-	// Exec (Type in console)
-	// ---------------------------------------------------------------------
-	// Usage:
-	//  - perf_dump
-	//  - perf_marker 1
-	//  - perf_spawn 100
-	//  - perf_measure_begin DAY3_PHYSICS Marker01 200 1 3 30
-	//  - perf_measure_end
-	UFUNCTION(Exec)
-	void perf_dump();
+	UFUNCTION(Exec) void perf_dump();
+	UFUNCTION(Exec) void perf_marker(int32 MarkerIndex);
+	UFUNCTION(Exec) void perf_spawn(int32 Count);
+	UFUNCTION(Exec) void perf_measure_begin(const FString& MeasureId, const FString& MarkerId, int32 SpawnCount, int32 TrialIndex, int32 TrialTotal, float DurationSec);
+	UFUNCTION(Exec) void perf_measure_end();
 
-	UFUNCTION(Exec)
-	void perf_marker(int32 MarkerIndex);
-
-	UFUNCTION(Exec)
-	void perf_spawn(int32 Count);
-
-	UFUNCTION(Exec)
-	void perf_measure_begin(const FString& MeasureId, const FString& MarkerId, int32 SpawnCount, int32 TrialIndex, int32 TrialTotal, float DurationSec);
-
-	UFUNCTION(Exec)
-	void perf_measure_end();
+	UFUNCTION(Exec) void perf_ai_on();
+	UFUNCTION(Exec) void perf_ai_off();
 
 private:
 	void BindToSubsystem();
-
 	FName GetMarkerIdByIndex(int32 MarkerIndex) const;
 
 private:
-	// Level references
-	UPROPERTY(EditInstanceOnly, Category="Perf|Bootstrap")
+	UPROPERTY(EditInstanceOnly, Category = "Perf|Bootstrap")
 	TObjectPtr<AMosesPerfSpawner> PerfSpawner;
 
-	UPROPERTY(EditInstanceOnly, Category="Perf|Bootstrap")
+	UPROPERTY(EditInstanceOnly, Category = "Perf|Bootstrap")
 	TObjectPtr<AMosesPerfMarker> Marker01;
 
-	UPROPERTY(EditInstanceOnly, Category="Perf|Bootstrap")
+	UPROPERTY(EditInstanceOnly, Category = "Perf|Bootstrap")
 	TObjectPtr<AMosesPerfMarker> Marker02;
 
-	UPROPERTY(EditInstanceOnly, Category="Perf|Bootstrap")
+	UPROPERTY(EditInstanceOnly, Category = "Perf|Bootstrap")
 	TObjectPtr<AMosesPerfMarker> Marker03;
+
+	// ✅ 전/후 라벨 (SSOT에 전달할 값)
+	UPROPERTY(EditInstanceOnly, Category = "Perf|Policy")
+	EMosesPerfAIPolicyMode StartupAIPolicyMode = EMosesPerfAIPolicyMode::Off;
 };

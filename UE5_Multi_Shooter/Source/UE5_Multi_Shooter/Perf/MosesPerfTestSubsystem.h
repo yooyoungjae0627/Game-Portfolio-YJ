@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "CoreMinimal.h"
 #include "Subsystems/GameInstanceSubsystem.h"
@@ -7,6 +7,13 @@
 class AMosesPerfSpawner;
 class AMosesPerfMarker;
 class APlayerController;
+
+UENUM(BlueprintType)
+enum class EMosesPerfAIPolicyMode : uint8
+{
+	Off UMETA(DisplayName = "AI OFF"),
+	On  UMETA(DisplayName = "AI ON"),
+};
 
 USTRUCT()
 struct FMosesPerfMeasureContext
@@ -56,6 +63,12 @@ public:
 	bool IsReady() const;
 
 	// ---------------------------------------------------------------------
+	// Policy (Before/After label SSOT)
+	// ---------------------------------------------------------------------
+	void SetAIPolicyMode(EMosesPerfAIPolicyMode NewMode);
+	EMosesPerfAIPolicyMode GetAIPolicyMode() const { return ActiveAIPolicyMode; }
+
+	// ---------------------------------------------------------------------
 	// Runtime (Measurement helpers)
 	// ---------------------------------------------------------------------
 	bool TryMoveLocalPlayerToMarker(APlayerController* PC, FName MarkerId);
@@ -64,9 +77,9 @@ public:
 	void DumpPerfBindingState(const UObject* WorldContext) const;
 
 	// ---------------------------------------------------------------------
-	// [MOD] Server-side helper (avoid exposing AMosesPerfMarker in PC code)
+	// Server-side helper (avoid exposing AMosesPerfMarker in PC code)
 	// ---------------------------------------------------------------------
-	bool TryGetMarkerTransform(FName MarkerId, FTransform& OutTransform) const; // [MOD]
+	bool TryGetMarkerTransform(FName MarkerId, FTransform& OutTransform) const;
 
 	// ---------------------------------------------------------------------
 	// Measurement context (Evidence-First)
@@ -86,4 +99,7 @@ private:
 
 	UPROPERTY()
 	FMosesPerfMeasureContext ActiveMeasure;
+
+	UPROPERTY()
+	EMosesPerfAIPolicyMode ActiveAIPolicyMode = EMosesPerfAIPolicyMode::Off;
 };

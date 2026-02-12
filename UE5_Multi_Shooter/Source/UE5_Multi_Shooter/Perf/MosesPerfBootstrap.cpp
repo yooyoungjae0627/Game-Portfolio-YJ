@@ -1,4 +1,4 @@
-// MosesPerfBootstrap.cpp
+﻿// MosesPerfBootstrap.cpp
 #include "UE5_Multi_Shooter/Perf/MosesPerfBootstrap.h"
 
 #include "UE5_Multi_Shooter/Perf/MosesPerfTestSubsystem.h"
@@ -22,6 +22,24 @@ void AMosesPerfBootstrap::BeginPlay()
 	Super::BeginPlay();
 
 	BindToSubsystem();
+
+	UGameInstance* GI = GetGameInstance();
+	if (!GI)
+	{
+		return;
+	}
+
+	if (UMosesPerfTestSubsystem* Subsys = GI->GetSubsystem<UMosesPerfTestSubsystem>())
+	{
+		// 🔴 핵심: 전/후 라벨 적용
+		Subsys->SetAIPolicyMode(StartupAIPolicyMode);
+
+		const TCHAR* ModeStr = (StartupAIPolicyMode == EMosesPerfAIPolicyMode::On) ? TEXT("ON") : TEXT("OFF");
+
+		UE_LOG(LogMosesAuth, Warning,
+			TEXT("[PERF][BOOTSTRAP] Policy_AI=%s"),
+			ModeStr);
+	}
 
 	UE_LOG(LogMosesAuth, Warning,
 		TEXT("[PERF][BIND] Bootstrap BeginPlay Actor=%s World=%s NetMode=%d"),
@@ -155,4 +173,28 @@ void AMosesPerfBootstrap::perf_measure_end()
 	}
 
 	Subsys->EndMeasure(this);
+}
+
+void AMosesPerfBootstrap::perf_ai_on()
+{
+	if (UGameInstance* GI = GetGameInstance())
+	{
+		if (UMosesPerfTestSubsystem* Subsys = GI->GetSubsystem<UMosesPerfTestSubsystem>())
+		{
+			Subsys->SetAIPolicyMode(EMosesPerfAIPolicyMode::On);
+			Subsys->DumpPerfBindingState(this);
+		}
+	}
+}
+
+void AMosesPerfBootstrap::perf_ai_off()
+{
+	if (UGameInstance* GI = GetGameInstance())
+	{
+		if (UMosesPerfTestSubsystem* Subsys = GI->GetSubsystem<UMosesPerfTestSubsystem>())
+		{
+			Subsys->SetAIPolicyMode(EMosesPerfAIPolicyMode::Off);
+			Subsys->DumpPerfBindingState(this);
+		}
+	}
 }

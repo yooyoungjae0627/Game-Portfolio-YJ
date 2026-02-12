@@ -1,4 +1,3 @@
-// MosesPerfTestSubsystem.cpp
 #include "UE5_Multi_Shooter/Perf/MosesPerfTestSubsystem.h"
 
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
@@ -7,6 +6,7 @@
 
 #include "Engine/World.h"
 #include "GameFramework/PlayerController.h"
+#include "GameFramework/Pawn.h"
 
 UMosesPerfTestSubsystem::UMosesPerfTestSubsystem()
 {
@@ -25,6 +25,8 @@ void UMosesPerfTestSubsystem::Deinitialize()
 
 	PerfSpawner = nullptr;
 	Markers.Empty();
+	ActiveMeasure = FMosesPerfMeasureContext();
+	ActiveAIPolicyMode = EMosesPerfAIPolicyMode::Off;
 
 	Super::Deinitialize();
 }
@@ -43,7 +45,8 @@ void UMosesPerfTestSubsystem::RegisterMarker(FName MarkerId, AMosesPerfMarker* I
 {
 	if (MarkerId.IsNone() || !InMarker)
 	{
-		UE_LOG(LogMosesAuth, Warning, TEXT("[PERF][MARKER] Register FAIL MarkerId=%s Marker=%s"), *MarkerId.ToString(), *GetNameSafe(InMarker));
+		UE_LOG(LogMosesAuth, Warning, TEXT("[PERF][MARKER] Register FAIL MarkerId=%s Marker=%s"),
+			*MarkerId.ToString(), *GetNameSafe(InMarker));
 		return;
 	}
 
@@ -59,6 +62,15 @@ void UMosesPerfTestSubsystem::RegisterMarker(FName MarkerId, AMosesPerfMarker* I
 bool UMosesPerfTestSubsystem::IsReady() const
 {
 	return (PerfSpawner != nullptr) && (Markers.Num() > 0);
+}
+
+void UMosesPerfTestSubsystem::SetAIPolicyMode(EMosesPerfAIPolicyMode NewMode)
+{
+	ActiveAIPolicyMode = NewMode;
+
+	UE_LOG(LogMosesAuth, Warning,
+		TEXT("[PERF][POLICY] AI=%s"),
+		(ActiveAIPolicyMode == EMosesPerfAIPolicyMode::On) ? TEXT("ON") : TEXT("OFF"));
 }
 
 AMosesPerfMarker* UMosesPerfTestSubsystem::FindMarker(FName MarkerId) const
@@ -93,7 +105,6 @@ bool UMosesPerfTestSubsystem::TryMoveLocalPlayerToMarker(APlayerController* PC, 
 
 	const FTransform Target = Marker->GetMarkerTransform();
 
-	// NOTE: This is presentation/measurement only.
 	Pawn->SetActorLocationAndRotation(Target.GetLocation(), Target.Rotator(), false, nullptr, ETeleportType::TeleportPhysics);
 
 	UE_LOG(LogMosesAuth, Warning,
@@ -123,11 +134,12 @@ void UMosesPerfTestSubsystem::DumpPerfBindingState(const UObject* WorldContext) 
 	const ENetMode NetMode = World ? World->GetNetMode() : NM_Standalone;
 
 	UE_LOG(LogMosesAuth, Warning,
-		TEXT("[PERF][DUMP] World=%s NetMode=%d Spawner=%s Markers=%d"),
+		TEXT("[PERF][DUMP] World=%s NetMode=%d Spawner=%s Markers=%d Policy_AI=%s"),
 		*GetNameSafe(World),
 		(int32)NetMode,
 		*GetNameSafe(PerfSpawner),
-		Markers.Num());
+		Markers.Num(),
+		(ActiveAIPolicyMode == EMosesPerfAIPolicyMode::On) ? TEXT("ON") : TEXT("OFF"));
 
 	for (const TPair<FName, TObjectPtr<AMosesPerfMarker>>& Pair : Markers)
 	{
@@ -140,9 +152,22 @@ void UMosesPerfTestSubsystem::DumpPerfBindingState(const UObject* WorldContext) 
 	}
 }
 
+bool UMosesPerfTestSubsystem::TryGetMarkerTransform(FName MarkerId, FTransform& OutTransform) const
+{
+	const AMosesPerfMarker* Marker = FindMarker(MarkerId);
+	if (!Marker)
+	{
+		return false;
+	}
+
+	OutTransform = Marker->GetMarkerTransform();
+	return true;
+}
+
 void UMosesPerfTestSubsystem::BeginMeasure(const UObject* WorldContext, FName MeasureId, FName MarkerId, int32 SpawnCount, int32 TrialIndex, int32 TrialTotal, float DurationSec)
 {
 	const UWorld* World = WorldContext ? WorldContext->GetWorld() : nullptr;
+
 	ActiveMeasure.MeasureId = MeasureId;
 	ActiveMeasure.MarkerId = MarkerId;
 	ActiveMeasure.SpawnCount = SpawnCount;
@@ -152,13 +177,14 @@ void UMosesPerfTestSubsystem::BeginMeasure(const UObject* WorldContext, FName Me
 	ActiveMeasure.BeginSeconds = World ? World->GetTimeSeconds() : 0.0;
 
 	UE_LOG(LogMosesAuth, Warning,
-		TEXT("[PERF][MEASURE] Begin Id=%s Marker=%s Count=%d Trial=%d/%d Duration=%.1fs World=%s NetMode=%d"),
+		TEXT("[PERF][MEASURE] Begin Id=%s Marker=%s Count=%d Trial=%d/%d Duration=%.1fs Policy_AI=%s World=%s NetMode=%d"),
 		*MeasureId.ToString(),
 		*MarkerId.ToString(),
 		SpawnCount,
 		TrialIndex,
 		TrialTotal,
 		DurationSec,
+		(ActiveAIPolicyMode == EMosesPerfAIPolicyMode::On) ? TEXT("ON") : TEXT("OFF"),
 		*GetNameSafe(World),
 		World ? (int32)World->GetNetMode() : -1);
 }
@@ -171,27 +197,15 @@ void UMosesPerfTestSubsystem::EndMeasure(const UObject* WorldContext)
 	const double Elapsed = Now - ActiveMeasure.BeginSeconds;
 
 	UE_LOG(LogMosesAuth, Warning,
-		TEXT("[PERF][MEASURE] End Id=%s Elapsed=%.2fs (Expected=%.1fs) Marker=%s Count=%d Trial=%d/%d"),
+		TEXT("[PERF][MEASURE] End Id=%s Elapsed=%.2fs (Expected=%.1fs) Marker=%s Count=%d Trial=%d/%d Policy_AI=%s"),
 		*ActiveMeasure.MeasureId.ToString(),
 		Elapsed,
 		ActiveMeasure.DurationSec,
 		*ActiveMeasure.MarkerId.ToString(),
 		ActiveMeasure.SpawnCount,
 		ActiveMeasure.TrialIndex,
-		ActiveMeasure.TrialTotal);
+		ActiveMeasure.TrialTotal,
+		(ActiveAIPolicyMode == EMosesPerfAIPolicyMode::On) ? TEXT("ON") : TEXT("OFF"));
 
 	ActiveMeasure = FMosesPerfMeasureContext();
-}
-
-// [MOD] Marker Transform getter (server/client both can use via Subsystem)
-bool UMosesPerfTestSubsystem::TryGetMarkerTransform(FName MarkerId, FTransform& OutTransform) const
-{
-	const AMosesPerfMarker* Marker = FindMarker(MarkerId);
-	if (!Marker)
-	{
-		return false;
-	}
-
-	OutTransform = Marker->GetMarkerTransform();
-	return true;
 }
