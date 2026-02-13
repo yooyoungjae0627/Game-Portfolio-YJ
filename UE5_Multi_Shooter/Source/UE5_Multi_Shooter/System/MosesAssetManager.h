@@ -1,3 +1,7 @@
+// ============================================================================
+// UE5_Multi_Shooter/System/MosesAssetManager.h  (FULL - REORDERED)
+// ============================================================================
+
 #pragma once
 
 #include "CoreMinimal.h"
@@ -10,14 +14,14 @@
  * [역할]
  * - 프로젝트 전역 커스텀 AssetManager
  * - PrimaryAsset 스캔/조회
- * - 공용 동기 로딩 유틸 제공(성능/로그 기준점)
+ * - 공용 동기 로딩 유틸 제공(로딩 방식/로그 통일)
  *
  * [필수 설정]
- * - DefaultEngine.ini에 다음이 있어야 함:
+ * - DefaultEngine.ini
  *   [/Script/Engine.Engine]
  *   AssetManagerClassName=/Script/UE5_Multi_Shooter.MosesAssetManager
  *
- * - Experience 스캔 등록도 필요:
+ * - Experience 스캔 등록
  *   [/Script/Engine.AssetManagerSettings]
  *   +PrimaryAssetTypesToScan=(PrimaryAssetType="Experience", AssetBaseClass=/Script/UE5_Multi_Shooter.MosesExperienceDefinition, ...)
  */
@@ -29,38 +33,54 @@ class UE5_MULTI_SHOOTER_API UMosesAssetManager : public UAssetManager
 public:
 	UMosesAssetManager();
 
-	/** 전역 접근 (GEngine->AssetManager 캐스팅) */
+	// --------------------------------------------------------------------
+	// Global access
+	// --------------------------------------------------------------------
 	static UMosesAssetManager& Get();
 
-	/** 엔진 부팅 시 한 번 호출 */
+	// --------------------------------------------------------------------
+	// Engine boot
+	// --------------------------------------------------------------------
 	virtual void StartInitialLoading() override;
 
-	/** 커맨드라인 -LogAssetLoads 옵션이 있으면 true */
+	// --------------------------------------------------------------------
+	// Logging option
+	// --------------------------------------------------------------------
 	static bool ShouldLogAssetLoads();
 
-	/**
-	 * SoftObjectPath 동기 로딩 유틸
-	 * - 내부적으로 StreamableManager를 사용하여 로딩 방식 통일
-	 */
+	// --------------------------------------------------------------------
+	// Load utilities
+	// --------------------------------------------------------------------
 	static UObject* SynchronousLoadAsset(const FSoftObjectPath& AssetPath);
 
-	/** (옵션) 로딩한 에셋을 GC 방지용으로 캐시에 유지 */
+	// --------------------------------------------------------------------
+	// Optional cache (GC prevention)
+	// --------------------------------------------------------------------
 	void AddLoadedAsset(const UObject* Asset);
 
-	/** [MOD] Experience PrimaryAssetType 통일 */
+	// --------------------------------------------------------------------
+	// PrimaryAssetType helpers
+	// --------------------------------------------------------------------
 	static FPrimaryAssetType ExperienceType()
 	{
-		// [MOD] ExperienceDefinition::GetPrimaryAssetId()와 반드시 동일해야 한다.
 		return FPrimaryAssetType(TEXT("Experience"));
 	}
 
 private:
+	// --------------------------------------------------------------------
+	// Internal init
+	// --------------------------------------------------------------------
 	void InitializeMosesNativeTags();
 
 private:
-	/** 로딩된 에셋을 잡아두는 캐시(옵션) */
+	// --------------------------------------------------------------------
+	// State (UPROPERTY first)
+	// --------------------------------------------------------------------
 	UPROPERTY()
 	TSet<TObjectPtr<const UObject>> LoadedAssets;
 
+	// --------------------------------------------------------------------
+	// State (non-UPROPERTY)
+	// --------------------------------------------------------------------
 	FCriticalSection SyncObject;
 };

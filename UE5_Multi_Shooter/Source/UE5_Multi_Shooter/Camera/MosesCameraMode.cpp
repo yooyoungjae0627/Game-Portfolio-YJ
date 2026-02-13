@@ -1,4 +1,9 @@
+// ============================================================================
+// UE5_Multi_Shooter/Camera/MosesCameraMode.cpp  (FULL - CLEAN)
+// ============================================================================
+
 #include "UE5_Multi_Shooter/Camera/MosesCameraMode.h"
+
 #include "UE5_Multi_Shooter/Camera/MosesCameraComponent.h"
 #include "UE5_Multi_Shooter/Camera/MosesPlayerCameraManager.h"
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
@@ -28,7 +33,6 @@ void FMosesCameraModeView::Blend(const FMosesCameraModeView& Other, float OtherW
 		return;
 	}
 
-	// 위치/FOV는 Lerp, 회전은 Normalize 후 가중치 적용
 	Location = FMath::Lerp(Location, Other.Location, OtherWeight);
 
 	const FRotator DeltaRot = (Other.Rotation - Rotation).GetNormalized();
@@ -45,12 +49,10 @@ void FMosesCameraModeView::Blend(const FMosesCameraModeView& Other, float OtherW
 UMosesCameraMode::UMosesCameraMode(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
 {
-	// 기본값은 헤더 초기값 사용
 }
 
 UMosesCameraComponent* UMosesCameraMode::GetMosesCameraComponent() const
 {
-	// 스택에서 NewObject 생성 시 Outer=CameraComponent로 생성됨
 	return CastChecked<UMosesCameraComponent>(GetOuter());
 }
 
@@ -65,7 +67,6 @@ FVector UMosesCameraMode::GetPivotLocation() const
 	const AActor* Target = GetTargetActor();
 	check(Target);
 
-	// Pawn이면 눈 위치(뷰 위치)를 pivot으로 사용
 	if (const APawn* Pawn = Cast<APawn>(Target))
 	{
 		return Pawn->GetPawnViewLocation();
@@ -79,7 +80,6 @@ FRotator UMosesCameraMode::GetPivotRotation() const
 	const AActor* Target = GetTargetActor();
 	check(Target);
 
-	// Pawn이면 보통 ControlRotation 기반 시야 회전
 	if (const APawn* Pawn = Cast<APawn>(Target))
 	{
 		return Pawn->GetViewRotation();
@@ -90,17 +90,13 @@ FRotator UMosesCameraMode::GetPivotRotation() const
 
 void UMosesCameraMode::ResetForNewPush(float InitialBlendWeight)
 {
-	// 스택 Top에 올라올 때 블렌딩을 새로 시작
 	BlendAlpha = 0.0f;
 	BlendWeight = FMath::Clamp(InitialBlendWeight, 0.0f, 1.0f);
 }
 
 void UMosesCameraMode::UpdateCameraMode(float DeltaTime)
 {
-	// 1) 이 모드 기준 View 계산
 	UpdateView(DeltaTime);
-
-	// 2) 이 모드 BlendWeight 업데이트
 	UpdateBlending(DeltaTime);
 }
 
@@ -108,8 +104,6 @@ void UMosesCameraMode::UpdateView(float DeltaTime)
 {
 	const FVector PivotLoc = GetPivotLocation();
 	const FRotator PivotRotRaw = GetPivotRotation();
-
-	// [MOD][FIX] BP/폴백 모드가 Pitch를 죽여도 최소 보장(-89~+89)로 안전 Clamp
 	const FRotator PivotRot = ClampPivotRotationPitch_Safe(PivotRotRaw);
 
 	View.Location = PivotLoc;
@@ -117,7 +111,6 @@ void UMosesCameraMode::UpdateView(float DeltaTime)
 	View.ControlRotation = PivotRot;
 	View.FieldOfView = FieldOfView;
 }
-
 
 void UMosesCameraMode::UpdateBlending(float DeltaTime)
 {
@@ -150,6 +143,48 @@ void UMosesCameraMode::UpdateBlending(float DeltaTime)
 		BlendWeight = BlendAlpha;
 		break;
 	}
+}
+
+void UMosesCameraMode::GetEffectivePitchLimits(float& OutMin, float& OutMax) const
+{
+	const float ProjectMin = -89.0f;
+	const float ProjectMax = 89.0f;
+
+	OutMin = FMath::Min(ViewPitchMin, ProjectMin);
+	OutMax = FMath::Max(ViewPitchMax, ProjectMax);
+
+	if (OutMin > OutMax)
+	{
+		OutMin = ProjectMin;
+		OutMax = ProjectMax;
+	}
+}
+
+FRotator UMosesCameraMode::ClampPivotRotationPitch_Safe(const FRotator& InPivotRot) const
+{
+	float EffectiveMin = 0.0f;
+	float EffectiveMax = 0.0f;
+	GetEffectivePitchLimits(EffectiveMin, EffectiveMax);
+
+	FRotator Out = InPivotRot;
+	const float RawPitch = Out.Pitch;
+
+	Out.Pitch = FMath::ClampAngle(Out.Pitch, EffectiveMin, EffectiveMax);
+
+	if (!bLoggedPitchClampOnce && !FMath::IsNearlyEqual(RawPitch, Out.Pitch, 0.01f))
+	{
+		bLoggedPitchClampOnce = true;
+
+		UE_LOG(LogMosesCamera, Warning,
+			TEXT("[PITCH][CLAMP][CAMMODE] Mode=%s Raw=%.2f Clamped=%.2f Min=%.2f Max=%.2f"),
+			*GetNameSafe(GetClass()),
+			RawPitch,
+			Out.Pitch,
+			EffectiveMin,
+			EffectiveMax);
+	}
+
+	return Out;
 }
 
 // ---------------- UMosesCameraModeStack ----------------
@@ -188,26 +223,22 @@ void UMosesCameraModeStack::PushCameraMode(TSubclassOf<UMosesCameraMode> CameraM
 	UMosesCameraMode* Mode = GetCameraModeInstance(CameraModeClass);
 	check(Mode);
 
-	// 이미 Top이면 유지
 	if (CameraModeStack.Num() > 0 && CameraModeStack[0] == Mode)
 	{
 		return;
 	}
 
-	// 스택 중간에 있으면 제거 후 Top으로 이동
 	const int32 ExistingIndex = CameraModeStack.Find(Mode);
 	if (ExistingIndex != INDEX_NONE)
 	{
 		CameraModeStack.RemoveAt(ExistingIndex);
 	}
 
-	// 블렌딩 시작값 결정: 다른 모드가 있으면 0부터 시작(부드러운 전환)
 	const float InitialWeight = (CameraModeStack.Num() > 0 && Mode->BlendTime > 0.0f) ? 0.0f : 1.0f;
 	Mode->ResetForNewPush(InitialWeight);
 
 	CameraModeStack.Insert(Mode, 0);
 
-	// Bottom은 항상 1.0
 	if (CameraModeStack.Num() > 0)
 	{
 		CameraModeStack.Last()->BlendWeight = 1.0f;
@@ -224,7 +255,6 @@ void UMosesCameraModeStack::UpdateStack(float DeltaTime)
 
 		Mode->UpdateCameraMode(DeltaTime);
 
-		// Top부터 내려가며, 어떤 모드가 1.0이면 그 아래는 제거 가능
 		if (Mode->BlendWeight >= 1.0f)
 		{
 			const int32 RemoveIndex = i + 1;
@@ -236,7 +266,6 @@ void UMosesCameraModeStack::UpdateStack(float DeltaTime)
 		}
 	}
 
-	// Bottom은 항상 1.0 유지
 	if (CameraModeStack.Num() > 0)
 	{
 		CameraModeStack.Last()->BlendWeight = 1.0f;
@@ -257,7 +286,6 @@ void UMosesCameraModeStack::BlendStack(FMosesCameraModeView& OutCameraModeView) 
 
 	OutCameraModeView = Bottom->View;
 
-	// Bottom → Top 방향으로 Blend
 	for (int32 i = LastIndex - 1; i >= 0; --i)
 	{
 		const UMosesCameraMode* Mode = CameraModeStack[i];
@@ -271,45 +299,4 @@ void UMosesCameraModeStack::EvaluateStack(float DeltaTime, FMosesCameraModeView&
 {
 	UpdateStack(DeltaTime);
 	BlendStack(OutCameraModeView);
-}
-
-void UMosesCameraMode::GetEffectivePitchLimits(float& OutMin, float& OutMax) const
-{
-	// 프로젝트 최소 보장
-	const float ProjectMin = -89.0f;
-	const float ProjectMax = 89.0f;
-
-	// 모드 값은 "더 넓게" 허용 가능하지만 "더 좁게"는 허용하지 않는다.
-	OutMin = FMath::Min(ViewPitchMin, ProjectMin);
-	OutMax = FMath::Max(ViewPitchMax, ProjectMax);
-
-	if (OutMin > OutMax)
-	{
-		OutMin = ProjectMin;
-		OutMax = ProjectMax;
-	}
-}
-
-FRotator UMosesCameraMode::ClampPivotRotationPitch_Safe(const FRotator& InPivotRot) const
-{
-	float EffectiveMin = 0.0f;
-	float EffectiveMax = 0.0f;
-	GetEffectivePitchLimits(EffectiveMin, EffectiveMax);
-
-	FRotator Out = InPivotRot;
-	const float RawPitch = Out.Pitch;
-
-	Out.Pitch = FMath::ClampAngle(Out.Pitch, EffectiveMin, EffectiveMax);
-
-	// [MOD][Evidence] Pitch가 실제로 Clamp되는지 증거 1회 출력
-	if (!bLoggedPitchClampOnce && !FMath::IsNearlyEqual(RawPitch, Out.Pitch, 0.01f))
-	{
-		bLoggedPitchClampOnce = true;
-		UE_LOG(LogMosesCamera, Warning,
-			TEXT("[PITCH][CLAMP][CAMMODE] Mode=%s Raw=%.2f Clamped=%.2f Min=%.2f Max=%.2f"),
-			*GetNameSafe(GetClass()),
-			RawPitch, Out.Pitch, EffectiveMin, EffectiveMax);
-	}
-
-	return Out;
 }

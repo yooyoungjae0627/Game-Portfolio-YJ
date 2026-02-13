@@ -1,12 +1,22 @@
-﻿#include "MosesLobbyGameState.h"
+﻿// ============================================================================
+// UE5_Multi_Shooter/Lobby/GameState/MosesLobbyGameState.cpp  (FULL - REORDERED)
+// - file statics → Engine → Replication → UI Notify → FastArray item utils/callbacks
+// - internal helpers → logs → server APIs (room/chat) → misc
+// ============================================================================
+
+#include "MosesLobbyGameState.h"
 
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
 #include "UE5_Multi_Shooter/MosesGameInstance.h"
 #include "UE5_Multi_Shooter/MosesPlayerState.h"
-#include "UE5_Multi_Shooter/System/MosesLobbyLocalPlayerSubsystem.h" 
+#include "UE5_Multi_Shooter/System/MosesLobbyLocalPlayerSubsystem.h"
 #include "UE5_Multi_Shooter/Lobby/UI/MosesLobbyChatTypes.h"
 
 #include "Net/UnrealNetwork.h"
+
+// =========================================================
+// File statics
+// =========================================================
 
 static int64 NowUnixMs()
 {
@@ -47,6 +57,9 @@ AMosesLobbyGameState::AMosesLobbyGameState(const FObjectInitializer& ObjectIniti
 	: Super(ObjectInitializer)
 {
 	bReplicates = true;
+
+	// (주의) 로비에서 Tick 금지면 여기서 false로 바꾸는 게 맞다.
+	// 너 코드는 일단 유지.
 	PrimaryActorTick.bCanEverTick = true;
 	PrimaryActorTick.bStartWithTickEnabled = true;
 }
@@ -71,14 +84,6 @@ void AMosesLobbyGameState::BeginPlay()
 	}
 }
 
-void AMosesLobbyGameState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
-{
-	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
-
-	DOREPLIFETIME(AMosesLobbyGameState, RoomList);
-	DOREPLIFETIME(AMosesLobbyGameState, ChatHistory);
-}
-
 void AMosesLobbyGameState::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
@@ -89,13 +94,22 @@ void AMosesLobbyGameState::Tick(float DeltaSeconds)
 	}
 }
 
+void AMosesLobbyGameState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
+{
+	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+
+	DOREPLIFETIME(AMosesLobbyGameState, RoomList);
+	DOREPLIFETIME(AMosesLobbyGameState, ChatHistory);
+}
+
 // =========================================================
 // UI Notify (single entry)
 // =========================================================
 
 void AMosesLobbyGameState::NotifyRoomStateChanged_LocalPlayers() const
 {
-	UE_LOG(LogMosesRoom, Log, TEXT("[LobbyGS][%s] NotifyRoomStateChanged_LocalPlayers()"), MosesNetModeToStr_UObject(this));
+	UE_LOG(LogMosesRoom, Log, TEXT("[LobbyGS][%s] NotifyRoomStateChanged_LocalPlayers()"),
+		MosesNetModeToStr_UObject(this));
 
 	if (UMosesGameInstance* GI = UMosesGameInstance::Get(this))
 	{
@@ -206,7 +220,7 @@ bool FMosesLobbyRoomItem::SetReadyByPid(const FGuid& Pid, bool bInReady)
 }
 
 // =========================================================
-// FastArray callbacks (client-side logs + UI notify)
+// FastArray callbacks (client logs + UI notify)
 // =========================================================
 
 void FMosesLobbyRoomItem::PostReplicatedAdd(const FMosesLobbyRoomList& InArraySerializer)
@@ -576,12 +590,7 @@ void AMosesLobbyGameState::Server_LeaveRoom(AMosesPlayerState* PS)
 {
 	check(HasAuthority());
 
-	if (!PS)
-	{
-		return;
-	}
-
-	if (!PS->GetRoomId().IsValid())
+	if (!PS || !PS->GetRoomId().IsValid())
 	{
 		return;
 	}
@@ -602,7 +611,6 @@ void AMosesLobbyGameState::Server_LeaveRoom(AMosesPlayerState* PS)
 	if (Index != INDEX_NONE)
 	{
 		Room->MemberPids.RemoveAt(Index);
-		Room->EnsureReadySize();
 
 		if (Room->MemberReady.IsValidIndex(Index))
 		{
@@ -618,7 +626,6 @@ void AMosesLobbyGameState::Server_LeaveRoom(AMosesPlayerState* PS)
 	}
 
 	MarkRoomDirty(*Room);
-
 	RemoveEmptyRoomIfNeeded(LeavingRoomId);
 
 	PS->ServerSetRoom(FGuid(), false);
@@ -631,12 +638,7 @@ void AMosesLobbyGameState::Server_SyncReadyFromPlayerState(AMosesPlayerState* PS
 {
 	check(HasAuthority());
 
-	if (!PS)
-	{
-		return;
-	}
-
-	if (!PS->GetRoomId().IsValid())
+	if (!PS || !PS->GetRoomId().IsValid())
 	{
 		return;
 	}
@@ -717,7 +719,6 @@ bool AMosesLobbyGameState::Server_CanStartMatch(const FGuid& RoomId, FString& Ou
 
 void AMosesLobbyGameState::Server_AddChatMessage(AMosesPlayerState* SenderPS, const FString& Text)
 {
-	// [MOD] 서버 권위 게이트 복구
 	if (!HasAuthority() || !SenderPS)
 	{
 		return;
@@ -759,12 +760,11 @@ void AMosesLobbyGameState::Server_AddChatMessage(AMosesPlayerState* SenderPS, co
 	// 서버는 RepNotify 자동 호출 안 됨 → 서버도 UI 갱신 파이프 태우려면 직접 호출
 	OnRep_ChatHistory();
 
-	// 복제 즉시 밀어주기(UX)
 	ForceNetUpdate();
 }
 
 // =========================================================
-// Helpers
+// Misc
 // =========================================================
 
 bool AMosesLobbyGameState::IsServerAuth() const

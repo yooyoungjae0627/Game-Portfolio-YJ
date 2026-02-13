@@ -1,12 +1,9 @@
-﻿// Fill out your copyright notice in the Description page of Project Settings.
-
-#pragma once
+﻿#pragma once
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
 #include "LobbyPreviewActor.generated.h"
 
-// LobbyPreviewActor.h
 // ─────────────────────────────────────────────────────────────
 // 로비 캐릭터 선택 화면에서 사용하는 "프리뷰 전용 액터"MosesLobbyVoiceSubsystem
 //

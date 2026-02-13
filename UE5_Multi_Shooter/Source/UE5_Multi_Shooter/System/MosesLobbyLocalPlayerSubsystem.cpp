@@ -1,4 +1,10 @@
-﻿#include "UE5_Multi_Shooter/System/MosesLobbyLocalPlayerSubsystem.h"
+﻿// ============================================================================
+// UE5_Multi_Shooter/System/MosesLobbyLocalPlayerSubsystem.cpp (FULL - REORDERED)
+// - Engine LifeCycle → Widget Registration → UI Control → Notify → Login/Nick
+// - UI Refresh → Retry Control → Helpers → Preview → Player/Camera → GS Bind → Pending Send
+// ============================================================================
+
+#include "UE5_Multi_Shooter/System/MosesLobbyLocalPlayerSubsystem.h"
 #include "UE5_Multi_Shooter/System/MosesUIRegistrySubsystem.h"
 
 #include "UE5_Multi_Shooter/MosesPlayerController.h"
@@ -9,13 +15,17 @@
 #include "UE5_Multi_Shooter/Lobby/UI/MosesLobbyWidget.h"
 #include "UE5_Multi_Shooter/Lobby/NPC/LobbyPreviewActor.h"
 
+#include "Blueprint/UserWidget.h"
 #include "Camera/CameraActor.h"
 #include "Engine/GameInstance.h"
 #include "Engine/LocalPlayer.h"
 #include "Engine/World.h"
 #include "Kismet/GameplayStatics.h"
 #include "TimerManager.h"
-#include "Blueprint/UserWidget.h"
+
+// ============================================================================
+// Engine
+// ============================================================================
 
 void UMosesLobbyLocalPlayerSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
@@ -41,14 +51,15 @@ void UMosesLobbyLocalPlayerSubsystem::Deinitialize()
 	LobbyWidget = nullptr;
 	ClearLobbyPreviewCache();
 
-	UE_LOG(LogMosesSpawn, Log, TEXT("[UIFlow] LobbySubsys Deinitialize LP=%s"), *GetNameSafe(GetLocalPlayer()));
+	UE_LOG(LogMosesSpawn, Log, TEXT("[UIFlow] LobbySubsys Deinitialize LP=%s"),
+		*GetNameSafe(GetLocalPlayer()));
 
 	Super::Deinitialize();
 }
 
-// =========================================================
+// ============================================================================
 // Widget registration
-// =========================================================
+// ============================================================================
 
 void UMosesLobbyLocalPlayerSubsystem::RegisterLobbyWidget(UMosesLobbyWidget* InLobbyWidget)
 {
@@ -61,9 +72,9 @@ void UMosesLobbyLocalPlayerSubsystem::SetLobbyWidget(UMosesLobbyWidget* InWidget
 	RefreshLobbyUI_FromCurrentState();
 }
 
-// =========================================================
+// ============================================================================
 // UI control
-// =========================================================
+// ============================================================================
 
 void UMosesLobbyLocalPlayerSubsystem::ActivateLobbyUI()
 {
@@ -81,7 +92,8 @@ void UMosesLobbyLocalPlayerSubsystem::ActivateLobbyUI()
 		UWorld* World = GetWorld();
 		APlayerController* PC_FromLP = (LP && World) ? LP->GetPlayerController(World) : nullptr;
 
-		UE_LOG(LogMosesSpawn, Warning, TEXT("[UIFlow][CHECK] ThisSubsys=%s LP=%s PC_FromLP=%s LP.PlayerController(raw)=%s"),
+		UE_LOG(LogMosesSpawn, Warning,
+			TEXT("[UIFlow][CHECK] ThisSubsys=%s LP=%s PC_FromLP=%s LP.PlayerController(raw)=%s"),
 			*GetNameSafe(this),
 			*GetNameSafe(LP),
 			*GetNameSafe(PC_FromLP),
@@ -99,6 +111,7 @@ void UMosesLobbyLocalPlayerSubsystem::ActivateLobbyUI()
 		return;
 	}
 
+	// GI / Registry
 	ULocalPlayer* LP = GetLocalPlayer();
 	UGameInstance* GI = LP ? LP->GetGameInstance() : nullptr;
 	if (!GI)
@@ -114,6 +127,7 @@ void UMosesLobbyLocalPlayerSubsystem::ActivateLobbyUI()
 		return;
 	}
 
+	// Widget class path resolve
 	FSoftClassPath WidgetPath = Registry->GetLobbyWidgetClassPath();
 	if (WidgetPath.IsNull())
 	{
@@ -130,6 +144,7 @@ void UMosesLobbyLocalPlayerSubsystem::ActivateLobbyUI()
 		return;
 	}
 
+	// Local PC check
 	AMosesPlayerController* PC = GetMosesPC_LocalOnly();
 	if (!PC)
 	{
@@ -139,10 +154,12 @@ void UMosesLobbyLocalPlayerSubsystem::ActivateLobbyUI()
 
 	if (!PC->IsLocalController())
 	{
-		UE_LOG(LogMosesSpawn, Error, TEXT("[UIFlow] ActivateLobbyUI FAIL (PC is not local) PC=%s"), *GetNameSafe(PC));
+		UE_LOG(LogMosesSpawn, Error, TEXT("[UIFlow] ActivateLobbyUI FAIL (PC is not local) PC=%s"),
+			*GetNameSafe(PC));
 		return;
 	}
 
+	// Create widget
 	UMosesLobbyWidget* NewWidget = CreateWidget<UMosesLobbyWidget>(PC, LoadedClass);
 	if (!NewWidget)
 	{
@@ -156,7 +173,8 @@ void UMosesLobbyLocalPlayerSubsystem::ActivateLobbyUI()
 
 	SetLobbyWidget(LobbyWidget);
 
-	UE_LOG(LogMosesSpawn, Log, TEXT("[UIFlow] ActivateLobbyUI OK Widget=%s InViewport=%d OwningPC=%s"),
+	UE_LOG(LogMosesSpawn, Log,
+		TEXT("[UIFlow] ActivateLobbyUI OK Widget=%s InViewport=%d OwningPC=%s"),
 		*GetNameSafe(LobbyWidget),
 		LobbyWidget->IsInViewport() ? 1 : 0,
 		*GetNameSafe(PC));
@@ -180,12 +198,13 @@ void UMosesLobbyLocalPlayerSubsystem::DeactivateLobbyUI()
 	LobbyWidget->RemoveFromParent();
 	LobbyWidget = nullptr;
 
-	UE_LOG(LogMosesSpawn, Log, TEXT("[UIFlow] DeactivateLobbyUI OK WasInViewport=%d"), bWasInViewport ? 1 : 0);
+	UE_LOG(LogMosesSpawn, Log, TEXT("[UIFlow] DeactivateLobbyUI OK WasInViewport=%d"),
+		bWasInViewport ? 1 : 0);
 }
 
-// =========================================================
-// Notify
-// =========================================================
+// ============================================================================
+// Notify (PC/GS -> Subsys)
+// ============================================================================
 
 void UMosesLobbyLocalPlayerSubsystem::NotifyPlayerStateChanged()
 {
@@ -199,7 +218,6 @@ void UMosesLobbyLocalPlayerSubsystem::NotifyPlayerStateChanged()
 	}
 
 	// [ADD] PS가 늦게 붙는 구간(SeamlessTravel 직후) 대비: 다음 틱에 UI 갱신 시도
-	//      (단, 여기서 "닉 전송" 같은 네트워크 행위는 절대 하지 않는다)
 	if (AMosesPlayerState* MyPS = GetMosesPS_LocalOnly(); !MyPS)
 	{
 		if (UWorld* World = GetWorld())
@@ -208,11 +226,7 @@ void UMosesLobbyLocalPlayerSubsystem::NotifyPlayerStateChanged()
 		}
 	}
 
-	// =========================================================
-	// [MOD] 로그인 의사가 없으면 "닉 자동 생성/자동 전송"을 절대 하지 않는다.
-	// - ServerTravel로 로비에 따라온 B를 보호하기 위한 핵심 게이트.
-	// - 대신 UI만 갱신하고 끝낸다. (서버가 Dev_Moses를 넣어줄 수 있게 닉을 비워둠)
-	// =========================================================
+	// 로그인 의사가 없으면 "닉 자동 생성/전송" 금지 (UI만 갱신)
 	if (!bLoginSubmitted_Local)
 	{
 		LobbyPlayerStateChangedEvent.Broadcast();
@@ -221,9 +235,7 @@ void UMosesLobbyLocalPlayerSubsystem::NotifyPlayerStateChanged()
 		return;
 	}
 
-	// =========================================================
 	// 로그인 의사가 있을 때만 AutoNick fallback 허용
-	// =========================================================
 	{
 		AMosesPlayerController* PC = GetMosesPC_LocalOnly();
 		AMosesPlayerState* MyPS = GetMosesPS_LocalOnly();
@@ -233,8 +245,7 @@ void UMosesLobbyLocalPlayerSubsystem::NotifyPlayerStateChanged()
 			const FString CurrentNick = MyPS->GetPlayerNickName().TrimStartAndEnd();
 			if (CurrentNick.IsEmpty() && PendingLobbyNickname_Local.TrimStartAndEnd().IsEmpty())
 			{
-				const FString NickName = MyPS->GetPlayerName();
-				PendingLobbyNickname_Local = NickName;
+				PendingLobbyNickname_Local = MyPS->GetPlayerName();
 				bPendingLobbyNicknameSend_Local = true;
 
 				UE_LOG(LogMosesSpawn, Warning, TEXT("[Nick][Auto] Set PendingLobbyNickname_Local='%s' PS=%s"),
@@ -243,9 +254,7 @@ void UMosesLobbyLocalPlayerSubsystem::NotifyPlayerStateChanged()
 		}
 	}
 
-	// =========================================================
-	// [MOD] 닉 전송은 "로그인 의사"가 있을 때만 수행
-	// =========================================================
+	// 닉 전송은 "로그인 의사"가 있을 때만 수행
 	TrySendPendingLobbyNickname_Local();
 
 	// UI 파이프
@@ -253,7 +262,6 @@ void UMosesLobbyLocalPlayerSubsystem::NotifyPlayerStateChanged()
 	RefreshLobbyPreviewCharacter_LocalOnly();
 	RefreshLobbyUI_FromCurrentState();
 }
-
 
 void UMosesLobbyLocalPlayerSubsystem::NotifyRoomStateChanged()
 {
@@ -271,9 +279,9 @@ void UMosesLobbyLocalPlayerSubsystem::NotifyJoinRoomResult(EMosesRoomJoinResult 
 	LobbyJoinRoomResultEvent.Broadcast(Result, RoomId);
 }
 
-// =========================================================
+// ============================================================================
 // Login/Nickname (Local-only intent)
-// =========================================================
+// ============================================================================
 
 void UMosesLobbyLocalPlayerSubsystem::RequestSetLobbyNickname_LocalOnly(const FString& Nick)
 {
@@ -299,9 +307,27 @@ void UMosesLobbyLocalPlayerSubsystem::RequestSetLobbyNickname_LocalOnly(const FS
 		*PendingLobbyNickname_Local, *GetNameSafe(PC));
 }
 
-// =========================================================
+void UMosesLobbyLocalPlayerSubsystem::NotifyLobbyNicknameChanged(const FString& NewNickname)
+{
+	UE_LOG(LogMosesSpawn, Warning, TEXT("[Nick][LPS] NotifyLobbyNicknameChanged NewNick='%s' World=%s"),
+		*NewNickname,
+		*GetNameSafe(GetWorld()));
+
+	if (!IsLobbyContext())
+	{
+		return;
+	}
+
+	// Widget이 LPS 이벤트에 바인딩되어 있으니, "PS 바뀜" 이벤트로 통일
+	LobbyPlayerStateChangedEvent.Broadcast();
+
+	// 위젯이 아직 바인딩 전인 타이밍 대비로 즉시 갱신도 한번 더
+	RefreshLobbyUI_FromCurrentState();
+}
+
+// ============================================================================
 // Lobby Preview (Public API - Widget에서 호출)
-// =========================================================
+// ============================================================================
 
 void UMosesLobbyLocalPlayerSubsystem::RequestNextCharacterPreview_LocalOnly()
 {
@@ -323,9 +349,9 @@ void UMosesLobbyLocalPlayerSubsystem::RequestNextCharacterPreview_LocalOnly()
 	ApplyPreviewBySelectedId_LocalOnly(LocalPreviewSelectedId);
 }
 
-// =========================================================
+// ============================================================================
 // Lobby UI refresh (single pipeline)
-// =========================================================
+// ============================================================================
 
 void UMosesLobbyLocalPlayerSubsystem::RefreshLobbyUI_FromCurrentState()
 {
@@ -349,13 +375,12 @@ void UMosesLobbyLocalPlayerSubsystem::RefreshLobbyUI_FromCurrentState()
 	LobbyWidget->RefreshFromState(GS, MyPS);
 }
 
-// =========================================================
+// ============================================================================
 // Retry control (Preview refresh - 중복 예약 방지)
-// =========================================================
+// ============================================================================
 
 void UMosesLobbyLocalPlayerSubsystem::RequestPreviewRefreshRetry_NextTick()
 {
-	// ✅ 로비가 아니면 재시도 타이머를 걸지 않는다
 	if (!IsLobbyContext())
 	{
 		return;
@@ -386,9 +411,9 @@ void UMosesLobbyLocalPlayerSubsystem::ClearPreviewRefreshRetry()
 	}
 }
 
-// =========================================================
+// ============================================================================
 // Retry control (Bind GameState - Travel/LateJoin 대비)
-// =========================================================
+// ============================================================================
 
 void UMosesLobbyLocalPlayerSubsystem::RequestBindLobbyGameStateEventsRetry_NextTick()
 {
@@ -417,13 +442,12 @@ void UMosesLobbyLocalPlayerSubsystem::ClearBindLobbyGameStateEventsRetry()
 	}
 }
 
-// =========================================================
+// ============================================================================
 // Internal helpers
-// =========================================================
+// ============================================================================
 
 bool UMosesLobbyLocalPlayerSubsystem::IsLobbyContext() const
 {
-	// ✅ 로비 여부 판정은 "LobbyGameState 존재"로 고정 (네 정책 유지)
 	UWorld* World = GetWorld();
 	return World && (World->GetGameState<AMosesLobbyGameState>() != nullptr);
 }
@@ -452,13 +476,12 @@ void UMosesLobbyLocalPlayerSubsystem::ClearLobbyPreviewCache()
 	bLoggedPreviewWaitOnce = false;
 }
 
-// =========================================================
+// ============================================================================
 // Lobby Preview (Local-only)
-// =========================================================
+// ============================================================================
 
 void UMosesLobbyLocalPlayerSubsystem::RefreshLobbyPreviewCharacter_LocalOnly()
 {
-	// ✅ 매치/다른 맵이면 프리뷰 로직을 절대 돌리지 않는다
 	if (!IsLobbyContext())
 	{
 		StopLobbyOnlyTimers();
@@ -593,9 +616,9 @@ ALobbyPreviewActor* UMosesLobbyLocalPlayerSubsystem::GetOrFindLobbyPreviewActor_
 	return CachedLobbyPreviewActor.Get();
 }
 
-// =========================================================
+// ============================================================================
 // Player access helpers
-// =========================================================
+// ============================================================================
 
 AMosesPlayerController* UMosesLobbyLocalPlayerSubsystem::GetMosesPC_LocalOnly() const
 {
@@ -620,9 +643,9 @@ AMosesPlayerState* UMosesLobbyLocalPlayerSubsystem::GetMosesPS_LocalOnly() const
 	return PC->GetPlayerState<AMosesPlayerState>();
 }
 
-// =========================================================
+// ============================================================================
 // Camera helpers (Local-only)
-// =========================================================
+// ============================================================================
 
 ACameraActor* UMosesLobbyLocalPlayerSubsystem::FindCameraByTag(const FName& CameraTag) const
 {
@@ -694,9 +717,9 @@ APlayerController* UMosesLobbyLocalPlayerSubsystem::GetLocalPC() const
 	return LP->GetPlayerController(GetWorld());
 }
 
-// =========================================================
+// ============================================================================
 // Lobby GameState bind
-// =========================================================
+// ============================================================================
 
 AMosesLobbyGameState* UMosesLobbyLocalPlayerSubsystem::GetLobbyGameState() const
 {
@@ -733,10 +756,8 @@ void UMosesLobbyLocalPlayerSubsystem::BindLobbyGameStateEvents()
 	bBoundToGameState = true;
 	CachedLobbyGS = LGS;
 
-	// ✅ 실제 GameState 델리게이트가 있다면 여기서 Bind (프로젝트 정의에 맞게 연결)
-	// 예)
+	// ✅ 실제 GameState 델리게이트가 있다면 여기서 Bind
 	// LGS->OnRoomStateChanged.AddUObject(this, &ThisClass::NotifyRoomStateChanged);
-	// LGS->OnSomething.AddUObject(this, ...);
 
 	RefreshLobbyUI_FromCurrentState();
 }
@@ -757,7 +778,6 @@ void UMosesLobbyLocalPlayerSubsystem::UnbindLobbyGameStateEvents()
 	}
 
 	// ✅ 실제 GameState 델리게이트가 있다면 여기서 Unbind
-	// 예)
 	// LGS->OnRoomStateChanged.RemoveAll(this);
 
 	bBoundToGameState = false;
@@ -766,9 +786,9 @@ void UMosesLobbyLocalPlayerSubsystem::UnbindLobbyGameStateEvents()
 	UE_LOG(LogMosesSpawn, Log, TEXT("[DOD][LPS] UnbindLobbyGameStateEvents OK"));
 }
 
-// =========================================================
+// ============================================================================
 // Pending nickname send (Local-only)
-// =========================================================
+// ============================================================================
 
 void UMosesLobbyLocalPlayerSubsystem::TrySendPendingLobbyNickname_Local()
 {
@@ -829,23 +849,4 @@ void UMosesLobbyLocalPlayerSubsystem::TrySendPendingLobbyNickname_Local()
 
 	UE_LOG(LogMosesSpawn, Log, TEXT("[Nick][LPS] Sent Server_SetLobbyNickname '%s' PC=%s PS=%s"),
 		*PendingLobbyNickname_Local, *GetNameSafe(PC), *GetNameSafe(PS));
-}
-
-void UMosesLobbyLocalPlayerSubsystem::NotifyLobbyNicknameChanged(const FString& NewNickname)
-{
-	UE_LOG(LogMosesSpawn, Warning, TEXT("[Nick][LPS] NotifyLobbyNicknameChanged NewNick='%s' World=%s"),
-		*NewNickname,
-		*GetNameSafe(GetWorld()));
-
-	// ✅ 매치/다른 맵이면 로비 UI 갱신 파이프 자체를 돌리지 않음
-	if (!IsLobbyContext())
-	{
-		return;
-	}
-
-	// ✅ Widget이 이미 LPS 이벤트에 바인딩되어 있으니, "PS 바뀜" 이벤트를 재사용해서 한 파이프만 유지
-	LobbyPlayerStateChangedEvent.Broadcast();
-
-	// ✅ 즉시 갱신도 한번 더(위젯이 아직 바인딩 전인 타이밍 대비)
-	RefreshLobbyUI_FromCurrentState();
 }

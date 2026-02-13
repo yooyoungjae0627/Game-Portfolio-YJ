@@ -1,6 +1,6 @@
 ﻿// ============================================================================
-// UE5_Multi_Shooter/Lobby/GameMode/MosesLobbyGameMode.cpp  (FULL - UPDATED)
-// - [ADD] Travel 1회 보장 가드 + URL 단일화 + 증거 로그
+// UE5_Multi_Shooter/Lobby/GameMode/MosesLobbyGameMode.cpp  (FULL - REORDERED)
+// - ctor → Engine → StartGame/Travel → CharacterSelect → Helpers → Catalog → DevNick
 // ============================================================================
 
 #include "MosesLobbyGameMode.h"
@@ -28,7 +28,7 @@ AMosesLobbyGameMode::AMosesLobbyGameMode()
 
 	DefaultPawnClass = nullptr;
 
-	// [MOD] BeginPlay에서도 다시 한번 맞춰준다.
+	// BeginPlay에서도 다시 맞춘다(정책 유지)
 	bUseSeamlessTravel = bUseSeamlessTravelToMatch;
 }
 
@@ -60,7 +60,7 @@ void AMosesLobbyGameMode::BeginPlay()
 		*MatchLevelName.ToString(),
 		*MatchMapRootPath);
 
-	// [ADD] 런타임 중복 호출 방지 상태 초기화
+	// 런타임 중복 호출 방지 상태 초기화
 	bTravelToMatchStarted = false;
 }
 
@@ -96,7 +96,7 @@ void AMosesLobbyGameMode::GenericPlayerInitialization(AController* C)
 	// [정책] 로비 진입만으로 로그인 금지
 	PS->ServerSetLoggedIn(false);
 
-	// [ADD] SeamlessTravel로 따라온 플레이어도 여기서 DevNick 보장
+	// SeamlessTravel로 따라온 플레이어도 여기서 DevNick 보장
 	EnsureDevNickname_Server(PS);
 
 	UE_LOG(LogMosesSpawn, Log, TEXT("[LobbyGM][GPI] OK PC=%s Pid=%s Nick='%s' LoggedIn=%d"),
@@ -134,7 +134,7 @@ void AMosesLobbyGameMode::PostLogin(APlayerController* NewPlayer)
 	// [정책] PostLogin에서도 로그인 금지 유지
 	PS->ServerSetLoggedIn(false);
 
-	// [MOD] PostLogin에서도 DevNick 보장(중복 호출돼도 안전)
+	// PostLogin에서도 DevNick 보장(중복 호출돼도 안전)
 	EnsureDevNickname_Server(PS);
 
 	UE_LOG(LogMosesSpawn, Log, TEXT("[LobbyGM] PostLogin OK PC=%s Pid=%s Nick='%s' LoggedIn=%d"),
@@ -155,7 +155,6 @@ void AMosesLobbyGameMode::HandleStartMatchRequest(AMosesPlayerState* HostPS)
 		return;
 	}
 
-	// ✅ [ADD] Travel 중복 방지 + 증거 로그
 	LogTravelCall_Evidence(TEXT("HandleStartMatchRequest"));
 
 	if (bTravelToMatchStarted)
@@ -177,10 +176,9 @@ void AMosesLobbyGameMode::HandleStartMatchRequest(AMosesPlayerState* HostPS)
 		return;
 	}
 
-	// ✅ [ADD] 여기서부터는 단 1회만 허용
+	// 여기서부터는 단 1회만 허용
 	bTravelToMatchStarted = true;
 
-	// ✅ [MOD] URL은 BuildMatchTravelURL에서 단일 생성
 	const FString MapPath = BuildMatchTravelURL();
 
 	UE_LOG(LogMosesSpawn, Warning, TEXT("[LobbyGM] ServerTravel -> %s"), *MapPath);
@@ -203,7 +201,6 @@ void AMosesLobbyGameMode::TravelToMatch()
 		return;
 	}
 
-	// ✅ [ADD] Debug/Exec Travel도 같은 가드/URL 사용
 	LogTravelCall_Evidence(TEXT("TravelToMatch(Exec)"));
 
 	if (bTravelToMatchStarted)
@@ -227,7 +224,6 @@ void AMosesLobbyGameMode::ServerTravelToMatch()
 		return;
 	}
 
-	// ✅ [ADD] 가드
 	if (bTravelToMatchStarted)
 	{
 		UE_LOG(LogMosesSpawn, Warning, TEXT("[LobbyGM] ServerTravelToMatch SKIP (AlreadyTraveling)"));
@@ -248,16 +244,10 @@ void AMosesLobbyGameMode::ServerTravelToMatch()
 
 FString AMosesLobbyGameMode::BuildMatchTravelURL() const
 {
-	// ✅ [FIX] URL 생성은 여기 하나로 통일
-	// - /Game/Map/ vs /Game/Maps/ 혼용 금지
-	// - Experience 옵션도 여기서만 관리
-
 	const FString Root = MatchMapRootPath.IsEmpty() ? TEXT("/Game/Map/") : MatchMapRootPath;
-
-	// MatchLevelName = "MatchLevel" -> "/Game/Map/MatchLevel"
 	const FString MapAssetPath = FString::Printf(TEXT("%s%s"), *Root, *MatchLevelName.ToString());
 
-	// 네 요구사항: Warmup Experience로 진입
+	// Warmup Experience로 진입 (정책)
 	return FString::Printf(TEXT("%s?listen?Experience=Exp_Match_Warmup"), *MapAssetPath);
 }
 
@@ -324,9 +314,8 @@ void AMosesLobbyGameMode::HandleSelectCharacterRequest(AMosesPlayerController* R
 	PS->DOD_PS_Log(this, TEXT("Lobby:AfterSelectCharacter"));
 }
 
-APawn* AMosesLobbyGameMode::SpawnDefaultPawnFor_Implementation(AController* NewPlayer, AActor* StartSpot) // [FIX]
+APawn* AMosesLobbyGameMode::SpawnDefaultPawnFor_Implementation(AController* NewPlayer, AActor* StartSpot)
 {
-	// [FIX] 로비는 PreviewActor 기반 UI만 사용한다. Pawn 스폰 금지.
 	UE_LOG(LogMosesSpawn, Warning, TEXT("[LobbyGM] SpawnDefaultPawnFor BLOCKED PC=%s Start=%s"),
 		*GetNameSafe(NewPlayer),
 		*GetNameSafe(StartSpot));

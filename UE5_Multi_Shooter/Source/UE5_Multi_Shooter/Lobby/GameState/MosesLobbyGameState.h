@@ -1,16 +1,13 @@
 ﻿// ============================================================================
-// MosesLobbyGameState.h (FULL)
-// - Lobby 전용 GameState (RoomList/Chat 등)
-// - 부모: AMosesGameState (ExperienceManagerComponent 공통 보장)
+// UE5_Multi_Shooter/Lobby/GameState/MosesLobbyGameState.h  (FULL - REORDERED)
+// - Types/Structs → GameState class → Replicated state
 // ============================================================================
 
 #pragma once
 
 #include "CoreMinimal.h"
 #include "Net/Serialization/FastArraySerializer.h"
-#include "Net/UnrealNetwork.h"
 #include "UE5_Multi_Shooter/MosesGameState.h"
-
 #include "MosesLobbyGameState.generated.h"
 
 class AMosesPlayerState;
@@ -40,6 +37,7 @@ public:
 	void EnsureReadySize();
 	bool SetReadyByPid(const FGuid& Pid, bool bInReady);
 
+	// FastArray callbacks
 	void PostReplicatedAdd(const struct FMosesLobbyRoomList& InArraySerializer);
 	void PostReplicatedChange(const struct FMosesLobbyRoomList& InArraySerializer);
 	void PreReplicatedRemove(const struct FMosesLobbyRoomList& InArraySerializer);
@@ -91,17 +89,6 @@ struct TStructOpsTypeTraits<FMosesLobbyRoomList> : public TStructOpsTypeTraitsBa
 	enum { WithNetDeltaSerializer = true };
 };
 
-/**
- * AMosesLobbyGameState
- *
- * 단일진실(룸 전광판)
- * - 방 목록(RoomList)
- * - 방 멤버/Ready/정원 등의 공유 상태
- *
- * 원칙:
- * - 서버가 RoomList를 수정
- * - 클라는 RoomList 복제값을 받아 UI만 갱신
- */
 UCLASS()
 class UE5_MULTI_SHOOTER_API AMosesLobbyGameState : public AMosesGameState
 {
@@ -111,18 +98,18 @@ public:
 	AMosesLobbyGameState(const FObjectInitializer& ObjectInitializer = FObjectInitializer::Get());
 
 protected:
-	// -------------------------------------------------------------------------
+	// =========================================================================
 	// Engine
-	// -------------------------------------------------------------------------
+	// =========================================================================
 	virtual void PostInitializeComponents() override;
 	virtual void BeginPlay() override;
 	virtual void Tick(float DeltaSeconds) override;
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 
 public:
-	// -------------------------------------------------------------------------
+	// =========================================================================
 	// Server APIs (Room)
-	// -------------------------------------------------------------------------
+	// =========================================================================
 	FGuid Server_CreateRoom(AMosesPlayerState* RequestPS, const FString& RoomTitle, int32 MaxPlayers);
 	bool Server_JoinRoom(AMosesPlayerState* RequestPS, const FGuid& RoomId);
 	bool Server_JoinRoomWithResult(AMosesPlayerState* RequestPS, const FGuid& RoomId, EMosesRoomJoinResult& OutResult);
@@ -134,29 +121,29 @@ public:
 	bool Server_CanStartMatch(const FGuid& RoomId, FString& OutReason) const;
 
 public:
-	// -------------------------------------------------------------------------
+	// =========================================================================
 	// Server APIs (Chat)
-	// -------------------------------------------------------------------------
+	// =========================================================================
 	void Server_AddChatMessage(AMosesPlayerState* SenderPS, const FString& Text);
 
 public:
-	// -------------------------------------------------------------------------
-	// Client/UI Read-only accessors
-	// -------------------------------------------------------------------------
+	// =========================================================================
+	// Client/UI read-only
+	// =========================================================================
 	const FMosesLobbyRoomItem* FindRoom(const FGuid& RoomId) const;
 	const TArray<FMosesLobbyRoomItem>& GetRooms() const { return RoomList.Items; }
 	const TArray<FLobbyChatMessage>& GetChatHistory() const { return ChatHistory; }
 
 public:
-	// -------------------------------------------------------------------------
+	// =========================================================================
 	// UI Notify (single entry)
-	// -------------------------------------------------------------------------
+	// =========================================================================
 	void NotifyRoomStateChanged_LocalPlayers() const;
 
 protected:
-	// -------------------------------------------------------------------------
+	// =========================================================================
 	// RepNotify
-	// -------------------------------------------------------------------------
+	// =========================================================================
 	UFUNCTION()
 	void OnRep_RoomList();
 
@@ -164,37 +151,33 @@ protected:
 	void OnRep_ChatHistory();
 
 private:
-	// -------------------------------------------------------------------------
+	// =========================================================================
 	// Internal helpers
-	// -------------------------------------------------------------------------
+	// =========================================================================
 	static FGuid GetPidChecked(const AMosesPlayerState* PS);
 
 	FMosesLobbyRoomItem* FindRoomMutable(const FGuid& RoomId);
-
 	void MarkRoomDirty(FMosesLobbyRoomItem& Item);
 	void RemoveEmptyRoomIfNeeded(const FGuid& RoomId);
 
 private:
-	/*====================================================
-	= Logs (server)
-	====================================================*/
-	// [MOD] cpp에서 정의된 LogRoom_* 함수들을 클래스 멤버로 선언 복구
+	// =========================================================================
+	// Logs (server)
+	// =========================================================================
 	void LogRoom_Create(const FMosesLobbyRoomItem& Room) const;
 	void LogRoom_JoinAccepted(const FMosesLobbyRoomItem& Room) const;
 	void LogRoom_JoinRejected(EMosesRoomJoinResult Reason, const FGuid& RoomId, const AMosesPlayerState* JoinPS) const;
 
 private:
-	/*====================================================
-	= Internal helpers
-	====================================================*/
-	// [MOD] cpp에 존재하는 IsServerAuth 선언 복구
+	// =========================================================================
+	// Misc
+	// =========================================================================
 	bool IsServerAuth() const;
 
-
 private:
-	// -------------------------------------------------------------------------
+	// =========================================================================
 	// Replicated state
-	// -------------------------------------------------------------------------
+	// =========================================================================
 	UPROPERTY(ReplicatedUsing = OnRep_RoomList)
 	FMosesLobbyRoomList RoomList;
 

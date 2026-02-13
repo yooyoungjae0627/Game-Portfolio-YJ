@@ -1,3 +1,7 @@
+// ============================================================================
+// UE5_Multi_Shooter/System/MosesStartFlowSubsystem.cpp  (FULL - REORDERED)
+// ============================================================================
+
 #include "UE5_Multi_Shooter/System/MosesStartFlowSubsystem.h"
 
 #include "UE5_Multi_Shooter/Experience/MosesExperienceDefinition.h"
@@ -6,7 +10,7 @@
 #include "Blueprint/UserWidget.h"
 #include "Engine/World.h"
 #include "GameFramework/GameStateBase.h"
-#include "GameFramework/PlayerController.h" 
+#include "GameFramework/PlayerController.h"
 #include "Kismet/GameplayStatics.h"
 #include "TimerManager.h"
 
@@ -39,6 +43,10 @@ void UMosesStartFlowSubsystem::Deinitialize()
 	Super::Deinitialize();
 }
 
+// ============================================================================
+// Map lifecycle
+// ============================================================================
+
 void UMosesStartFlowSubsystem::HandlePostLoadMap(UWorld* LoadedWorld)
 {
 	if (!LoadedWorld)
@@ -61,11 +69,14 @@ void UMosesStartFlowSubsystem::HandlePostLoadMap(UWorld* LoadedWorld)
 	TryBindExperienceReady();
 }
 
+// ============================================================================
+// Experience binding
+// ============================================================================
+
 void UMosesStartFlowSubsystem::TryBindExperienceReady()
 {
 	if (UMosesExperienceManagerComponent* ExpMgr = FindExperienceManager())
 	{
-		// Experience READY면 즉시 호출 / 아니면 READY 순간 호출
 		ExpMgr->CallOrRegister_OnExperienceLoaded(
 			FMosesExperienceLoadedDelegate::CreateUObject(this, &ThisClass::HandleExperienceReady)
 		);
@@ -98,8 +109,7 @@ void UMosesStartFlowSubsystem::HandleExperienceReady(const UMosesExperienceDefin
 		return;
 	}
 
-	// Start 맵에서만 Start UI를 띄운다.
-	// (프로젝트 정책에 맞게 "L_Start" 같은 이름으로 고정하는 걸 추천)
+	// Start 맵에서만 Start UI 표시
 	const FString MapNameLower = World->GetMapName().ToLower();
 	if (!MapNameLower.Contains(TEXT("start")))
 	{
@@ -109,6 +119,10 @@ void UMosesStartFlowSubsystem::HandleExperienceReady(const UMosesExperienceDefin
 	ShowStartUIFromExperience(Experience);
 }
 
+// ============================================================================
+// UI
+// ============================================================================
+
 void UMosesStartFlowSubsystem::ShowStartUIFromExperience(const UMosesExperienceDefinition* Experience)
 {
 	if (!Experience || StartWidget)
@@ -116,21 +130,18 @@ void UMosesStartFlowSubsystem::ShowStartUIFromExperience(const UMosesExperienceD
 		return;
 	}
 
-	// [ADD] PC는 로컬 플레이어에서 가져와야 한다.
 	APlayerController* PC = GetLocalPlayerController();
 	if (!PC)
 	{
 		return;
 	}
 
-	// Experience의 Start UI 클래스 가져오기 (private 직접 접근 금지)
-	const TSoftClassPtr<UUserWidget> StartWidgetClass = Experience->GetStartWidgetClass(); // [MOD]
+	const TSoftClassPtr<UUserWidget> StartWidgetClass = Experience->GetStartWidgetClass();
 	if (StartWidgetClass.IsNull())
 	{
 		return;
 	}
 
-	// 동기 로드(시작 화면은 단순/확실함 우선)
 	UClass* WidgetClass = StartWidgetClass.LoadSynchronous();
 	if (!WidgetClass)
 	{
@@ -145,13 +156,16 @@ void UMosesStartFlowSubsystem::ShowStartUIFromExperience(const UMosesExperienceD
 
 	StartWidget->AddToViewport(10);
 
-	// UIOnly 입력 모드로 전환
 	PC->bShowMouseCursor = true;
 
 	FInputModeUIOnly InputMode;
 	InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
 	PC->SetInputMode(InputMode);
 }
+
+// ============================================================================
+// Helpers
+// ============================================================================
 
 UMosesExperienceManagerComponent* UMosesStartFlowSubsystem::FindExperienceManager() const
 {
@@ -170,7 +184,7 @@ UMosesExperienceManagerComponent* UMosesStartFlowSubsystem::FindExperienceManage
 	return GS->FindComponentByClass<UMosesExperienceManagerComponent>();
 }
 
-APlayerController* UMosesStartFlowSubsystem::GetLocalPlayerController() const // [ADD]
+APlayerController* UMosesStartFlowSubsystem::GetLocalPlayerController() const
 {
 	UWorld* World = GetWorld();
 	if (!World)
@@ -178,6 +192,5 @@ APlayerController* UMosesStartFlowSubsystem::GetLocalPlayerController() const //
 		return nullptr;
 	}
 
-	// 멀티/PIE에서도 "로컬 플레이어 0번"을 기준으로 Start UI를 띄운다.
 	return UGameplayStatics::GetPlayerController(World, 0);
 }

@@ -11,8 +11,6 @@ void UMosesCameraMode_ThirdPerson::UpdateView(float DeltaTime)
 {
 	const FVector PivotLoc = GetPivotLocation();
 	const FRotator PivotRotRaw = GetPivotRotation();
-
-	// [MOD][FIX] ¾ÈÀü Pitch Clamp
 	const FRotator PivotRot = ClampPivotRotationPitch_Safe(PivotRotRaw);
 
 	FVector Offset = DefaultTargetOffset;

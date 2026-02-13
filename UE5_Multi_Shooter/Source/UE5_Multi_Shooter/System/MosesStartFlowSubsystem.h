@@ -1,3 +1,7 @@
+// ============================================================================
+// UE5_Multi_Shooter/System/MosesStartFlowSubsystem.h  (FULL - REORDERED)
+// ============================================================================
+
 #pragma once
 
 #include "CoreMinimal.h"
@@ -12,18 +16,17 @@ class UMosesExperienceManagerComponent;
  * UMosesStartFlowSubsystem
  *
  * [역할]
- * - Start 레벨에서만 "Start UI(로비/시작 위젯)"를 띄운다.
- * - Experience READY 이벤트를 기준으로 동작한다 (Tick 금지)
+ * - Start 레벨에서만 "Start UI"를 띄운다.
+ * - Experience READY 이벤트 기반 (Tick 금지)
  *
- * [동작 흐름]
- * - PostLoadMapWithWorld 이벤트로 맵 로드 시점 감지
- * - GameState에서 ExperienceManagerComponent를 찾아 READY 콜백 등록
- * - Experience에 설정된 StartWidgetClass를 읽어 UI 생성
+ * [흐름]
+ * - PostLoadMapWithWorld로 맵 로드 감지
+ * - GameState에서 ExperienceManager를 찾아 READY 콜백 등록
+ * - Experience에서 StartWidgetClass를 읽어 UI 생성
  *
  * [주의]
- * - 이 Subsystem은 GameInstance에 붙으므로 서버/클라 모두 존재한다.
- * - UI 생성은 로컬 플레이어(클라)에서만 의미가 있으므로
- *   PlayerController가 존재하는 시점에만 생성한다.
+ * - GameInstanceSubsystem은 서버/클라 모두 존재
+ * - UI는 로컬 플레이어(클라)에서만 생성 의미가 있으므로 Local PC가 있을 때만 생성
  */
 UCLASS()
 class UE5_MULTI_SHOOTER_API UMosesStartFlowSubsystem : public UGameInstanceSubsystem
@@ -31,22 +34,44 @@ class UE5_MULTI_SHOOTER_API UMosesStartFlowSubsystem : public UGameInstanceSubsy
 	GENERATED_BODY()
 
 public:
+	// --------------------------------------------------------------------
+	// Engine
+	// --------------------------------------------------------------------
 	virtual void Initialize(FSubsystemCollectionBase& Collection) override;
 	virtual void Deinitialize() override;
 
 private:
+	// --------------------------------------------------------------------
+	// Map lifecycle hooks
+	// --------------------------------------------------------------------
 	void HandlePostLoadMap(UWorld* LoadedWorld);
+
+	// --------------------------------------------------------------------
+	// Experience binding
+	// --------------------------------------------------------------------
 	void TryBindExperienceReady();
 	void HandleExperienceReady(const UMosesExperienceDefinition* Experience);
 
+	// --------------------------------------------------------------------
+	// UI
+	// --------------------------------------------------------------------
 	void ShowStartUIFromExperience(const UMosesExperienceDefinition* Experience);
 
+	// --------------------------------------------------------------------
+	// Helpers
+	// --------------------------------------------------------------------
 	UMosesExperienceManagerComponent* FindExperienceManager() const;
-	APlayerController* GetLocalPlayerController() const; // [ADD]
+	APlayerController* GetLocalPlayerController() const;
 
 private:
+	// --------------------------------------------------------------------
+	// State (UPROPERTY first)
+	// --------------------------------------------------------------------
 	UPROPERTY(Transient)
 	TObjectPtr<UUserWidget> StartWidget = nullptr;
 
+	// --------------------------------------------------------------------
+	// State (non-UPROPERTY)
+	// --------------------------------------------------------------------
 	FTimerHandle BindRetryTimerHandle;
 };
