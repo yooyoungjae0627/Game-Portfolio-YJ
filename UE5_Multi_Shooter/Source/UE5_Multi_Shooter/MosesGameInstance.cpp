@@ -1,8 +1,8 @@
 ﻿#include "MosesGameInstance.h"
-
-#include "Components/GameFrameworkComponentManager.h"
 #include "UE5_Multi_Shooter/Match/GAS/MosesGameplayTags.h"
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
+
+#include "Components/GameFrameworkComponentManager.h"
 
 #include "Engine/World.h"
 #include "Engine/Engine.h"
@@ -37,6 +37,7 @@ UMosesGameInstance* UMosesGameInstance::GetChecked(const UObject* WorldContextOb
 		UE_LOG(LogMosesAuth, Error, TEXT("[GI] UMosesGameInstance::GetChecked failed. WorldContextObject=%s"),
 			*GetNameSafe(WorldContextObject));
 	}
+
 	return GI;
 }
 
@@ -96,15 +97,21 @@ void UMosesGameInstance::Shutdown()
 void UMosesGameInstance::TryLogServerBoot(UWorld* World, const UWorld::InitializationValues IVS)
 {
 	if (bDidServerBootLog || !World)
+	{
 		return;
+	}
 
 	// ✅ GameWorld만 (에디터/프리뷰 월드 제외)
 	if (!World->IsGameWorld())
+	{
 		return;
+	}
 
 	// ✅ 서버쪽만
 	if (World->GetNetMode() == NM_Client)
+	{
 		return;
+	}
 
 	bDidServerBootLog = true;
 

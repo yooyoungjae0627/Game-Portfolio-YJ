@@ -1,52 +1,54 @@
+// ============================================================================
+// UE5_Multi_Shooter/MosesLogChannels.cpp
+// ============================================================================
+
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
 
 #include "Engine/World.h"
-#include "Engine/Engine.h"
 
-// ============================================================
-// 기존 DEFINE
-// ============================================================
+// ============================================================================
+// Log Categories (DEFINE)
+// ============================================================================
 
+// Core
 DEFINE_LOG_CATEGORY(LogMosesSpawn);
 DEFINE_LOG_CATEGORY(LogMosesMove);
 DEFINE_LOG_CATEGORY(LogMosesPickup);
 DEFINE_LOG_CATEGORY(LogMosesGAS);
 DEFINE_LOG_CATEGORY(LogMosesAI);
 
+// Combat / Camera
 DEFINE_LOG_CATEGORY(LogMosesCombat);
 DEFINE_LOG_CATEGORY(LogMosesCamera);
 
+// Experience / GameFeature
 DEFINE_LOG_CATEGORY(LogMosesExp);
+DEFINE_LOG_CATEGORY(LogMosesGF);
 
+// Player / Auth / Phase / Room
 DEFINE_LOG_CATEGORY(LogMosesPlayer);
 DEFINE_LOG_CATEGORY(LogMosesAuth);
 DEFINE_LOG_CATEGORY(LogMosesPhase);
 DEFINE_LOG_CATEGORY(LogMosesRoom);
 
-DEFINE_LOG_CATEGORY(LogMosesGF);
-DEFINE_LOG_CATEGORY(LogMosesHP);
+// Weapon / Grenade / HP
+DEFINE_LOG_CATEGORY(LogMosesWeapon);
 DEFINE_LOG_CATEGORY(LogMosesGrenade);
+DEFINE_LOG_CATEGORY(LogMosesHP);
 
+// Asset
 DEFINE_LOG_CATEGORY(LogMosesAsset);
 
-// ============================================================
-// [MOD] Day5 Flag/Capture & Match/Broadcast 카테고리 DEFINE 추가
-// ============================================================
+// Match / Flag
+DEFINE_LOG_CATEGORY(LogMosesMatch);
+DEFINE_LOG_CATEGORY(LogMosesFlag);
 
-DEFINE_LOG_CATEGORY(LogMosesMatch);   // [MOD]
-DEFINE_LOG_CATEGORY(LogMosesFlag);    // [MOD]
-
-// ============================================================
-// 세분화 카테고리 DEFINE (선택)
-// ============================================================
-
+// Optional: fine-grained categories
 DEFINE_LOG_CATEGORY(LogMosesAmmo);
 DEFINE_LOG_CATEGORY(LogMosesDeath);
 DEFINE_LOG_CATEGORY(LogMosesRespawn);
 DEFINE_LOG_CATEGORY(LogMosesScore);
 DEFINE_LOG_CATEGORY(LogMosesHUD);
-
-DEFINE_LOG_CATEGORY(LogMosesWeapon);
 
 DEFINE_LOG_CATEGORY(LogMosesZombie);
 DEFINE_LOG_CATEGORY(LogMosesAnnounce);
@@ -54,9 +56,9 @@ DEFINE_LOG_CATEGORY(LogMosesKillFeed);
 
 DEFINE_LOG_CATEGORY(LogMosesPerf);
 
-// ============================================================
+// ============================================================================
 // MosesLog Helpers
-// ============================================================
+// ============================================================================
 
 namespace MosesLog
 {
@@ -91,11 +93,16 @@ namespace MosesLog
 
 		switch (World->GetNetMode())
 		{
-		case NM_Standalone:      return TEXT("NetMode=Standalone");
-		case NM_DedicatedServer: return TEXT("NetMode=DedicatedServer");
-		case NM_ListenServer:    return TEXT("NetMode=ListenServer");
-		case NM_Client:          return TEXT("NetMode=Client");
-		default:                 break;
+		case NM_Standalone:
+			return TEXT("NetMode=Standalone");
+		case NM_DedicatedServer:
+			return TEXT("NetMode=DedicatedServer");
+		case NM_ListenServer:
+			return TEXT("NetMode=ListenServer");
+		case NM_Client:
+			return TEXT("NetMode=Client");
+		default:
+			break;
 		}
 
 		return TEXT("NetMode=Unknown");
