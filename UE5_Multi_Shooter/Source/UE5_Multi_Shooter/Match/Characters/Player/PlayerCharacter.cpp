@@ -1,14 +1,18 @@
-﻿#include "UE5_Multi_Shooter/Match/Characters/Player/PlayerCharacter.h"
+﻿// ============================================================================
+// UE5_Multi_Shooter/Match/Characters/Player/PlayerCharacter.cpp (FULL - CLEAN)
+// ============================================================================
+
+#include "UE5_Multi_Shooter/Match/Characters/Player/PlayerCharacter.h"
 
 #include "UE5_Multi_Shooter/Match/Characters/Player/Components/MosesHeroComponent.h"
-#include "UE5_Multi_Shooter/Match/Components/MosesCombatComponent.h"
+#include "UE5_Multi_Shooter/Match/Characters/Player/Components/MosesCombatComponent.h"
 #include "UE5_Multi_Shooter/Match/Weapon/MosesWeaponRegistrySubsystem.h"
 #include "UE5_Multi_Shooter/Match/Weapon/MosesWeaponData.h"
 #include "UE5_Multi_Shooter/MosesPlayerState.h"
 #include "UE5_Multi_Shooter/System/MosesAuthorityGuards.h"
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
 #include "UE5_Multi_Shooter/Match/Characters/Animation/MosesAnimInstance.h"
-#include "UE5_Multi_Shooter/Match/Components/MosesInteractionComponent.h"
+#include "UE5_Multi_Shooter/Match/Characters/Player/Components/MosesInteractionComponent.h"
 #include "UE5_Multi_Shooter/Camera/MosesCameraComponent.h"
 
 #include "GameFramework/CharacterMovementComponent.h"
@@ -112,7 +116,7 @@ void APlayerCharacter::PostInitializeComponents()
 {
 	Super::PostInitializeComponents();
 
-	// 초기 Attach는 "일단" 소켓 존재 여부와 무관하게 실행한다.
+	// 초기 Attach는 소켓 존재 여부와 무관하게 실행한다.
 	if (GetMesh())
 	{
 		if (WeaponMesh_Hand)
@@ -134,7 +138,6 @@ void APlayerCharacter::PostInitializeComponents()
 	}
 
 	CacheSlotMeshMapping();
-
 	Moses_ApplyRotationPolicy(this, TEXT("PostInit"));
 }
 
@@ -188,7 +191,6 @@ void APlayerCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCom
 void APlayerCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
 {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
-
 	DOREPLIFETIME(APlayerCharacter, bIsSprinting);
 }
 
@@ -211,7 +213,6 @@ void APlayerCharacter::PawnClientRestart()
 	Moses_ApplyRotationPolicy(this, TEXT("PawnClientRestart"));
 	BindCombatComponent();
 
-	// [MOD] 리스폰 직후 "Dead=false"를 SSOT 기준으로 AnimBP에 강제 반영
 	ForceSyncAnimDeadStateFromSSOT(TEXT("PawnClientRestart"));
 }
 
@@ -234,7 +235,6 @@ void APlayerCharacter::OnRep_PlayerState()
 		ApplyAttachmentPlan_Immediate(CachedCombatComponent->GetCurrentSlot());
 	}
 
-	// [MOD] PS가 도착한 순간에도 한번 더 강제 동기화
 	ForceSyncAnimDeadStateFromSSOT(TEXT("OnRep_PlayerState"));
 }
 
@@ -404,9 +404,7 @@ void APlayerCharacter::Input_Reload()
 
 	if (UMosesCombatComponent* CombatComp = GetCombatComponent_Checked())
 	{
-		// (증거 로그용) R 입력이 실제로 Combat으로 들어가는지 확인
 		UE_LOG(LogMosesWeapon, Warning, TEXT("[RELOAD][CL][INPUT] R Press -> RequestReload Pawn=%s"), *GetNameSafe(this));
-
 		CombatComp->RequestReload();
 	}
 }
@@ -474,7 +472,6 @@ void APlayerCharacter::StartAutoFire_Local()
 
 void APlayerCharacter::StopAutoFire_Local()
 {
-	// ✅ [MOD] bFireHeldLocal 여부와 무관하게 "무조건" 타이머 끊기
 	bFireHeldLocal = false;
 	GetWorldTimerManager().ClearTimer(AutoFireTimerHandle);
 
@@ -646,7 +643,6 @@ void APlayerCharacter::BindCombatComponent()
 	CachedCombatComponent->OnEquippedChanged.AddUObject(this, &APlayerCharacter::HandleEquippedChanged);
 	CachedCombatComponent->OnDeadChanged.AddUObject(this, &APlayerCharacter::HandleDeadChanged);
 	CachedCombatComponent->OnReloadingChanged.AddUObject(this, &APlayerCharacter::HandleReloadingChanged);
-
 	CachedCombatComponent->OnSwapStarted.AddUObject(this, &APlayerCharacter::HandleSwapStarted);
 
 	UE_LOG(LogMosesWeapon, Log, TEXT("[WEAPON][Bind] CombatComponent Bound Pawn=%s PS=%s"),
@@ -664,7 +660,6 @@ void APlayerCharacter::BindCombatComponent()
 		*GetNameSafe(GetPlayerState()),
 		*GetNameSafe(GetPlayerState() ? GetPlayerState()->GetPawn() : nullptr));
 
-	// [MOD] 최종 방어선: Bind 직후 SSOT->AnimBP Dead 강제 동기화
 	ForceSyncAnimDeadStateFromSSOT(TEXT("BindCombatComponent"));
 }
 
@@ -691,7 +686,7 @@ UMosesCombatComponent* APlayerCharacter::GetCombatComponent_Checked() const
 		return nullptr;
 	}
 
-	// ✅ [FIX] FindComponentByClass 금지. SSOT 포인터 직접 접근.
+	// FindComponentByClass 대신 SSOT 포인터 직접 접근
 	return PS->GetCombatComponent();
 }
 
@@ -704,7 +699,7 @@ void APlayerCharacter::HandleEquippedChanged(int32 SlotIndex, FGameplayTag Weapo
 
 	RefreshAllWeaponMeshes_FromSSOT();
 
-	// 스왑 몽타주 중에는 Notify가 Attach 교체를 담당하므로 중간 덮어쓰기 금지.
+	// 스왑 몽타주 중에는 Notify가 Attach 교체를 담당하므로 중간 덮어쓰기 금지
 	if (!bSwapInProgress && CachedCombatComponent)
 	{
 		ApplyAttachmentPlan_Immediate(CachedCombatComponent->GetCurrentSlot());
@@ -717,7 +712,7 @@ void APlayerCharacter::HandleDeadChanged(bool bNewDead)
 		bNewDead ? 1 : 0,
 		*GetNameSafe(this));
 
-	// AnimBP 분기용 Dead 상태 전달 (Tick 금지: 상태 변경 시 1회)
+	// AnimBP 분기용 Dead 상태 전달 (Tick 없이 상태 변경 시 1회)
 	if (USkeletalMeshComponent* MeshComp = GetMesh())
 	{
 		if (UAnimInstance* AnimInst = MeshComp->GetAnimInstance())
@@ -729,9 +724,7 @@ void APlayerCharacter::HandleDeadChanged(bool bNewDead)
 		}
 	}
 
-	// ---------------------------------------------------------------------
 	// Dead 해제(리스폰): 입력/이동/몽타주 정리
-	// ---------------------------------------------------------------------
 	if (!bNewDead)
 	{
 		StopAutoFire_Local();
@@ -756,7 +749,6 @@ void APlayerCharacter::HandleDeadChanged(bool bNewDead)
 			{
 				if (UAnimInstance* AnimInst = MeshComp->GetAnimInstance())
 				{
-					// ✅ 리스폰 시에는 전체 정리 OK
 					AnimInst->Montage_Stop(0.10f);
 				}
 			}
@@ -766,9 +758,7 @@ void APlayerCharacter::HandleDeadChanged(bool bNewDead)
 		return;
 	}
 
-	// ---------------------------------------------------------------------
-	// Dead 진입: 입력/오토파이어/이동 정지 + (중요) DeathMontage는 절대 끊지 않는다
-	// ---------------------------------------------------------------------
+	// Dead 진입: 입력/오토파이어/이동 정지
 	StopAutoFire_Local();
 
 	if (APlayerController* PC = GetController<APlayerController>())
@@ -780,16 +770,14 @@ void APlayerCharacter::HandleDeadChanged(bool bNewDead)
 		}
 	}
 
-	// ✅ [FIX] 전체 Montage_Stop(0.0f) 금지
-	// - RepNotify(DeadChanged)가 Multicast(DeathMontage)보다 늦게 오면
-	//   여기서 DeathMontage까지 같이 끊겨서 “재생 로그는 찍히는데 화면에서 안 보이는” 현상이 난다.
+	// RepNotify(DeadChanged)가 Multicast(DeathMontage)보다 늦게 오면
+	// 여기서 DeathMontage까지 같이 끊길 수 있으므로 Death는 보호하고 나머지만 정리
 	if (GetNetMode() != NM_DedicatedServer)
 	{
 		if (USkeletalMeshComponent* MeshComp = GetMesh())
 		{
 			if (UAnimInstance* AnimInst = MeshComp->GetAnimInstance())
 			{
-				// DeathMontage는 보호하고, 나머지만 끊는다.
 				if (FireMontage && AnimInst->Montage_IsPlaying(FireMontage))
 				{
 					AnimInst->Montage_Stop(0.0f, FireMontage);
@@ -807,7 +795,6 @@ void APlayerCharacter::HandleDeadChanged(bool bNewDead)
 					AnimInst->Montage_Stop(0.0f, HitReactMontage);
 				}
 
-				// ✅ 혹시 DeathMontage가 이미 재생 중이면 절대 Stop 금지
 				if (DeathMontage && AnimInst->Montage_IsPlaying(DeathMontage))
 				{
 					UE_LOG(LogMosesCombat, Warning, TEXT("[DEAD][COS] DeathMontage already playing -> KEEP Pawn=%s"), *GetNameSafe(this));
@@ -819,8 +806,6 @@ void APlayerCharacter::HandleDeadChanged(bool bNewDead)
 	ApplyDeadCosmetics_Local();
 
 	UE_LOG(LogMosesCombat, Warning, TEXT("[DEAD][COS] Locked input + stopped non-death montages Pawn=%s"), *GetNameSafe(this));
-
-	// DeathMontage는 서버 Multicast에서만 재생 (정책 유지)
 }
 
 void APlayerCharacter::HandleReloadingChanged(bool bReloading)
@@ -844,15 +829,6 @@ void APlayerCharacter::HandleReloadingChanged(bool bReloading)
 		return;
 	}
 
-	// Swap 몽타주 중이면(원하면) 리로드 재생을 막아도 됨
-	// (현재는 정책 선택사항. 충돌이 보이면 아래 가드 ON 권장)
-	// if (bSwapInProgress)
-	// {
-	// 	UE_LOG(LogMosesWeapon, Verbose, TEXT("[RELOAD][COS] SKIP (SwapInProgress) Pawn=%s"), *GetNameSafe(this));
-	// 	return;
-	// }
-
-	// ✅ 상체 슬롯(UpperBody)은 ReloadMontage의 Slot Track이 담당해야 함
 	TryPlayMontage_Local(ReloadMontage, TEXT("RELOAD"));
 
 	UE_LOG(LogMosesWeapon, Log, TEXT("[RELOAD][COS] ReloadMontage PLAY Pawn=%s"), *GetNameSafe(this));
@@ -905,7 +881,7 @@ void APlayerCharacter::BuildBackSlotList_UsingSSOT(int32 EquippedSlot, TArray<in
 
 	EquippedSlot = FMath::Clamp(EquippedSlot, 1, 4);
 
-	// [STEP2] "무기 있는 슬롯"만 모아서 Back_1~3을 빈칸 없이 채운다.
+	// "무기 있는 슬롯"만 모아서 Back_1~3을 빈칸 없이 채운다
 	if (!CachedCombatComponent)
 	{
 		return;
@@ -933,7 +909,7 @@ FName APlayerCharacter::GetBackSocketNameForSlot(int32 EquippedSlot, int32 SlotI
 	EquippedSlot = FMath::Clamp(EquippedSlot, 1, 4);
 	SlotIndex = FMath::Clamp(SlotIndex, 1, 4);
 
-	// Hand는 여기서 다루지 않는다.
+	// Hand는 여기서 다루지 않는다
 	if (SlotIndex == EquippedSlot)
 	{
 		return WeaponSocket_Back_1;
@@ -958,7 +934,7 @@ FName APlayerCharacter::GetBackSocketNameForSlot(int32 EquippedSlot, int32 SlotI
 	case 1: return WeaponSocket_Back_2;
 	case 2: return WeaponSocket_Back_3;
 	default:
-		// 무기 없는 슬롯(또는 데이터 불일치)은 안전한 소켓으로 폴백.
+		// 무기 없는 슬롯(또는 데이터 불일치)은 안전한 소켓으로 폴백
 		return WeaponSocket_Back_3;
 	}
 }
@@ -1050,7 +1026,7 @@ void APlayerCharacter::ApplyAttachmentPlan_Immediate(int32 EquippedSlot)
 
 	EquippedSlot = FMath::Clamp(EquippedSlot, 1, 4);
 
-	// [STEP2] Back list는 "무기 있는 슬롯만"으로 압축된다.
+	// Back list는 "무기 있는 슬롯만"으로 압축된다
 	TArray<int32> BackSlots;
 	BuildBackSlotList_UsingSSOT(EquippedSlot, BackSlots);
 
@@ -1065,14 +1041,14 @@ void APlayerCharacter::ApplyAttachmentPlan_Immediate(int32 EquippedSlot)
 		const FGameplayTag WeaponId = CachedCombatComponent->GetWeaponIdForSlot(Slot);
 		const bool bHasWeapon = WeaponId.IsValid();
 
-		// 손 슬롯은 무기 유무와 관계없이 "정답 소켓"에 붙인다.
+		// 손 슬롯은 무기 유무와 관계없이 정답 소켓에 붙인다
 		if (Slot == EquippedSlot)
 		{
 			Comp->AttachToComponent(GetMesh(), FAttachmentTransformRules::SnapToTargetNotIncludingScale, GetHandSocketName());
 			continue;
 		}
 
-		// 등 슬롯은 "무기 있는 슬롯"만 빈칸 없이 배치한다.
+		// 등 슬롯은 "무기 있는 슬롯"만 빈칸 없이 배치한다
 		if (bHasWeapon)
 		{
 			const FName BackSocket = GetBackSocketNameForSlot(EquippedSlot, Slot);
@@ -1080,12 +1056,12 @@ void APlayerCharacter::ApplyAttachmentPlan_Immediate(int32 EquippedSlot)
 		}
 		else
 		{
-			// 무기 없는 슬롯은 숨김 상태이므로, 안전한 소켓으로 폴백 (시각 영향 없음)
+			// 무기 없는 슬롯은 숨김 상태이므로 안전한 소켓으로 폴백 (시각 영향 없음)
 			Comp->AttachToComponent(GetMesh(), FAttachmentTransformRules::SnapToTargetNotIncludingScale, WeaponSocket_Back_3);
 		}
 	}
 
-	UE_LOG(LogMosesWeapon, Log, TEXT("[WEAPON][COS][STEP2] ApplyAttachmentPlan EquippedSlot=%d BackSlots=%d Pawn=%s"),
+	UE_LOG(LogMosesWeapon, Log, TEXT("[WEAPON][COS] ApplyAttachmentPlan EquippedSlot=%d BackSlots=%d Pawn=%s"),
 		EquippedSlot,
 		BackSlots.Num(),
 		*GetNameSafe(this));
@@ -1181,11 +1157,11 @@ void APlayerCharacter::HandleSwapDetachNotify()
 		return;
 	}
 
-	// [STEP2] FromSlot을 "최종 상태 기준(ToSlot equipped)"으로 Back_1~3에 빈칸 없이 재배치
+	// FromSlot을 최종 상태 기준(ToSlot equipped)으로 Back_1~3에 빈칸 없이 재배치
 	const FName BackSocket = GetBackSocketNameForSlot(ToSlot, FromSlot);
 	FromComp->AttachToComponent(GetMesh(), FAttachmentTransformRules::SnapToTargetNotIncludingScale, BackSocket);
 
-	UE_LOG(LogMosesWeapon, Warning, TEXT("[SWAP][COS][DETACH][STEP2] FromSlot=%d -> Socket=%s (Equipped=%d) Pawn=%s"),
+	UE_LOG(LogMosesWeapon, Warning, TEXT("[SWAP][COS][DETACH] FromSlot=%d -> Socket=%s (Equipped=%d) Pawn=%s"),
 		FromSlot,
 		*BackSocket.ToString(),
 		ToSlot,
@@ -1235,11 +1211,10 @@ void APlayerCharacter::TryPlayMontage_Local(UAnimMontage* Montage, const TCHAR* 
 		return;
 	}
 
-	// [MOD] SSOT Dead 상태면 어떤 몽타주도 재생 금지(DeathMontage만 예외적으로 허용)
+	// SSOT Dead 상태면 DeathMontage를 제외하고 재생 금지
 	const bool bIsDeadSSOT = (CachedCombatComponent && CachedCombatComponent->IsDead());
 	if (bIsDeadSSOT)
 	{
-		// DeathMontage 자체는 허용 (Multicast_PlayDeathMontage에서만 재생)
 		if (Montage != DeathMontage)
 		{
 			UE_LOG(LogMosesCombat, Warning, TEXT("[ANIM][%s] SKIP (Dead) Montage=%s Pawn=%s"),
@@ -1278,7 +1253,7 @@ void APlayerCharacter::TryPlayMontage_Local(UAnimMontage* Montage, const TCHAR* 
 		return;
 	}
 
-	// [MOD] DeathMontage가 재생 중이면 다른 몽타주(특히 FIRE/RELOAD)가 덮어쓰지 못하게 차단
+	// DeathMontage 재생 중에는 다른 몽타주가 덮어쓰지 못하게 차단
 	if (DeathMontage && AnimInst->Montage_IsPlaying(DeathMontage) && Montage != DeathMontage)
 	{
 		UE_LOG(LogMosesCombat, Warning, TEXT("[ANIM][%s] SKIP (DeathPlaying) Req=%s Death=%s Pawn=%s"),
@@ -1307,7 +1282,6 @@ void APlayerCharacter::TryPlayMontage_Local(UAnimMontage* Montage, const TCHAR* 
 		*GetNameSafe(Montage),
 		*GetNameSafe(this));
 }
-
 
 // ============================================================================
 // Fire AV - WeaponData 기반 (현재 장착 무기 = Hand mesh 기준)
@@ -1404,13 +1378,11 @@ void APlayerCharacter::ApplyDeadCosmetics_Local() const
 
 void APlayerCharacter::Multicast_PlayFireMontage_Implementation(FGameplayTag WeaponId)
 {
-	// Dedicated Server는 코스메틱 금지
 	if (GetNetMode() == NM_DedicatedServer)
 	{
 		return;
 	}
 
-	// [MOD] SSOT Dead면 Fire 코스메틱 절대 재생 금지
 	if (CachedCombatComponent && CachedCombatComponent->IsDead())
 	{
 		UE_LOG(LogMosesCombat, Warning, TEXT("[ANIM][FIRE] SKIP (Dead) Pawn=%s"), *GetNameSafe(this));
@@ -1429,7 +1401,6 @@ void APlayerCharacter::Multicast_PlayFireMontage_Implementation(FGameplayTag Wea
 		return;
 	}
 
-	// [MOD] DeathMontage가 재생 중이면 Fire가 덮어쓰지 못하게 차단
 	if (DeathMontage && AnimInst->Montage_IsPlaying(DeathMontage))
 	{
 		UE_LOG(LogMosesCombat, Warning, TEXT("[ANIM][FIRE] SKIP (DeathPlaying) Pawn=%s"), *GetNameSafe(this));
@@ -1439,7 +1410,6 @@ void APlayerCharacter::Multicast_PlayFireMontage_Implementation(FGameplayTag Wea
 	TryPlayMontage_Local(FireMontage, TEXT("FIRE"));
 	PlayFireAV_Local(WeaponId);
 }
-
 
 void APlayerCharacter::Multicast_PlayHitReactMontage_Implementation()
 {
@@ -1453,7 +1423,6 @@ void APlayerCharacter::Multicast_PlayDeathMontage_Implementation()
 		*GetNameSafe(this),
 		(int32)GetNetMode(),
 		*GetNameSafe(GetWorld()));
-
 
 	if (GetNetMode() == NM_DedicatedServer)
 	{
@@ -1480,7 +1449,7 @@ void APlayerCharacter::Multicast_PlayDeathMontage_Implementation()
 		return;
 	}
 
-	// ✅ 죽음은 최우선: 모든 몽타주 즉시 정지
+	// 죽음은 최우선: 모든 몽타주 즉시 정지
 	AnimInst->Montage_Stop(0.0f);
 
 	AnimInst->Montage_Play(DeathMontage);
@@ -1491,7 +1460,6 @@ void APlayerCharacter::Multicast_PlayDeathMontage_Implementation()
 		*GetNameSafe(AnimInst),
 		*GetNameSafe(this));
 
-	// 이동 정지(코스메틱)
 	ApplyDeadCosmetics_Local();
 
 	UE_LOG(LogMosesCombat, Warning, TEXT("[ANIM][DEATH][DBG] Pawn=%s NetMode=%d World=%s"),
@@ -1500,7 +1468,10 @@ void APlayerCharacter::Multicast_PlayDeathMontage_Implementation()
 
 void APlayerCharacter::Multicast_PlayDeathMontage_WithPid_Implementation(const FString& VictimPid)
 {
-	if (GetNetMode() == NM_DedicatedServer) return;
+	if (GetNetMode() == NM_DedicatedServer)
+	{
+		return;
+	}
 
 	const AMosesPlayerState* PS = GetPlayerState<AMosesPlayerState>();
 	const FString MyPid = PS ? PS->GetPersistentId().ToString(EGuidFormats::DigitsWithHyphens) : TEXT("");
@@ -1512,26 +1483,23 @@ void APlayerCharacter::Multicast_PlayDeathMontage_WithPid_Implementation(const F
 		return;
 	}
 
-	// 기존 Multicast_PlayDeathMontage 내용 그대로 수행
 	Multicast_PlayDeathMontage_Implementation();
 }
 
 // ============================================================================
-// [MOD] Dead State 강제 동기화 (SSOT -> AnimInstance) : Tick 금지, 이벤트/훅에서만
-// - 문제: 리스폰 직후 AnimBP의 IsDead가 true로 남아서 DeathPose에 붙어있는 현상
+// Dead State 강제 동기화 (SSOT -> AnimInstance) : Tick 없이 이벤트/훅에서만
+// - 문제: 리스폰 직후 AnimBP의 IsDead가 true로 남아 DeathPose 유지
 // - 해결: PawnClientRestart / OnRep_PlayerState / BindCombatComponent에서
 //         SSOT(CombatComponent->IsDead()) 값을 읽어 SetIsDead를 1회 강제 적용
 // ============================================================================
 
 bool APlayerCharacter::GetDeadState_FromSSOT() const
 {
-	// ✅ Combat SSOT가 있으면 그 값을 신뢰
 	if (CachedCombatComponent)
 	{
 		return CachedCombatComponent->IsDead();
 	}
 
-	// ✅ PS->CombatComponent를 직접 얻어서 읽는 보조 루트
 	if (const AMosesPlayerState* PS = GetPlayerState<AMosesPlayerState>())
 	{
 		if (const UMosesCombatComponent* Combat = PS->GetCombatComponent())
@@ -1545,7 +1513,6 @@ bool APlayerCharacter::GetDeadState_FromSSOT() const
 
 void APlayerCharacter::ForceSyncAnimDeadStateFromSSOT(const TCHAR* FromTag)
 {
-	// Dedicated Server는 코스메틱 없음
 	if (GetNetMode() == NM_DedicatedServer)
 	{
 		return;
@@ -1571,7 +1538,6 @@ void APlayerCharacter::ForceSyncAnimDeadStateFromSSOT(const TCHAR* FromTag)
 		return;
 	}
 
-	// ✅ 핵심: 여기서 SetIsDead를 “무조건” 1회 더 때린다.
 	MosesAnim->SetIsDead(bDead);
 
 	UE_LOG(LogMosesCombat, Warning,

@@ -1,4 +1,4 @@
-﻿#include "UE5_Multi_Shooter/Match/Components/MosesBroadcastComponent.h"
+﻿#include "UE5_Multi_Shooter/Match/Characters/Player/Components/MosesBroadcastComponent.h"
 
 UMosesBroadcastComponent::UMosesBroadcastComponent()
 {

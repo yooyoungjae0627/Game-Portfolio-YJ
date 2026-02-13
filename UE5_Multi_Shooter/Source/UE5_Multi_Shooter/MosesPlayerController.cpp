@@ -14,7 +14,7 @@
 #include "UE5_Multi_Shooter/Lobby/GameState/MosesLobbyGameState.h"
 
 #include "UE5_Multi_Shooter/Match/GameMode/MosesMatchGameMode.h"
-#include "UE5_Multi_Shooter/Match/Components/MosesCombatComponent.h"
+#include "UE5_Multi_Shooter/Match/Characters/Player/Components/MosesCombatComponent.h"
 #include "UE5_Multi_Shooter/Match/Weapon/MosesWeaponRegistrySubsystem.h"
 #include "UE5_Multi_Shooter/Match/Weapon/MosesWeaponData.h"
 #include "UE5_Multi_Shooter/Match/UI/Match/MosesMatchHUD.h"

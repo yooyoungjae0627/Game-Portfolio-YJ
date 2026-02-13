@@ -1,8 +1,7 @@
-﻿// ============================================================================
-// UE5_Multi_Shooter/Match/Components/MosesInteractionComponent.cpp  (FULL)
+﻿
 // ============================================================================
 
-#include "UE5_Multi_Shooter/Match/Components/MosesInteractionComponent.h"
+#include "UE5_Multi_Shooter/Match/Characters/Player/Components/MosesInteractionComponent.h"
 
 #include "UE5_Multi_Shooter/MosesPlayerController.h"
 #include "UE5_Multi_Shooter/MosesPlayerState.h"

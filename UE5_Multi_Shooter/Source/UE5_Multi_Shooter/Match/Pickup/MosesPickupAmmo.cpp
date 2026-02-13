@@ -8,8 +8,8 @@
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
 #include "UE5_Multi_Shooter/MosesPlayerState.h"
 
-#include "UE5_Multi_Shooter/Match/Components/MosesCombatComponent.h"
-#include "UE5_Multi_Shooter/Match/Components/MosesInteractionComponent.h"
+#include "UE5_Multi_Shooter/Match/Characters/Player/Components/MosesCombatComponent.h"
+#include "UE5_Multi_Shooter/Match/Characters/Player/Components/MosesInteractionComponent.h"
 
 #include "UE5_Multi_Shooter/Match/UI/Match/MosesPickupPromptWidget.h"
 

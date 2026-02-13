@@ -1,4 +1,4 @@
-﻿#include "UE5_Multi_Shooter/Match/Components/MosesCombatComponent.h"
+﻿#include "UE5_Multi_Shooter/Match/Characters/Player/Components/MosesCombatComponent.h"
 #include "UE5_Multi_Shooter/Match/Characters/Player/PlayerCharacter.h"
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
 #include "UE5_Multi_Shooter/Match/Weapon/MosesWeaponData.h"

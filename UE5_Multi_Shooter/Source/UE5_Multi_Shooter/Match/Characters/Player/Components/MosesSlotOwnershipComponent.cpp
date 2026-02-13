@@ -1,4 +1,4 @@
-﻿#include "UE5_Multi_Shooter/Match/Components/MosesSlotOwnershipComponent.h"
+﻿#include "UE5_Multi_Shooter/Match/Characters/Player/Components/MosesSlotOwnershipComponent.h"
 
 UMosesSlotOwnershipComponent::UMosesSlotOwnershipComponent()
 {

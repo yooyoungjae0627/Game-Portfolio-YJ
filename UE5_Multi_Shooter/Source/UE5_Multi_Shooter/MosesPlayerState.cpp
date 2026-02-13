@@ -10,8 +10,8 @@
 
 #include "UE5_Multi_Shooter/Match/GameMode/MosesMatchGameMode.h"
 #include "UE5_Multi_Shooter/Match/GameState/MosesMatchGameState.h"
-#include "UE5_Multi_Shooter/Match/Components/MosesCombatComponent.h"
-#include "UE5_Multi_Shooter/Match/Components/MosesSlotOwnershipComponent.h"
+#include "UE5_Multi_Shooter/Match/Characters/Player/Components/MosesCombatComponent.h"
+#include "UE5_Multi_Shooter/Match/Characters/Player/Components/MosesSlotOwnershipComponent.h"
 #include "UE5_Multi_Shooter/Match/Flag/MosesCaptureComponent.h"
 
 #include "UE5_Multi_Shooter/Match/GAS/Components/MosesAbilitySystemComponent.h"

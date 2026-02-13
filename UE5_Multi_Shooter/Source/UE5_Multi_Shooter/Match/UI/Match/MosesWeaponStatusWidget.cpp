@@ -1,5 +1,5 @@
 ﻿#include "UE5_Multi_Shooter/Match/UI/Match/MosesWeaponStatusWidget.h"
-#include "UE5_Multi_Shooter/Match/Components/MosesCombatComponent.h"
+#include "UE5_Multi_Shooter/Match/Characters/Player/Components/MosesCombatComponent.h"
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
 
 #include "Components/TextBlock.h"

@@ -4,7 +4,7 @@
 // ============================================================================
 
 #include "UE5_Multi_Shooter/Match/UI/Match/MosesOwnedSlotsWidget.h"
-#include "UE5_Multi_Shooter/Match/Components/MosesSlotOwnershipComponent.h"
+#include "UE5_Multi_Shooter/Match/Characters/Player/Components/MosesSlotOwnershipComponent.h"
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
 
 #include "Components/TextBlock.h"

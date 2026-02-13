@@ -18,8 +18,8 @@
 #include "UE5_Multi_Shooter/Match/Flag/MosesCaptureComponent.h"
 #include "UE5_Multi_Shooter/Match/Flag/MosesFlagFeedbackData.h"
 
-#include "UE5_Multi_Shooter/Match/Components/MosesCombatComponent.h"
-#include "UE5_Multi_Shooter/Match/Components/MosesInteractionComponent.h"
+#include "UE5_Multi_Shooter/Match/Characters/Player/Components/MosesCombatComponent.h"
+#include "UE5_Multi_Shooter/Match/Characters/Player/Components/MosesInteractionComponent.h"
 
 #include "UE5_Multi_Shooter/Match/GameState/MosesMatchGameState.h"
 

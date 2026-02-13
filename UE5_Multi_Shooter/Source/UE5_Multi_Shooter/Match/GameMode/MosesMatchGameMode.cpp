@@ -1,4 +1,13 @@
-﻿#include "UE5_Multi_Shooter/Match/GameMode/MosesMatchGameMode.h"
+﻿// ============================================================================
+// UE5_Multi_Shooter/Match/GameMode/MosesMatchGameMode.cpp  (FULL - REORDERED)
+// - includes/namespace → ctor → Engine → DOD hook → MatchFlow/Phase → Travel
+// - Seamless/spawn/pawnresolve → Loadout → Respawn → Result → Debug → PlayerStart
+// - Poll → Persist
+// ============================================================================
+
+#include "UE5_Multi_Shooter/Match/GameMode/MosesMatchGameMode.h"
+#include "UE5_Multi_Shooter/Match/GameState/MosesMatchGameState.h"
+#include "UE5_Multi_Shooter/Match/Characters/Player/Components/MosesCombatComponent.h"
 
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
 #include "UE5_Multi_Shooter/MosesPlayerState.h"
@@ -7,19 +16,17 @@
 #include "UE5_Multi_Shooter/Lobby/UI/CharacterSelect/MSCharacterCatalog.h"
 #include "UE5_Multi_Shooter/Experience/MosesExperienceManagerComponent.h"
 #include "UE5_Multi_Shooter/Experience/MosesExperienceDefinition.h"
-#include "UE5_Multi_Shooter/Match/Components/MosesCombatComponent.h"
+
 #include "UE5_Multi_Shooter/System/MosesAuthorityGuards.h"
-
-#include "UE5_Multi_Shooter/Match/GameState/MosesMatchGameState.h"
-
 #include "UE5_Multi_Shooter/Persist/MosesMatchRecordStorageSubsystem.h"
+
+#include "GameFramework/GameStateBase.h"
+#include "GameFramework/PlayerController.h"
+#include "GameFramework/PlayerStart.h"
 
 #include "Engine/World.h"
 #include "TimerManager.h"
 #include "Kismet/GameplayStatics.h"
-#include "GameFramework/GameStateBase.h"
-#include "GameFramework/PlayerController.h"
-#include "GameFramework/PlayerStart.h"
 #include "Misc/Guid.h"
 
 namespace
@@ -49,6 +56,10 @@ namespace
 	}
 }
 
+// =========================================================
+// ctor
+// =========================================================
+
 AMosesMatchGameMode::AMosesMatchGameMode()
 {
 	bUseSeamlessTravel = true;
@@ -59,21 +70,23 @@ AMosesMatchGameMode::AMosesMatchGameMode()
 	DefaultPawnClass = nullptr;
 	FallbackPawnClass = nullptr;
 
-	// [중요] 매치 레벨에서는 MatchGameState를 사용한다.
 	GameStateClass = AMosesMatchGameState::StaticClass();
 
-	// [MOD] Warmup 30초 요구사항 기본값 (BeginPlay에서도 서버에서 강제)
+	// Warmup 30초 요구사항 기본값 (BeginPlay에서도 서버에서 강제)
 	WarmupSeconds = 30.0f;
 
 	UE_LOG(LogMosesSpawn, Warning, TEXT("%s [MatchGM] Ctor OK (GameStateClass=MatchGameState) WarmupSeconds=%.2f"),
 		MOSES_TAG_RESPAWN_SV, WarmupSeconds);
 }
 
+// =========================================================
+// Engine
+// =========================================================
+
 void AMosesMatchGameMode::InitGame(const FString& MapName, const FString& Options, FString& ErrorMessage)
 {
 	FString FinalOptions = Options;
 
-	// Experience 옵션이 없으면 Warmup으로 강제
 	if (!UGameplayStatics::HasOption(Options, TEXT("Experience")))
 	{
 		FinalOptions += TEXT("?Experience=Exp_Match_Warmup");
@@ -89,7 +102,7 @@ void AMosesMatchGameMode::BeginPlay()
 {
 	Super::BeginPlay();
 
-	// [MOD] BP/ini가 WarmupSeconds를 덮어썼을 수 있으므로 서버에서 30초로 고정
+	// BP/ini가 WarmupSeconds를 덮어썼을 수 있으므로 서버에서 30초로 고정
 	if (HasAuthority())
 	{
 		const float Before = WarmupSeconds;
@@ -134,7 +147,6 @@ void AMosesMatchGameMode::PostLogin(APlayerController* NewPlayer)
 		PS ? PS->GetPlayerId() : -1,
 		PS ? *PS->GetPlayerName() : TEXT("None"));
 
-	// Match 기본 로드아웃 보장
 	Server_EnsureDefaultMatchLoadout(NewPlayer, TEXT("PostLogin"));
 }
 
@@ -159,6 +171,10 @@ void AMosesMatchGameMode::Logout(AController* Exiting)
 	Super::Logout(Exiting);
 }
 
+// =========================================================
+// Experience READY hook (DoD)
+// =========================================================
+
 void AMosesMatchGameMode::HandleDoD_AfterExperienceReady(const UMosesExperienceDefinition* CurrentExperience)
 {
 	Super::HandleDoD_AfterExperienceReady(CurrentExperience);
@@ -170,6 +186,10 @@ void AMosesMatchGameMode::HandleDoD_AfterExperienceReady(const UMosesExperienceD
 
 	StartMatchFlow_AfterExperienceReady();
 }
+
+// =========================================================
+// Match Flow (after experience ready)
+// =========================================================
 
 void AMosesMatchGameMode::StartMatchFlow_AfterExperienceReady()
 {
@@ -197,9 +217,12 @@ void AMosesMatchGameMode::StartMatchFlow_AfterExperienceReady()
 		}
 	}
 
-	// Warmup 시작
 	SetMatchPhase(EMosesMatchPhase::Warmup);
 }
+
+// =========================================================
+// Phase Machine (server authoritative)
+// =========================================================
 
 void AMosesMatchGameMode::HandlePhaseTimerExpired()
 {
@@ -242,7 +265,7 @@ float AMosesMatchGameMode::GetPhaseDurationSeconds(EMosesMatchPhase Phase) const
 {
 	switch (Phase)
 	{
-	case EMosesMatchPhase::Warmup: return 30.0f;        // 요구사항 강제
+	case EMosesMatchPhase::Warmup: return 30.0f; // 요구사항 강제
 	case EMosesMatchPhase::Combat: return CombatSeconds;
 	case EMosesMatchPhase::Result: return ResultSeconds;
 	default: break;
@@ -280,8 +303,8 @@ void AMosesMatchGameMode::ServerSwitchExperienceByPhase(EMosesMatchPhase Phase)
 	static const FPrimaryAssetType ExperienceType(TEXT("Experience"));
 	const FPrimaryAssetId NewExperienceId(ExperienceType, ExpName);
 
-	UMosesExperienceManagerComponent* ExperienceManagerComponent = GetExperienceManager();
-	if (!ExperienceManagerComponent)
+	UMosesExperienceManagerComponent* ExpMgr = GetExperienceManager();
+	if (!ExpMgr)
 	{
 		UE_LOG(LogMosesExp, Error, TEXT("[MatchGM][EXP] No ExperienceManagerComponent. Cannot switch Experience."));
 		return;
@@ -292,7 +315,7 @@ void AMosesMatchGameMode::ServerSwitchExperienceByPhase(EMosesMatchPhase Phase)
 		*NewExperienceId.ToString(),
 		*UEnum::GetValueAsString(Phase));
 
-	ExperienceManagerComponent->ServerSetCurrentExperience(NewExperienceId);
+	ExpMgr->ServerSetCurrentExperience(NewExperienceId);
 }
 
 AMosesMatchGameState* AMosesMatchGameMode::GetMatchGameState() const
@@ -311,19 +334,17 @@ void AMosesMatchGameMode::SetMatchPhase(EMosesMatchPhase NewPhase)
 
 	CurrentPhase = NewPhase;
 
-	// [ADD] 새 매치 흐름 시작(Warmup)에서 Result/Persist 가드 리셋
 	if (CurrentPhase == EMosesMatchPhase::Warmup)
 	{
 		bRecordSavedThisMatch = false;
 		bResultComputedThisMatch = false;
-
 		UE_LOG(LogMosesPhase, Warning, TEXT("[PHASE][SV] Reset Match Guards (Result/Persist)"));
 	}
 
 	// 1) Phase에 맞춰 Experience 전환
 	ServerSwitchExperienceByPhase(CurrentPhase);
 
-	// 2) 기존 Phase 종료 타이머 정리
+	// 2) 기존 Phase 타이머 정리
 	GetWorldTimerManager().ClearTimer(PhaseTimerHandle);
 
 	// 3) Duration 계산
@@ -332,7 +353,7 @@ void AMosesMatchGameMode::SetMatchPhase(EMosesMatchPhase NewPhase)
 	UE_LOG(LogMosesPhase, Warning, TEXT("[PHASE][SV] -> %s Duration=%.2f GM=%s"),
 		*UEnum::GetValueAsString(CurrentPhase), Duration, *GetNameSafe(this));
 
-	// 4) MatchGameState에 Phase/Timer/Announcement 확정
+	// 4) GameState 확정(복제용 데이터)
 	if (AMosesMatchGameState* GS = GetMatchGameState())
 	{
 		GS->ServerSetMatchPhase(CurrentPhase);
@@ -351,13 +372,11 @@ void AMosesMatchGameMode::SetMatchPhase(EMosesMatchPhase NewPhase)
 		else if (CurrentPhase == EMosesMatchPhase::Result)
 		{
 			GS->ServerStartAnnouncementCountdown(FText::FromString(TEXT("로비 복귀까지")), FMath::Max(1, DurationInt));
-
-			// [MOD] Result 진입 즉시 서버 승패 확정 (1회 가드 포함)
 			ServerDecideResult_OnEnterResultPhase();
 		}
 	}
 
-	// 5) Phase 종료 타이머(GameMode 결정)
+	// 5) Phase 종료 타이머
 	if (Duration > 0.f)
 	{
 		GetWorldTimerManager().SetTimer(
@@ -369,46 +388,9 @@ void AMosesMatchGameMode::SetMatchPhase(EMosesMatchPhase NewPhase)
 	}
 }
 
-// ============================================================================
-// PlayerStart
-// ============================================================================
-
-AActor* AMosesMatchGameMode::ChoosePlayerStart_Implementation(AController* Player)
-{
-	if (!HasAuthority() || !Player)
-	{
-		return Super::ChoosePlayerStart_Implementation(Player);
-	}
-
-	if (const TWeakObjectPtr<APlayerStart>* Assigned = AssignedStartByController.Find(Player))
-	{
-		if (Assigned->IsValid())
-		{
-			return Assigned->Get();
-		}
-	}
-
-	TArray<APlayerStart*> AllStarts;
-	CollectMatchPlayerStarts(AllStarts);
-
-	TArray<APlayerStart*> FreeStarts;
-	FilterFreeStarts(AllStarts, FreeStarts);
-
-	if (FreeStarts.Num() <= 0)
-	{
-		return Super::ChoosePlayerStart_Implementation(Player);
-	}
-
-	const int32 Index = FMath::RandRange(0, FreeStarts.Num() - 1);
-	APlayerStart* Chosen = FreeStarts[Index];
-
-	ReserveStartForController(Player, Chosen);
-	return Chosen;
-}
-
-// ============================================================================
+// =========================================================
 // Travel
-// ============================================================================
+// =========================================================
 
 void AMosesMatchGameMode::TravelToLobby()
 {
@@ -454,7 +436,7 @@ void AMosesMatchGameMode::HandleAutoReturn()
 
 bool AMosesMatchGameMode::CanDoServerTravel() const
 {
-	UWorld* World = GetWorld();
+	const UWorld* World = GetWorld();
 	if (!World)
 	{
 		return false;
@@ -472,6 +454,10 @@ FString AMosesMatchGameMode::GetLobbyMapURL() const
 {
 	return TEXT("/Game/Map/L_Lobby?Experience=Exp_Lobby");
 }
+
+// =========================================================
+// Seamless / Spawn / Pawn resolve
+// =========================================================
 
 void AMosesMatchGameMode::HandleSeamlessTravelPlayer(AController*& C)
 {
@@ -553,9 +539,9 @@ UClass* AMosesMatchGameMode::ResolvePawnClassFromSelectedId(int32 SelectedId) co
 	return Entry.PawnClass.LoadSynchronous();
 }
 
-// ============================================================================
+// =========================================================
 // Default Loadout (SSOT=PlayerState)
-// ============================================================================
+// =========================================================
 
 void AMosesMatchGameMode::Server_EnsureDefaultMatchLoadout(APlayerController* PC, const TCHAR* FromWhere)
 {
@@ -581,6 +567,10 @@ void AMosesMatchGameMode::Server_EnsureDefaultMatchLoadout(APlayerController* PC
 		*GetNameSafe(PS));
 }
 
+// =========================================================
+// Respawn schedule (server)
+// =========================================================
+
 void AMosesMatchGameMode::ServerScheduleRespawn(AController* Controller, float DelaySeconds)
 {
 	MOSES_GUARD_AUTHORITY_VOID(this, "RESPAWN", TEXT("Client attempted ServerScheduleRespawn"));
@@ -595,7 +585,6 @@ void AMosesMatchGameMode::ServerScheduleRespawn(AController* Controller, float D
 
 	const TWeakObjectPtr<AController> WeakKey(Controller);
 
-	// ✅ [FIX] 이전 타이머가 있으면 교체
 	if (FTimerHandle* OldHandle = RespawnTimerHandlesByController.Find(WeakKey))
 	{
 		GetWorldTimerManager().ClearTimer(*OldHandle);
@@ -606,7 +595,6 @@ void AMosesMatchGameMode::ServerScheduleRespawn(AController* Controller, float D
 		*GetNameSafe(Controller),
 		*GetNameSafe(Controller->GetPawn()));
 
-	// ✅ [FIX] "맵에 저장된 핸들 레퍼런스"로 SetTimer 해야 안전
 	FTimerHandle& HandleRef = RespawnTimerHandlesByController.FindOrAdd(WeakKey);
 
 	GetWorldTimerManager().SetTimer(
@@ -640,7 +628,6 @@ void AMosesMatchGameMode::ServerExecuteRespawn(AController* Controller)
 		return;
 	}
 
-	// ✅ [FIX] Remove도 WeakKey로
 	RespawnTimerHandlesByController.Remove(TWeakObjectPtr<AController>(Controller));
 
 	AMosesPlayerState* PS = Controller->GetPlayerState<AMosesPlayerState>();
@@ -700,9 +687,9 @@ void AMosesMatchGameMode::ServerExecuteRespawn(AController* Controller)
 	}
 }
 
-// ============================================================================
-// Result Decide (DAY11)
-// ============================================================================
+// =========================================================
+// Result Decide (server)
+// =========================================================
 
 void AMosesMatchGameMode::ServerDecideResult_OnEnterResultPhase()
 {
@@ -711,7 +698,6 @@ void AMosesMatchGameMode::ServerDecideResult_OnEnterResultPhase()
 		return;
 	}
 
-	// [MOD] Result는 1회만 계산
 	if (bResultComputedThisMatch)
 	{
 		UE_LOG(LogMosesPhase, Warning, TEXT("[RESULT][SV] Decide SKIP (AlreadyComputed)"));
@@ -737,10 +723,7 @@ void AMosesMatchGameMode::ServerDecideResult_OnEnterResultPhase()
 		}
 	}
 
-	// ---------------------------------------------------------------------
-	// Result 진입 순간 1회 점수 계산/저장
 	// TotalScore = PvPKills*10 + Captures*20 + ZombieKills
-	// ---------------------------------------------------------------------
 	int32 MaxScore = INT32_MIN;
 	int32 MaxCount = 0;
 	AMosesPlayerState* WinnerPS = nullptr;
@@ -791,8 +774,6 @@ void AMosesMatchGameMode::ServerDecideResult_OnEnterResultPhase()
 		RS.bIsDraw = false;
 		RS.WinnerPersistentId = WinnerPS->GetPersistentId().ToString(EGuidFormats::DigitsWithHyphens);
 		RS.WinnerNickname = WinnerPS->GetPlayerNickName();
-
-		// [MOD] 이번 기획은 "합산 점수"가 최우선 판정
 		RS.ResultReason = TEXT("TotalScore");
 
 		UE_LOG(LogMosesPhase, Warning, TEXT("[RESULT][SV] Winner PS=%s Nick=%s Total=%d"),
@@ -800,11 +781,8 @@ void AMosesMatchGameMode::ServerDecideResult_OnEnterResultPhase()
 	}
 
 	MGS->ServerSetResultState(RS);
-
-	// 중앙 방송(데모)
 	MGS->ServerPushAnnouncement(RS.bIsDraw ? TEXT("DRAW") : TEXT("RESULT"), 4.0f);
 
-	// Persist 저장 1회(기존 유지)
 	ServerSaveRecord_Once_OnEnterResult();
 }
 
@@ -838,7 +816,6 @@ bool AMosesMatchGameMode::TryChooseWinnerByReason_Server(
 			{
 				if (Rule.Getter(PS) == MaxValue)
 				{
-					// ✅ [FIX] OnlineSubsystem 심볼(FUniqueNetIdWrapper) 제거
 					OutWinnerId = PS->GetPersistentId().ToString(EGuidFormats::DigitsWithHyphens);
 					OutReason = Rule.Reason;
 
@@ -856,9 +833,9 @@ bool AMosesMatchGameMode::TryChooseWinnerByReason_Server(
 	return false;
 }
 
-// ============================================================================
+// =========================================================
 // Debug helpers
-// ============================================================================
+// =========================================================
 
 void AMosesMatchGameMode::DumpPlayerStates(const TCHAR* Prefix) const
 {
@@ -886,6 +863,43 @@ void AMosesMatchGameMode::DumpAllDODPlayerStates(const TCHAR* Where) const
 			PS->DOD_PS_Log(this, Where);
 		}
 	}
+}
+
+// =========================================================
+// PlayerStart helpers
+// =========================================================
+
+AActor* AMosesMatchGameMode::ChoosePlayerStart_Implementation(AController* Player)
+{
+	if (!HasAuthority() || !Player)
+	{
+		return Super::ChoosePlayerStart_Implementation(Player);
+	}
+
+	if (const TWeakObjectPtr<APlayerStart>* Assigned = AssignedStartByController.Find(Player))
+	{
+		if (Assigned->IsValid())
+		{
+			return Assigned->Get();
+		}
+	}
+
+	TArray<APlayerStart*> AllStarts;
+	CollectMatchPlayerStarts(AllStarts);
+
+	TArray<APlayerStart*> FreeStarts;
+	FilterFreeStarts(AllStarts, FreeStarts);
+
+	if (FreeStarts.Num() <= 0)
+	{
+		return Super::ChoosePlayerStart_Implementation(Player);
+	}
+
+	const int32 Index = FMath::RandRange(0, FreeStarts.Num() - 1);
+	APlayerStart* Chosen = FreeStarts[Index];
+
+	ReserveStartForController(Player, Chosen);
+	return Chosen;
 }
 
 void AMosesMatchGameMode::CollectMatchPlayerStarts(TArray<APlayerStart*>& OutStarts) const
@@ -964,9 +978,9 @@ void AMosesMatchGameMode::DumpReservedStarts(const TCHAR* Where) const
 		AssignedStartByController.Num());
 }
 
-// ============================================================================
+// =========================================================
 // Experience Ready Poll (Tick 금지)
-// ============================================================================
+// =========================================================
 
 void AMosesMatchGameMode::StartWarmup_WhenExperienceReady()
 {
@@ -1030,14 +1044,13 @@ void AMosesMatchGameMode::PollExperienceReady_AndStartWarmup()
 	StartMatchFlow_AfterExperienceReady();
 }
 
+// =========================================================
+// Persist (save once on enter result)
+// =========================================================
+
 void AMosesMatchGameMode::ServerSaveRecord_Once_OnEnterResult()
 {
-	if (!HasAuthority())
-	{
-		return;
-	}
-
-	if (bRecordSavedThisMatch)
+	if (!HasAuthority() || bRecordSavedThisMatch)
 	{
 		return;
 	}
