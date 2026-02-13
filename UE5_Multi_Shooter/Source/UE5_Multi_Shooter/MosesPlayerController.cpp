@@ -20,7 +20,7 @@
 
 #include "UE5_Multi_Shooter/System/MosesLobbyLocalPlayerSubsystem.h"
 
-#include "UE5_Multi_Shooter/GAS/MosesGameplayTags.h"
+#include "UE5_Multi_Shooter/Match/GAS/MosesGameplayTags.h"
 #include "UE5_Multi_Shooter/Persist/MosesMatchRecordStorageSubsystem.h"
 
 #include "Blueprint/WidgetBlueprintLibrary.h"

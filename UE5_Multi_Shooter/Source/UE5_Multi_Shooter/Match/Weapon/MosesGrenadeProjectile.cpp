@@ -1,7 +1,7 @@
 ﻿#include "MosesGrenadeProjectile.h"
 
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
-#include "UE5_Multi_Shooter/GAS/MosesGameplayTags.h"
+#include "UE5_Multi_Shooter/Match/GAS/MosesGameplayTags.h"
 #include "UE5_Multi_Shooter/Match/Weapon/MosesWeaponData.h"
 
 #include "Components/SphereComponent.h"

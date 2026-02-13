@@ -9,8 +9,8 @@
 #include "AbilitySystemInterface.h"
 #include "GameplayEffectTypes.h"
 
-#include "UE5_Multi_Shooter/GAS/MosesAbilitySet.h"
-#include "UE5_Multi_Shooter/GAS/AttributeSet/MosesAttributeSet.h"
+#include "UE5_Multi_Shooter/Match/GAS/MosesAbilitySet.h"
+#include "UE5_Multi_Shooter/Match/GAS/AttributeSet/MosesAttributeSet.h"
 
 #include "MosesPlayerState.generated.h"
 

@@ -1,6 +1,6 @@
 ﻿#include "UE5_Multi_Shooter/System/MosesAssetManager.h"
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
-#include "UE5_Multi_Shooter/GAS/MosesGameplayTags.h"
+#include "UE5_Multi_Shooter/Match/GAS/MosesGameplayTags.h"
 
 #include "Engine/Engine.h"
 #include "Misc/CommandLine.h"

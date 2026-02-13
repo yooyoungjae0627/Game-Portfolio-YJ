@@ -2,7 +2,7 @@
 #include "UE5_Multi_Shooter/Experience/MosesExperienceManagerComponent.h"
 #include "UE5_Multi_Shooter/Experience/MosesExperienceDefinition.h"
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
-#include "UE5_Multi_Shooter/GAS/MosesAbilitySet.h"
+#include "UE5_Multi_Shooter/Match/GAS/MosesAbilitySet.h"
 #include "UE5_Multi_Shooter/System/MosesAssetManager.h"
 #include "UE5_Multi_Shooter/System/MosesAuthorityGuards.h"
 

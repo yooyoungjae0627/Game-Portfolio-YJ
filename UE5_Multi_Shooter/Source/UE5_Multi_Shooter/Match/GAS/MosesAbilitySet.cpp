@@ -1,4 +1,4 @@
-#include "UE5_Multi_Shooter/GAS/MosesAbilitySet.h"
+#include "MosesAbilitySet.h"
 
 #include "AbilitySystemComponent.h"
 #include "Abilities/GameplayAbility.h"

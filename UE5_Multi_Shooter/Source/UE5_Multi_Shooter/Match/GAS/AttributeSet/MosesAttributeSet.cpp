@@ -2,7 +2,7 @@
 // UE5_Multi_Shooter/GAS/AttributeSet/MosesAttributeSet.cpp  (FULL - FIXED)
 // ============================================================================
 
-#include "UE5_Multi_Shooter/GAS/AttributeSet/MosesAttributeSet.h"
+#include "UE5_Multi_Shooter/Match/GAS/AttributeSet/MosesAttributeSet.h"
 
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
 #include "UE5_Multi_Shooter/MosesPlayerState.h"

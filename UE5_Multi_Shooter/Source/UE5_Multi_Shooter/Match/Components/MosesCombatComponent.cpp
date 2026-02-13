@@ -5,7 +5,7 @@
 #include "UE5_Multi_Shooter/Match/Weapon/MosesWeaponRegistrySubsystem.h"
 #include "UE5_Multi_Shooter/MosesPlayerState.h"
 #include "UE5_Multi_Shooter/Match/Weapon/MosesGrenadeProjectile.h"
-#include "UE5_Multi_Shooter/GAS/MosesGameplayTags.h"
+#include "UE5_Multi_Shooter/Match/GAS/MosesGameplayTags.h"
 #include "UE5_Multi_Shooter/Match/Characters/Enemy/Zombie/MosesZombieCharacter.h" 
 
 #include "Engine/World.h"

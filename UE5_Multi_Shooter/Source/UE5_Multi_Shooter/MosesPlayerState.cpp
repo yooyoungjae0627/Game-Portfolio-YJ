@@ -18,11 +18,11 @@
 #include "UE5_Multi_Shooter/Match/Components/MosesSlotOwnershipComponent.h"
 #include "UE5_Multi_Shooter/Match/Flag/MosesCaptureComponent.h"
 
-#include "UE5_Multi_Shooter/Match/GameState/MosesMatchGameState.h" // ✅ [MOD] Announcement 출력용
+#include "UE5_Multi_Shooter/Match/GameState/MosesMatchGameState.h" 
 
-#include "UE5_Multi_Shooter/GAS/Components/MosesAbilitySystemComponent.h"
-#include "UE5_Multi_Shooter/GAS/AttributeSet/MosesAttributeSet.h"
-#include "UE5_Multi_Shooter/GAS/MosesAbilitySet.h"
+#include "UE5_Multi_Shooter/Match/GAS/Components/MosesAbilitySystemComponent.h"
+#include "UE5_Multi_Shooter/Match/GAS/AttributeSet/MosesAttributeSet.h"
+#include "UE5_Multi_Shooter/Match/GAS/MosesAbilitySet.h"
 
 #include "Net/UnrealNetwork.h"
 #include "GameFramework/PlayerController.h"

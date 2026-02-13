@@ -5,7 +5,7 @@
 #include "AbilitySystemComponent.h"
 #include "Net/UnrealNetwork.h"
 
-#include "UE5_Multi_Shooter/GAS/AttributeSet/MosesAttributeSet.h" 
+#include "UE5_Multi_Shooter/Match/GAS/AttributeSet/MosesAttributeSet.h" 
 #include "MosesZombieAttributeSet.generated.h"
 
 class AActor;

@@ -1,7 +1,7 @@
 ﻿#include "MosesGameInstance.h"
 
 #include "Components/GameFrameworkComponentManager.h"
-#include "UE5_Multi_Shooter/GAS/MosesGameplayTags.h"
+#include "UE5_Multi_Shooter/Match/GAS/MosesGameplayTags.h"
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
 
 #include "Engine/World.h"

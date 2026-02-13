@@ -5,7 +5,7 @@
 #include "GameplayEffect.h"
 #include "GameplayEffectTypes.h"
 
-#include "UE5_Multi_Shooter/GAS/MosesGameplayTags.h"
+#include "UE5_Multi_Shooter/Match/GAS/MosesGameplayTags.h"
 
 UAbilitySystemComponent* FMosesDamageStatics::FindASC(AActor* Actor)
 {

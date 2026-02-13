@@ -5,7 +5,7 @@
 #include "AbilitySystemComponent.h"
 #include "Net/UnrealNetwork.h"
 
-#include "UE5_Multi_Shooter/GAS/AttributeSet/MosesAttributeSetBase.h"
+#include "UE5_Multi_Shooter/Match/GAS/AttributeSet/MosesAttributeSetBase.h"
 #include "MosesAttributeSet.generated.h"
 
 class AMosesPlayerState;
