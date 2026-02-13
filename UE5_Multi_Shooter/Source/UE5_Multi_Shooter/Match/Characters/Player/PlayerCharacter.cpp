@@ -3,16 +3,17 @@
 // ============================================================================
 
 #include "UE5_Multi_Shooter/Match/Characters/Player/PlayerCharacter.h"
-
 #include "UE5_Multi_Shooter/Match/Characters/Player/Components/MosesHeroComponent.h"
 #include "UE5_Multi_Shooter/Match/Characters/Player/Components/MosesCombatComponent.h"
+#include "UE5_Multi_Shooter/Match/Characters/Player/Components/MosesInteractionComponent.h"
+#include "UE5_Multi_Shooter/Match/Characters/Animation/MosesAnimInstance.h"
 #include "UE5_Multi_Shooter/Match/Weapon/MosesWeaponRegistrySubsystem.h"
 #include "UE5_Multi_Shooter/Match/Weapon/MosesWeaponData.h"
+#include "UE5_Multi_Shooter/Match/GAS/MosesAbilityInputID.h"
+
 #include "UE5_Multi_Shooter/MosesPlayerState.h"
 #include "UE5_Multi_Shooter/System/MosesAuthorityGuards.h"
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
-#include "UE5_Multi_Shooter/Match/Characters/Animation/MosesAnimInstance.h"
-#include "UE5_Multi_Shooter/Match/Characters/Player/Components/MosesInteractionComponent.h"
 #include "UE5_Multi_Shooter/Camera/MosesCameraComponent.h"
 
 #include "GameFramework/CharacterMovementComponent.h"
@@ -109,6 +110,25 @@ APlayerCharacter::APlayerCharacter()
 	WeaponMesh_Back3->SetupAttachment(GetMesh());
 	Moses_ConfigWeaponMeshComp(WeaponMesh_Back3);
 
+	// ---------------------------------------------------------------------
+	// HeadHitBox (Headshot 판정용)
+	// - "라인트레이스 Hit"로 맞았는지 판정할 컴포넌트
+	// - BoneName 기반이 어려울 때 이 방식이 매우 안정적
+	// ---------------------------------------------------------------------
+	HeadHitBox = CreateDefaultSubobject<USphereComponent>(TEXT("HeadHitBox"));
+	HeadHitBox->SetupAttachment(GetMesh());
+
+	HeadHitBox->InitSphereRadius(HeadHitBoxRadius);
+	HeadHitBox->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+	HeadHitBox->SetGenerateOverlapEvents(false);
+
+	// 기본은 전부 Ignore, 지정한 TraceChannel만 Block
+	HeadHitBox->SetCollisionResponseToAllChannels(ECR_Ignore);
+	HeadHitBox->SetCollisionResponseToChannel(HeadHitBoxTraceChannel, ECR_Block);
+
+	// 디버그 편의: 게임 중 숨김
+	HeadHitBox->bHiddenInGame = true;
+
 	Moses_ApplyRotationPolicy(this, TEXT("Ctor"));
 }
 
@@ -134,6 +154,30 @@ void APlayerCharacter::PostInitializeComponents()
 		if (WeaponMesh_Back3)
 		{
 			WeaponMesh_Back3->AttachToComponent(GetMesh(), FAttachmentTransformRules::SnapToTargetNotIncludingScale, WeaponSocket_Back_3);
+		}
+
+		// -----------------------------------------------------------------
+		// HeadHitBox를 Head 소켓에 부착
+		// - 스켈레톤에 head / head_socket 등 존재해야 함
+		// -----------------------------------------------------------------
+		if (HeadHitBox)
+		{
+			HeadHitBox->AttachToComponent(
+				GetMesh(),
+				FAttachmentTransformRules::SnapToTargetNotIncludingScale,
+				HeadHitBoxSocketName);
+
+			// 혹시 BP에서 TraceChannel 바꿨으면 반영(런타임 안전)
+			HeadHitBox->SetCollisionResponseToAllChannels(ECR_Ignore);
+			HeadHitBox->SetCollisionResponseToChannel(HeadHitBoxTraceChannel, ECR_Block);
+			HeadHitBox->SetSphereRadius(HeadHitBoxRadius, true);
+
+			UE_LOG(LogMosesCombat, Log,
+				TEXT("[HITBOX] Attach HeadHitBox Socket=%s Radius=%.1f TraceCh=%d Pawn=%s"),
+				*HeadHitBoxSocketName.ToString(),
+				HeadHitBoxRadius,
+				(int32)HeadHitBoxTraceChannel.GetValue(),
+				*GetNameSafe(this));
 		}
 	}
 
@@ -415,32 +459,29 @@ void APlayerCharacter::Input_Reload()
 
 void APlayerCharacter::Input_FirePressed()
 {
-	if (CachedCombatComponent && CachedCombatComponent->IsDead())
+	const int32 FireInputID = static_cast<int32>(EMosesAbilityInputID::Fire);
+
+	AMosesPlayerState* PS = GetPlayerState<AMosesPlayerState>();
+	if (PS)
 	{
-		return;
+		if (UAbilitySystemComponent* ASC = PS->GetAbilitySystemComponent())
+		{
+			UE_LOG(LogTemp, Warning, TEXT("ASC AbilityCount=%d"),
+				ASC->GetActivatableAbilities().Num());
+		}
 	}
 
-	if (bFireHeldLocal)
-	{
-		return;
-	}
-
-	bFireHeldLocal = true;
-
-	UE_LOG(LogMosesCombat, Warning, TEXT("[FIRE][CL] FirePressed -> Held=1 Pawn=%s"), *GetNameSafe(this));
-
-	if (UMosesCombatComponent* CombatComp = GetCombatComponent_Checked())
-	{
-		CombatComp->RequestFire();
-	}
-
-	StartAutoFire_Local();
+	GAS_InputPressed(FireInputID);
 }
 
 void APlayerCharacter::Input_FireReleased()
 {
-	UE_LOG(LogMosesCombat, Warning, TEXT("[FIRE][CL] FireReleased Pawn=%s"), *GetNameSafe(this));
-	StopAutoFire_Local();
+	const int32 FireInputID = static_cast<int32>(EMosesAbilityInputID::Fire);
+
+	UE_LOG(LogMosesWeapon, Verbose, TEXT("[INPUT][CL] FireReleased -> GAS InputID=%d Pawn=%s"),
+		FireInputID, *GetNameSafe(this));
+
+	GAS_InputReleased(FireInputID);
 }
 
 void APlayerCharacter::StartAutoFire_Local()
@@ -1547,4 +1588,36 @@ void APlayerCharacter::ForceSyncAnimDeadStateFromSSOT(const TCHAR* FromTag)
 		*GetNameSafe(this),
 		*GetNameSafe(GetPlayerState()),
 		*GetNameSafe(CachedCombatComponent));
+}
+
+UAbilitySystemComponent* APlayerCharacter::ResolveASC_FromPlayerState() const
+{
+	const AMosesPlayerState* PS = GetPlayerState<AMosesPlayerState>();
+	return PS ? PS->GetAbilitySystemComponent() : nullptr;
+}
+
+void APlayerCharacter::GAS_InputPressed(int32 InputID)
+{
+	UAbilitySystemComponent* ASC = ResolveASC_FromPlayerState();
+	if (ASC)
+	{
+		ASC->AbilityLocalInputPressed(InputID);
+		return;
+	}
+
+	UE_LOG(LogMosesGAS, Verbose, TEXT("[GAS][CL] InputPressed ignored (No ASC) InputID=%d Pawn=%s"),
+		InputID, *GetNameSafe(this));
+}
+
+void APlayerCharacter::GAS_InputReleased(int32 InputID)
+{
+	UAbilitySystemComponent* ASC = ResolveASC_FromPlayerState();
+	if (ASC)
+	{
+		ASC->AbilityLocalInputReleased(InputID);
+		return;
+	}
+
+	UE_LOG(LogMosesGAS, Verbose, TEXT("[GAS][CL] InputReleased ignored (No ASC) InputID=%d Pawn=%s"),
+		InputID, *GetNameSafe(this));
 }

@@ -3,10 +3,10 @@
 // ============================================================================
 
 #include "UE5_Multi_Shooter/Match/GAS/AttributeSet/MosesAttributeSet.h"
-
+#include "UE5_Multi_Shooter/Match/GAS/MosesGameplayTags.h"
+#include "UE5_Multi_Shooter/Match/Characters/Player/PlayerCharacter.h" 
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
 #include "UE5_Multi_Shooter/MosesPlayerState.h"
-#include "UE5_Multi_Shooter/Match/Characters/Player/PlayerCharacter.h" 
 #include "UE5_Multi_Shooter/MosesPlayerController.h" 
 
 #include "Net/UnrealNetwork.h"
@@ -239,16 +239,26 @@ void UMosesAttributeSet::NotifyDeathIfNeeded_Server(
 	}
 
 	// ---------------------------------------------------------------------
-	// Headshot 판정: EffectContext HitResult BoneName
-	// (CombatComponent에서 Ctx.AddHitResult(Hit,true) 필수)
+	// [MOD] Headshot 판정: Spec DynamicAssetTags 우선 (신 API)
 	// ---------------------------------------------------------------------
-	const FGameplayEffectContextHandle Ctx = Data.EffectSpec.GetEffectContext();
-
 	bool bIsHeadshot = false;
-	if (const FHitResult* HR = Ctx.GetHitResult())
 	{
-		const FString BoneLower = HR->BoneName.ToString().ToLower();
-		bIsHeadshot = BoneLower.Contains(TEXT("head"));
+		const FGameplayTag HeadshotTag = FMosesGameplayTags::Get().Hit_Headshot;
+
+		// ✅ 경고 방지: DynamicAssetTags 직접 접근 X
+		const FGameplayTagContainer& DynamicTags = Data.EffectSpec.GetDynamicAssetTags();
+		bIsHeadshot = DynamicTags.HasTagExact(HeadshotTag);
+	}
+
+	// (보조) 태그가 없을 때만 HitResult BoneName으로 추정
+	if (!bIsHeadshot)
+	{
+		const FGameplayEffectContextHandle Ctx = Data.EffectSpec.GetEffectContext();
+		if (const FHitResult* HR = Ctx.GetHitResult())
+		{
+			const FString BoneLower = HR->BoneName.ToString().ToLower();
+			bIsHeadshot = BoneLower.Contains(TEXT("head"));
+		}
 	}
 
 	UE_LOG(LogMosesHP, Warning,
@@ -258,7 +268,7 @@ void UMosesAttributeSet::NotifyDeathIfNeeded_Server(
 	// Victim Deaths++
 	VictimPS->ServerAddDeath();
 
-	// 1) SSOT Death 확정(상태/리스폰 스케줄)
+	// 1) SSOT Death 확정
 	VictimPS->ServerNotifyDeathFromGAS();
 
 	// 2) Death Montage
@@ -269,6 +279,7 @@ void UMosesAttributeSet::NotifyDeathIfNeeded_Server(
 	}
 
 	// 3) Killer
+	const FGameplayEffectContextHandle Ctx = Data.EffectSpec.GetEffectContext();
 	AController* InstigatorController = MosesAttr_Private::ResolveInstigatorController(Ctx);
 
 	AMosesPlayerState* KillerPS =
@@ -303,7 +314,6 @@ void UMosesAttributeSet::NotifyDeathIfNeeded_Server(
 	}
 }
 
-
 void UMosesAttributeSet::OnRep_Health(const FGameplayAttributeData& OldValue)
 {
 	GAMEPLAYATTRIBUTE_REPNOTIFY(UMosesAttributeSet, Health, OldValue);
@@ -323,3 +333,4 @@ void UMosesAttributeSet::OnRep_MaxShield(const FGameplayAttributeData& OldValue)
 {
 	GAMEPLAYATTRIBUTE_REPNOTIFY(UMosesAttributeSet, MaxShield, OldValue);
 }
+

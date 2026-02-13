@@ -7,6 +7,7 @@
 #include "UE5_Multi_Shooter/Match/Weapon/MosesGrenadeProjectile.h"
 #include "UE5_Multi_Shooter/Match/GAS/MosesGameplayTags.h"
 #include "UE5_Multi_Shooter/Match/Characters/Enemy/Zombie/MosesZombieCharacter.h" 
+#include "UE5_Multi_Shooter/MosesPlayerController.h"
 
 #include "Engine/World.h"
 #include "Engine/GameInstance.h"
@@ -833,7 +834,6 @@ void UMosesCombatComponent::Server_PerformFireAndApplyDamage(const UMosesWeaponD
 	Controller->GetPlayerViewPoint(ViewLoc, ViewRot);
 
 	const FVector AimDir = ViewRot.Vector();
-
 	const float SpreadFactor = Server_CalcSpreadFactor01(WeaponData, OwnerPawn);
 
 	float HalfAngleDeg = 0.0f;
@@ -941,36 +941,94 @@ void UMosesCombatComponent::Server_PerformFireAndApplyDamage(const UMosesWeaponD
 		return;
 	}
 
-	// ✅ 헤드샷 판정
-	const bool bHeadshot = (FinalHit.BoneName == HeadshotBoneName);
+	// ---------------------------------------------------------------------
+	// [MOD] Headshot 판정 강화 (좀비 HitBox 대응)
+	// ---------------------------------------------------------------------
+	bool bHeadshot = false;
 
+	UPrimitiveComponent* HitComp = Cast<UPrimitiveComponent>(FinalHit.GetComponent());
+	const FString HitCompName = HitComp ? HitComp->GetName() : TEXT("None");
+
+	// 0) 컴포넌트 Tag 우선
+	if (HitComp && HitComp->ComponentHasTag(TEXT("HitZone.Head")))
+	{
+		bHeadshot = true;
+	}
+
+	// 1) 플레이어: HeadHitBox 컴포넌트 일치
+	if (!bHeadshot)
+	{
+		if (const APlayerCharacter* VictimPlayer = Cast<APlayerCharacter>(FinalHit.GetActor()))
+		{
+			if (VictimPlayer->GetHeadHitBox() && FinalHit.GetComponent() == VictimPlayer->GetHeadHitBox())
+			{
+				bHeadshot = true;
+			}
+		}
+	}
+
+	// 2) 좀비/기타: 컴포넌트 이름 기반 (네 로그 Comp=HeadHitBox 그대로 잡힘)
+	if (!bHeadshot)
+	{
+		if (HitComp && HitCompName.Contains(TEXT("HeadHitBox")))
+		{
+			bHeadshot = true;
+		}
+	}
+
+	// 3) BoneName 보조
+	if (!bHeadshot)
+	{
+		if (!FinalHit.BoneName.IsNone())
+		{
+			const FString BoneLower = FinalHit.BoneName.ToString().ToLower();
+			bHeadshot = (FinalHit.BoneName == HeadshotBoneName) || BoneLower.Contains(TEXT("head"));
+		}
+	}
+
+	// ---------------------------------------------------------------------
+	// [MOD] 데미지 정책
+	// - "한 방에 죽어야" 조건: 좀비 헤드샷이면 원샷(매우 큰 값)
+	// ---------------------------------------------------------------------
 	const float BaseDamage = WeaponData ? WeaponData->Damage : DefaultDamage;
 
-	// ✅ [MOD] 플레이어/좀비 공통: Headshot = 1방 즉사 (9999로 강제)
-	const float AppliedDamage = bHeadshot ? 9999.f : BaseDamage;
+	const bool bIsZombie = Server_IsZombieTarget(FinalHit.GetActor());
 
-	UE_LOG(LogMosesCombat, Warning, TEXT("[HIT][SV] Victim=%s Bone=%s Headshot=%d Damage=%.1f"),
+	float AppliedDamage = BaseDamage;
+	if (bHeadshot)
+	{
+		if (bIsZombie)
+		{
+			AppliedDamage = 99999.0f; // ✅ 좀비 헤드샷 원샷 확정
+		}
+		else
+		{
+			AppliedDamage = BaseDamage * HeadshotDamageMultiplier; // 플레이어는 기존 정책 유지(원하면 여기도 원샷으로 바꿔도 됨)
+		}
+	}
+
+	UE_LOG(LogMosesCombat, Warning, TEXT("[HIT][SV] Victim=%s Comp=%s Bone=%s Headshot=%d IsZombie=%d Damage=%.1f"),
 		*GetNameSafe(FinalHit.GetActor()),
-		*FinalHit.BoneName.ToString(),
+		*GetNameSafe(FinalHit.GetComponent()),
+		FinalHit.BoneName.IsNone() ? TEXT("None") : *FinalHit.BoneName.ToString(),
 		bHeadshot ? 1 : 0,
+		bIsZombie ? 1 : 0,
 		AppliedDamage);
 
-	// ✅ [MOD] GAS 적용 시 HitResult를 Context에 주입해야 Headshot 통계/토스트가 동작
+	// ✅ GAS 적용 (HitResult는 Context에 저장됨)
 	const bool bAppliedByGAS = Server_ApplyDamageToTarget_GAS(
 		FinalHit.GetActor(),
 		AppliedDamage,
 		Controller,
 		OwnerPawn,
 		WeaponData,
-		FinalHit); // ✅ [MOD] HitResult 전달
+		FinalHit);
 
 	if (!bAppliedByGAS)
 	{
 		UGameplayStatics::ApplyDamage(FinalHit.GetActor(), AppliedDamage, Controller, OwnerPawn, nullptr);
 	}
 }
-
-
 
 void UMosesCombatComponent::Server_SpawnGrenadeProjectile(
 	const UMosesWeaponData* WeaponData,
@@ -1072,11 +1130,6 @@ void UMosesCombatComponent::Server_SpawnGrenadeProjectile(
 		WeaponData->ExplosionRadius,
 		ExplodeDamage,
 		GEClass ? *GetNameSafe(GEClass.Get()) : TEXT("None(FallbackOnly)"));
-}
-
-bool UMosesCombatComponent::Server_IsZombieTarget(const AActor* TargetActor) const
-{
-	return TargetActor && TargetActor->IsA(AMosesZombieCharacter::StaticClass());
 }
 
 bool UMosesCombatComponent::Server_ApplyDamageToTarget_GAS(
@@ -1182,7 +1235,7 @@ bool UMosesCombatComponent::Server_ApplyDamageToTarget_GAS(
 	// ---- Context / Spec ----
 	FGameplayEffectContextHandle Ctx = SourceASC->MakeEffectContext();
 
-	// ✅ [MOD] Instigator/causer 정리
+	// Instigator/causer 정리
 	AActor* InstigatorActor = InstigatorController ? InstigatorController->GetPawn() : nullptr;
 	if (!InstigatorActor)
 	{
@@ -1193,7 +1246,7 @@ bool UMosesCombatComponent::Server_ApplyDamageToTarget_GAS(
 	Ctx.AddSourceObject(this);
 	Ctx.AddSourceObject(WeaponData);
 
-	// ✅ [MOD] Headshot 판정을 위해 HitResult를 Context에 저장 (AttributeSet / Zombie에서 사용)
+	// HitResult 저장
 	Ctx.AddHitResult(Hit, true);
 
 	const FGameplayEffectSpecHandle SpecHandle = SourceASC->MakeOutgoingSpec(GEClass, 1.0f, Ctx);
@@ -1202,19 +1255,94 @@ bool UMosesCombatComponent::Server_ApplyDamageToTarget_GAS(
 		return false;
 	}
 
-	const float FinalDamageForSetByCaller = FMath::Abs(Damage);
+	// ---------------------------------------------------------------------
+	// [MOD] Headshot 판정 (너 기존 로직 + 좀비 HitBox/컴포넌트명 보강)
+	// ---------------------------------------------------------------------
+	bool bIsHeadshot = false;
+
+	UPrimitiveComponent* HitComp = Cast<UPrimitiveComponent>(Hit.GetComponent());
+	const FString HitCompName = HitComp ? HitComp->GetName() : TEXT("None");
+
+	// 0) 컴포넌트 Tag 우선(프로젝트에서 쓸 수 있으면 가장 안정적)
+	if (HitComp && HitComp->ComponentHasTag(TEXT("HitZone.Head")))
+	{
+		bIsHeadshot = true;
+	}
+
+	// 1) 플레이어: HeadHitBox 일치
+	if (!bIsHeadshot)
+	{
+		if (const APlayerCharacter* VictimPlayer = Cast<APlayerCharacter>(TargetActor))
+		{
+			if (VictimPlayer->GetHeadHitBox() && Hit.GetComponent() == VictimPlayer->GetHeadHitBox())
+			{
+				bIsHeadshot = true;
+			}
+		}
+	}
+
+	// 2) 좀비/기타: 컴포넌트 이름 기반 (Comp=HeadHitBox 로그 그대로 잡힘)
+	if (!bIsHeadshot)
+	{
+		if (HitComp && HitCompName.Contains(TEXT("HeadHitBox")))
+		{
+			bIsHeadshot = true;
+		}
+	}
+
+	// 3) BoneName 보조
+	if (!bIsHeadshot)
+	{
+		if (!Hit.BoneName.IsNone())
+		{
+			const FString BoneLower = Hit.BoneName.ToString().ToLower();
+			bIsHeadshot = (Hit.BoneName == HeadshotBoneName) || BoneLower.Contains(TEXT("head"));
+		}
+	}
+
+	if (bIsHeadshot)
+	{
+		SpecHandle.Data->DynamicAssetTags.AddTag(FMosesGameplayTags::Get().Hit_Headshot);
+	}
+
+	// ---------------------------------------------------------------------
+	// [MOD] 데미지 확정 (좀비 헤드샷 = 원샷 보장)
+	// ---------------------------------------------------------------------
+	float FinalDamageForSetByCaller = FMath::Abs(Damage);
+
+	if (bZombieTarget && bIsHeadshot)
+	{
+		FinalDamageForSetByCaller = 99999.0f; // ✅ 좀비 헤드샷 원샷 확정
+	}
+
 	SpecHandle.Data->SetSetByCallerMagnitude(FMosesGameplayTags::Get().Data_Damage, FinalDamageForSetByCaller);
 
 	SourceASC->ApplyGameplayEffectSpecToTarget(*SpecHandle.Data.Get(), TargetASC);
 
 	UE_LOG(LogMosesGAS, Warning,
-		TEXT("[GAS][SV] APPLY OK TargetActor=%s ResolvedOwner=%s Damage=%.1f Weapon=%s GE=%s Bone=%s"),
+		TEXT("[GAS][SV] APPLY OK TargetActor=%s ResolvedOwner=%s Damage=%.1f Weapon=%s GE=%s Bone=%s Headshot=%d IsZombie=%d HitComp=%s"),
 		*GetNameSafe(TargetActor),
 		*GetNameSafe(ResolvedTargetOwnerForLog),
 		FinalDamageForSetByCaller,
 		WeaponData ? *WeaponData->WeaponId.ToString() : TEXT("None"),
 		*GetNameSafe(GEClass.Get()),
-		*Hit.BoneName.ToString());
+		Hit.BoneName.IsNone() ? TEXT("None") : *Hit.BoneName.ToString(),
+		bIsHeadshot ? 1 : 0,
+		bZombieTarget ? 1 : 0,
+		*HitCompName);
+
+	// ---------------------------------------------------------------------
+	// [MOD] 헤드샷 알람(OwnerOnly Toast): 발사자에게만
+	// - "Apply 성공" 이후 호출 → 불일치 최소화
+	// ---------------------------------------------------------------------
+	if (bIsHeadshot && InstigatorController)
+	{
+		if (AMosesPlayerController* MPC = Cast<AMosesPlayerController>(InstigatorController))
+		{
+			// 원하는 문구/시간 여기서 조절
+			MPC->Client_ShowHeadshotToast_OwnerOnly(FText::FromString(TEXT("헤드샷!")), 0.8f);
+		}
+	}
 
 	return true;
 }
@@ -1803,3 +1931,7 @@ void UMosesCombatComponent::Multicast_DrawFireTraceDebug_Implementation(
 #endif // ENABLE_DRAW_DEBUG
 }
 
+bool UMosesCombatComponent::Server_IsZombieTarget(const AActor* TargetActor) const
+{
+	return TargetActor && TargetActor->IsA(AMosesZombieCharacter::StaticClass());
+}

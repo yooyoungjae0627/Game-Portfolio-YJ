@@ -66,6 +66,8 @@ public:
 	FGameplayTag Ammo_Sniper;  
 	FGameplayTag Ammo_Grenade; 
 
+	FGameplayTag Hit_Headshot;
+
 private:
 	static FMosesGameplayTags GameplayTags;
 	static bool bInitialized;

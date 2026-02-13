@@ -1,8 +1,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "UObject/Object.h"
-
+#include "Engine/DataAsset.h"
 #include "GameplayAbilitySpecHandle.h"
 #include "ActiveGameplayEffectHandle.h"
 
@@ -12,11 +11,6 @@ class UAbilitySystemComponent;
 class UGameplayAbility;
 class UGameplayEffect;
 
-/**
- * [MOD] GrantedHandles는 "AbilitySet을 ASC에 부여한 결과"를 기록하는 핸들 묶음이다.
- * - 나중에 일괄 회수(RemoveFromAbilitySystem)하기 위해 필요
- * - 반드시 UMosesAbilitySet 선언/함수 시그니처보다 "앞"에 정의되어야 한다.
- */
 USTRUCT()
 struct FMosesAbilitySet_GrantedHandles
 {
@@ -67,9 +61,13 @@ public:
  * UMosesAbilitySet
  * - GAS 능력/이펙트 “부여 세트”
  * - 서버 권위로 ASC에 Abilities/StartupEffects를 지급
+ *
+ * [MOD] UPrimaryDataAsset로 변경:
+ * - 에디터에서 Data Asset 생성 가능
+ * - GameFeatureAction의 SoftObjectPtr로 참조하기 좋음
  */
 UCLASS(BlueprintType)
-class UE5_MULTI_SHOOTER_API UMosesAbilitySet : public UObject
+class UE5_MULTI_SHOOTER_API UMosesAbilitySet : public UDataAsset  
 {
 	GENERATED_BODY()
 

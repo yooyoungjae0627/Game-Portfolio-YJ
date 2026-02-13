@@ -700,7 +700,19 @@ void AMosesPlayerController::Client_ShowHeadshotToast_OwnerOnly_Implementation(c
 	PendingHeadshotToastText = Text;
 	PendingHeadshotToastDuration = FMath::Clamp(DurationSec, 0.2f, 10.0f);
 
+	UE_LOG(LogMosesPickup, Log,
+		TEXT("[HEADSHOT_TOAST][CL] ClientRPC Arrived. Text=%s Dur=%.2f World=%s"),
+		*Text.ToString(),
+		PendingHeadshotToastDuration,
+		*GetNameSafe(GetWorld()));
+
 	TryFlushPendingHeadshotToast_Local();
+
+	// ✅ HUD가 아직 없으면: 기존 Pickup RetryTimer를 같이 태워서 HUD 생길 때까지 플러시 보장
+	if (bPendingHeadshotToast)
+	{
+		StartPickupToastRetryTimer_Local();
+	}
 }
 
 // =========================================================

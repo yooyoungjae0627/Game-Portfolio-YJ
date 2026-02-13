@@ -190,6 +190,8 @@ public:
 	/** 결과 진입 순간 TotalScore를 1회 세팅(서버). */
 	void ServerSetTotalScore(int32 NewTotalScore);
 
+	void SetPendingCombatAbilitySet(UMosesAbilitySet* InSet);
+
 	/* RepNotifies */
 
 	UFUNCTION()
@@ -405,6 +407,9 @@ private:
 
 	UPROPERTY(EditDefaultsOnly, Category = "Moses|GAS|Damage")
 	TSoftClassPtr<UGameplayEffect> DamageGE_Zombie_SetByCaller;
+
+	UPROPERTY()
+	UMosesAbilitySet* PendingCombatAbilitySet = nullptr;
 
 	/* Non-UPROPERTY */
 

@@ -218,15 +218,28 @@ void UMosesMatchHUD::ShowPickupToast_Local(const FText& Text, float DurationSeco
 
 void UMosesMatchHUD::StopLocalPickupToast_Internal()
 {
+	bLocalPickupToastActive = false;
+
+	if (bLocalRespawnNoticeActive || bLocalHeadshotToastActive)
+	{
+		return;
+	}
+
+	AMosesMatchGameState* GS = CachedMatchGameState.Get();
+	if (AnnouncementWidget && GS)
+	{
+		AnnouncementWidget->UpdateAnnouncement(GS->GetAnnouncementState());
+		return;
+	}
+
 	if (AnnouncementWidget)
 	{
 		FMosesAnnouncementState Off;
 		Off.bActive = false;
 		AnnouncementWidget->UpdateAnnouncement(Off);
 	}
-
-	bLocalPickupToastActive = false;
 }
+
 
 // ============================================================================
 // Bind / Retry
@@ -490,7 +503,7 @@ void UMosesMatchHUD::ApplySnapshotFromMatchGameState()
 	HandleMatchPhaseChanged(GS->GetMatchPhase());
 
 	// 로컬 리스폰/픽업 토스트 중엔 전원 공지 덮지 않음
-	if (!bLocalRespawnNoticeActive && !bLocalPickupToastActive)
+	if (!bLocalRespawnNoticeActive && !bLocalPickupToastActive && !bLocalHeadshotToastActive)
 	{
 		HandleAnnouncementChanged(GS->GetAnnouncementState());
 	}
@@ -902,6 +915,12 @@ void UMosesMatchHUD::HandleAnnouncementChanged(const FMosesAnnouncementState& St
 		return;
 	}
 
+	// [MOD] 헤드샷 토스트 표시 중이면 전원 공지 차단
+	if (bLocalHeadshotToastActive)
+	{
+		return;
+	}
+
 	if (AnnouncementWidget)
 	{
 		AnnouncementWidget->UpdateAnnouncement(State);
@@ -1161,15 +1180,31 @@ void UMosesMatchHUD::ShowHeadshotToast_Local(const FText& Text, float DurationSe
 
 void UMosesMatchHUD::StopLocalHeadshotToast_Internal()
 {
+	bLocalHeadshotToastActive = false;
+
+	// 아직 리스폰/픽업이 켜져 있으면 여기서 건드리지 않음 (그들이 담당)
+	if (bLocalRespawnNoticeActive || bLocalPickupToastActive)
+	{
+		return;
+	}
+
+	AMosesMatchGameState* GS = CachedMatchGameState.Get();
+	if (AnnouncementWidget && GS)
+	{
+		// [MOD] 현재 서버(SSOT) 공지로 복구
+		AnnouncementWidget->UpdateAnnouncement(GS->GetAnnouncementState());
+		return;
+	}
+
+	// GS가 없으면 안전하게 OFF
 	if (AnnouncementWidget)
 	{
 		FMosesAnnouncementState Off;
 		Off.bActive = false;
 		AnnouncementWidget->UpdateAnnouncement(Off);
 	}
-
-	bLocalHeadshotToastActive = false;
 }
+
 
 static AMosesMatchGameState* MosesHUD_GetMatchGS(UWorld* World)
 {

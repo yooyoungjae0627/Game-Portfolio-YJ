@@ -38,7 +38,6 @@ public:
 	virtual void OnGameFeatureDeactivating(FGameFeatureDeactivatingContext& Context) override;
 
 private:
-	/** GF_Combat_Data에 존재하는 AbilitySet(DataAsset) */
 	UPROPERTY(EditDefaultsOnly, Category = "Moses|GAS")
 	TSoftObjectPtr<UMosesAbilitySet> CombatAbilitySet;
 

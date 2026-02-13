@@ -77,4 +77,7 @@ void FMosesGameplayTags::AddAllTags(UGameplayTagsManager& Manager)
 	AddTag(Manager, GameplayTags.Ammo_Rifle, "Ammo.Rifle", "Rifle ammo type");
 	AddTag(Manager, GameplayTags.Ammo_Sniper, "Ammo.Sniper", "Sniper ammo type");
 	AddTag(Manager, GameplayTags.Ammo_Grenade, "Ammo.Grenade", "Grenade ammo type");
+
+	// Hit
+	AddTag(Manager, GameplayTags.Hit_Headshot, "Hit.Headshot", "Headshot marker tag");
 }

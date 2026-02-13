@@ -175,28 +175,28 @@ void AMosesPlayerState::TryInitASC(AActor* InAvatarActor)
 	UE_LOG(LogMosesGAS, Warning, TEXT("[GAS][PS] InitAbilityActorInfo Owner=%s Avatar=%s"),
 		*GetNameSafe(this), *GetNameSafe(InAvatarActor));
 
+	// ✅ 기본 Attribute 세팅
 	if (HasAuthority())
 	{
-		MosesAbilitySystemComponent->SetNumericAttributeBase(UMosesAttributeSet::GetMaxHealthAttribute(), 100.f);
-		MosesAbilitySystemComponent->SetNumericAttributeBase(UMosesAttributeSet::GetHealthAttribute(), 100.f);
+		MosesAbilitySystemComponent->SetNumericAttributeBase(
+			UMosesAttributeSet::GetMaxHealthAttribute(), 100.f);
+		MosesAbilitySystemComponent->SetNumericAttributeBase(
+			UMosesAttributeSet::GetHealthAttribute(), 100.f);
 
-		MosesAbilitySystemComponent->SetNumericAttributeBase(UMosesAttributeSet::GetMaxShieldAttribute(), 100.f);
-		MosesAbilitySystemComponent->SetNumericAttributeBase(UMosesAttributeSet::GetShieldAttribute(), 100.f);
-
-		UE_LOG(LogMosesHP, Warning, TEXT("%s GAS Defaults Applied HP=100/100 Shield=100/100 PS=%s"),
-			MOSES_TAG_PS_SV, *GetNameSafe(this));
+		MosesAbilitySystemComponent->SetNumericAttributeBase(
+			UMosesAttributeSet::GetMaxShieldAttribute(), 100.f);
+		MosesAbilitySystemComponent->SetNumericAttributeBase(
+			UMosesAttributeSet::GetShieldAttribute(), 100.f);
 	}
 
 	BindASCAttributeDelegates();
-
 	BroadcastVitals_Initial();
-	BroadcastScore();
-	BroadcastDeaths();
 
-	BroadcastPlayerCaptures();
-	BroadcastPlayerZombieKills();
-	BroadcastPlayerPvPKills();
-	BroadcastAmmoAndGrenade();
+	// 🔥🔥🔥 핵심 부분 🔥🔥🔥
+	if (HasAuthority() && PendingCombatAbilitySet && !bCombatAbilitySetApplied)
+	{
+		ServerApplyCombatAbilitySetOnce(PendingCombatAbilitySet);
+	}
 }
 
 void AMosesPlayerState::BindASCAttributeDelegates()
@@ -1019,4 +1019,20 @@ TSubclassOf<UGameplayEffect> AMosesPlayerState::GetDamageGE_Player_SetByCaller()
 TSubclassOf<UGameplayEffect> AMosesPlayerState::GetDamageGE_Zombie_SetByCaller() const
 {
 	return DamageGE_Zombie_SetByCaller.LoadSynchronous();
+}
+
+void AMosesPlayerState::SetPendingCombatAbilitySet(UMosesAbilitySet* InSet)
+{
+	if (!HasAuthority() || !InSet)
+	{
+		return;
+	}
+
+	PendingCombatAbilitySet = InSet;
+
+	// ASC 이미 초기화됐으면 즉시 적용
+	if (bASCInitialized && !bCombatAbilitySetApplied)
+	{
+		ServerApplyCombatAbilitySetOnce(PendingCombatAbilitySet);
+	}
 }

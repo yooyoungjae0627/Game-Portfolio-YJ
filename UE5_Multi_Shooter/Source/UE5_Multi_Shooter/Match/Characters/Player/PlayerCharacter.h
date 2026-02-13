@@ -6,6 +6,7 @@
 
 #include "CoreMinimal.h"
 #include "GameplayTagContainer.h"
+#include "Components/SphereComponent.h"
 #include "UE5_Multi_Shooter/Match/Characters/Player/MosesCharacter.h"
 #include "PlayerCharacter.generated.h"
 
@@ -15,6 +16,7 @@ class UMosesHeroComponent;
 class UMosesCameraComponent;
 class UMosesCombatComponent;
 class UMosesInteractionComponent;
+class UAbilitySystemComponent;
 
 class USkeletalMeshComponent;
 class UAnimMontage;
@@ -56,6 +58,8 @@ public:
 	// AnimNotify entrypoints (Swap montage)
 	void HandleSwapDetachNotify();
 	void HandleSwapAttachNotify();
+
+	USphereComponent* GetHeadHitBox() const { return HeadHitBox; }
 
 protected:
 	// Engine
@@ -149,6 +153,12 @@ private:
 	void StartAutoFire_Local();
 	void StopAutoFire_Local();
 	void HandleAutoFireTick_Local();
+
+private:
+	UAbilitySystemComponent* ResolveASC_FromPlayerState() const;
+
+	void GAS_InputPressed(int32 InputID);
+	void GAS_InputReleased(int32 InputID);
 
 private:
 	// Components
@@ -269,4 +279,21 @@ private:
 
 	UPROPERTY(Transient)
 	bool bSwapAttachDone = false;
+
+private:
+	// Headshot 판정용 HitBox (Head 소켓에 부착)
+	UPROPERTY(VisibleAnywhere, Category = "Moses|HitBox")
+	TObjectPtr<USphereComponent> HeadHitBox = nullptr;
+
+	// 소켓 이름 (스켈레톤에 head/head_socket 등 맞춰서 BP에서 바꿔도 됨)
+	UPROPERTY(EditDefaultsOnly, Category = "Moses|HitBox")
+	FName HeadHitBoxSocketName = TEXT("head");
+
+	// 어떤 TraceChannel을 Block할지 (CombatComponent FireTraceChannel과 동일하게 맞춰야 함)
+	UPROPERTY(EditDefaultsOnly, Category = "Moses|HitBox")
+	TEnumAsByte<ECollisionChannel> HeadHitBoxTraceChannel = ECC_Visibility;
+
+	// 히트박스 크기 튜닝용
+	UPROPERTY(EditDefaultsOnly, Category = "Moses|HitBox")
+	float HeadHitBoxRadius = 18.f;
 };
