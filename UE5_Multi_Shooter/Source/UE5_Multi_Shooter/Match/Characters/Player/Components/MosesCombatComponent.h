@@ -288,7 +288,7 @@ private:
 		const UMosesWeaponData* WeaponData,
 		const FHitResult& Hit) const;
 
-	void Server_PropagateFireCosmetics(FGameplayTag ApprovedWeaponId);
+	void Server_PropagateFireCosmetics(const UMosesWeaponData* WeaponData);
 
 	// =========================================================================
 	// Reload Core (Server only)

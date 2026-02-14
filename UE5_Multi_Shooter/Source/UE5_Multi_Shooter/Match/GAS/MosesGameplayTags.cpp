@@ -88,8 +88,13 @@ void FMosesGameplayTags::AddAllTags(UGameplayTagsManager& Manager)
 	// Hit
 	AddTag(Manager, Tags.Hit_Headshot, "Hit.Headshot", "Headshot marker");
 
+	// ---------------------------------------------------------------------
 	// GameplayCue
-	AddTag(Manager, Tags.GameplayCue_Weapon_MuzzleFlash, "GameplayCue.Weapon.MuzzleFlash", "Muzzle flash");
-	AddTag(Manager, Tags.GameplayCue_Weapon_HitImpact, "GameplayCue.Weapon.HitImpact", "Hit impact");
+	// ---------------------------------------------------------------------
+	// Weapon Cosmetic (server-authoritative trigger, client-played)
+	AddTag(Manager, Tags.GameplayCue_Weapon_MuzzleFlash, "GameplayCue.Weapon.MuzzleFlash", "Weapon muzzle flash (VFX/SFX)");
+	AddTag(Manager, Tags.GameplayCue_Weapon_HitImpact, "GameplayCue.Weapon.HitImpact", "Weapon hit impact (VFX/SFX)");
+
+	// UI (owner-only/ClientRPC 기반으로 유지 권장)
 	AddTag(Manager, Tags.GameplayCue_UI_Hitmarker, "GameplayCue.UI.Hitmarker", "Hitmarker UI");
 }

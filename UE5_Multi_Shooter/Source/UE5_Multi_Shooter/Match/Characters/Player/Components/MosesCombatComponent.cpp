@@ -535,7 +535,9 @@ void UMosesCombatComponent::ServerFire_Implementation()
 		*ApprovedWeaponId.ToString(), CurrentSlot, GetCurrentMagAmmo(), GetCurrentReserveAmmo());
 
 	Server_PerformFireAndApplyDamage(WeaponData);
-	Server_PropagateFireCosmetics(ApprovedWeaponId);
+
+	// ✅ [MOD] 기존 ApprovedWeaponId -> WeaponData 로 변경
+	Server_PropagateFireCosmetics(WeaponData);
 
 	BroadcastSlotsStateChanged(CurrentSlot, TEXT("ServerFire"));
 }
@@ -1215,6 +1217,26 @@ bool UMosesCombatComponent::Server_ApplyDamageToTarget_GAS(
 		return false;
 	}
 
+	// ---------------------------------------------------------------------
+	// ★ EffectContext는 "항상" 만들고 HitResult/WeaponData를 넣어둔다
+	//    (월드 히트 폴백 Impact에도 그대로 사용)
+	// ---------------------------------------------------------------------
+	FGameplayEffectContextHandle Ctx = SourceASC->MakeEffectContext();
+
+	AActor* InstigatorActor = InstigatorController ? InstigatorController->GetPawn() : nullptr;
+	if (!InstigatorActor)
+	{
+		InstigatorActor = DamageCauser;
+	}
+
+	Ctx.AddInstigator(InstigatorActor, DamageCauser);
+	Ctx.AddSourceObject(const_cast<UMosesCombatComponent*>(this));
+	Ctx.AddSourceObject(const_cast<UMosesWeaponData*>(WeaponData));
+	Ctx.AddHitResult(Hit, true); // ★ Impact용 핵심
+
+	// ---------------------------------------------------------------------
+	// TargetASC Resolve
+	// ---------------------------------------------------------------------
 	UAbilitySystemComponent* TargetASC = nullptr;
 	AActor* ResolvedTargetOwnerForLog = TargetActor;
 
@@ -1229,21 +1251,30 @@ bool UMosesCombatComponent::Server_ApplyDamageToTarget_GAS(
 			TargetASC = TargetPS->GetAbilitySystemComponent();
 			ResolvedTargetOwnerForLog = TargetPS;
 		}
-		else
-		{
-			return false;
-		}
-	}
-	else
-	{
-		return false;
 	}
 
+	// ---------------------------------------------------------------------
+	// ★ 월드(StaticMesh/Landscape 등) 폴백: TargetASC가 없으면 Impact Cue만 실행
+	// ---------------------------------------------------------------------
 	if (!TargetASC)
 	{
-		return false;
+		FGameplayCueParameters Params;
+		Params.EffectContext = Ctx;
+		Params.SourceObject = const_cast<UMosesWeaponData*>(WeaponData);
+
+		SourceASC->ExecuteGameplayCue(FMosesGameplayTags::Get().GameplayCue_Weapon_HitImpact, Params);
+
+		UE_LOG(LogMosesGAS, Verbose,
+			TEXT("[GC][SV] Execute HitImpact(Fallback-World) Target=%s Weapon=%s"),
+			*GetNameSafe(TargetActor),
+			WeaponData ? *WeaponData->WeaponId.ToString() : TEXT("None"));
+
+		return false; // 기존대로 ApplyDamage 폴백 흐름 유지
 	}
 
+	// ---------------------------------------------------------------------
+	// Damage GE 선택 (정책 유지)
+	// ---------------------------------------------------------------------
 	TSubclassOf<UGameplayEffect> GEClass = nullptr;
 
 	const bool bZombieTarget = Server_IsZombieTarget(TargetActor);
@@ -1266,19 +1297,6 @@ bool UMosesCombatComponent::Server_ApplyDamageToTarget_GAS(
 			*GetNameSafe(SourcePS));
 		return false;
 	}
-
-	FGameplayEffectContextHandle Ctx = SourceASC->MakeEffectContext();
-
-	AActor* InstigatorActor = InstigatorController ? InstigatorController->GetPawn() : nullptr;
-	if (!InstigatorActor)
-	{
-		InstigatorActor = DamageCauser;
-	}
-
-	Ctx.AddInstigator(InstigatorActor, DamageCauser);
-	Ctx.AddSourceObject(this);
-	Ctx.AddSourceObject(WeaponData);
-	Ctx.AddHitResult(Hit, true);
 
 	const FGameplayEffectSpecHandle SpecHandle = SourceASC->MakeOutgoingSpec(GEClass, 1.0f, Ctx);
 	if (!SpecHandle.IsValid() || !SpecHandle.Data.IsValid())
@@ -1338,7 +1356,25 @@ bool UMosesCombatComponent::Server_ApplyDamageToTarget_GAS(
 
 	SpecHandle.Data->SetSetByCallerMagnitude(FMosesGameplayTags::Get().Data_Damage, FinalDamageForSetByCaller);
 
-	SourceASC->ApplyGameplayEffectSpecToTarget(*SpecHandle.Data.Get(), TargetASC);
+	// ---------------------------------------------------------------------
+	// ★ Apply 결과 핸들을 받아서, 성공 시 HitImpact Cue 실행
+	// ---------------------------------------------------------------------
+	const FActiveGameplayEffectHandle Applied =
+		SourceASC->ApplyGameplayEffectSpecToTarget(*SpecHandle.Data.Get(), TargetASC);
+
+	if (Applied.WasSuccessfullyApplied())
+	{
+		FGameplayCueParameters Params;
+		Params.EffectContext = Ctx;
+		Params.SourceObject = const_cast<UMosesWeaponData*>(WeaponData);
+
+		TargetASC->ExecuteGameplayCue(FMosesGameplayTags::Get().GameplayCue_Weapon_HitImpact, Params);
+
+		UE_LOG(LogMosesGAS, Verbose,
+			TEXT("[GC][SV] Execute HitImpact(TargetASC) Target=%s Weapon=%s"),
+			*GetNameSafe(TargetActor),
+			WeaponData ? *WeaponData->WeaponId.ToString() : TEXT("None"));
+	}
 
 	UE_LOG(LogMosesGAS, Warning,
 		TEXT("[GAS][SV] APPLY OK TargetActor=%s ResolvedOwner=%s Damage=%.1f Weapon=%s GE=%s Bone=%s Headshot=%d IsZombie=%d HitComp=%s"),
@@ -1360,14 +1396,14 @@ bool UMosesCombatComponent::Server_ApplyDamageToTarget_GAS(
 		}
 	}
 
-	return true;
+	return Applied.WasSuccessfullyApplied();
 }
 
 // ============================================================================
 // Cosmetic propagation
 // ============================================================================
 
-void UMosesCombatComponent::Server_PropagateFireCosmetics(FGameplayTag ApprovedWeaponId)
+void UMosesCombatComponent::Server_PropagateFireCosmetics(const UMosesWeaponData* WeaponData)
 {
 	APlayerCharacter* PlayerChar = MosesCombat_Private::GetOwnerPlayerCharacter(this);
 	if (!PlayerChar)
@@ -1376,12 +1412,32 @@ void UMosesCombatComponent::Server_PropagateFireCosmetics(FGameplayTag ApprovedW
 		return;
 	}
 
+	const FGameplayTag WeaponIdForMontage = WeaponData ? WeaponData->WeaponId : FGameplayTag();
+
 	UE_LOG(LogMosesCombat, Warning,
 		TEXT("[FIRE][SV] PropagateCosmetic OK ShooterPawn=%s Weapon=%s"),
 		*GetNameSafe(PlayerChar),
-		*ApprovedWeaponId.ToString());
+		WeaponData ? *WeaponData->WeaponId.ToString() : TEXT("None"));
 
-	PlayerChar->Multicast_PlayFireMontage(ApprovedWeaponId);
+	// 1) 기존: 발사 몽타주(멀티캐스트) 유지
+	PlayerChar->Multicast_PlayFireMontage(WeaponIdForMontage);
+
+	// 2) [ADD] GameplayCue: MuzzleFlash (SourceASC)
+	if (AMosesPlayerState* PS = MosesCombat_Private::GetOwnerPS(this))
+	{
+		if (UAbilitySystemComponent* ASC = PS->GetAbilitySystemComponent())
+		{
+			FGameplayCueParameters Params;
+			Params.SourceObject = const_cast<UMosesWeaponData*>(WeaponData); // ★ WeaponData 전달
+
+			ASC->ExecuteGameplayCue(FMosesGameplayTags::Get().GameplayCue_Weapon_MuzzleFlash, Params);
+
+			UE_LOG(LogMosesGAS, Verbose,
+				TEXT("[GC][SV] Execute MuzzleFlash Cue Weapon=%s PS=%s"),
+				WeaponData ? *WeaponData->WeaponId.ToString() : TEXT("None"),
+				*GetNameSafe(PS));
+		}
+	}
 }
 
 // ============================================================================

@@ -131,6 +131,14 @@ public:
 	UPROPERTY(EditDefaultsOnly, Category = "Moses|Weapon|VFX")
 	TSoftObjectPtr<UParticleSystem> MuzzleVFX;
 
+	/** 피격 이펙트 (Cascade) */
+	UPROPERTY(EditDefaultsOnly, Category = "Moses|Weapon|VFX")
+	TSoftObjectPtr<UParticleSystem> ImpactVFX;
+
+	/** 피격 사운드 */
+	UPROPERTY(EditDefaultsOnly, Category = "Moses|Weapon|SFX")
+	TSoftObjectPtr<USoundBase> ImpactSFX;
+
 	/** 총구 소켓 이름(무기 메시 기준) */
 	UPROPERTY(EditDefaultsOnly, Category = "Moses|Weapon|Socket")
 	FName MuzzleSocketName = TEXT("MuzzleFlash");
