@@ -69,6 +69,10 @@ public:
 	FGameplayAttributeData IncomingHeal;
 	ATTRIBUTE_ACCESSORS(UMosesAttributeSet, IncomingHeal)
 
+	UPROPERTY(BlueprintReadOnly, ReplicatedUsing = OnRep_IncomingAmmoCost, Category = "Moses|Meta")
+	FGameplayAttributeData IncomingAmmoCost;
+	ATTRIBUTE_ACCESSORS(UMosesAttributeSet, IncomingAmmoCost)
+
 protected:
 	UFUNCTION()
 	void OnRep_Health(const FGameplayAttributeData& OldValue);
@@ -81,6 +85,9 @@ protected:
 
 	UFUNCTION()
 	void OnRep_MaxShield(const FGameplayAttributeData& OldValue);
+
+	UFUNCTION()
+	void OnRep_IncomingAmmoCost(const FGameplayAttributeData& OldValue);
 
 private:
 	// [MOD] 서버 권위 분배 로직

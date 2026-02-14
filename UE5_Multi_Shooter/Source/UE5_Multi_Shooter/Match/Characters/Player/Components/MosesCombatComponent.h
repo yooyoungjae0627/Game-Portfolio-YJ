@@ -15,6 +15,7 @@
 #include "Components/ActorComponent.h"
 #include "GameplayTagContainer.h"
 #include "Net/UnrealNetwork.h"
+#include "GameplayEffect.h"
 
 #include "UE5_Multi_Shooter/Match/Weapon/MosesWeaponTypes.h" // EMosesAmmoType
 #include "MosesCombatComponent.generated.h"
@@ -201,6 +202,8 @@ public:
 		bool bFinalHit,
 		const FVector& FinalImpact
 	);
+
+	void Server_ConsumeAmmo_ManualCost(int32 Cost);
 
 protected:
 	virtual void BeginPlay() override;
@@ -454,4 +457,9 @@ private:
 	// 클라: heartbeat 주기(너무 빠를 필요 없음)
 	UPROPERTY(EditDefaultsOnly, Category = "Moses|Fire")
 	float ClientFireHeldHeartbeatIntervalSec = 0.05f; // 20Hz
+
+	bool Server_ApplyAmmoCostToSelf_GAS(float AmmoCost, const class UMosesWeaponData* WeaponData) const;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Moses|GAS")
+	TSoftClassPtr<UGameplayEffect> AmmoCostGE_SetByCaller;
 };

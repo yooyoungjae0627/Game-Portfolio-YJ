@@ -1036,3 +1036,33 @@ void AMosesPlayerState::SetPendingCombatAbilitySet(UMosesAbilitySet* InSet)
 		ServerApplyCombatAbilitySetOnce(PendingCombatAbilitySet);
 	}
 }
+
+void AMosesPlayerState::ConsumeAmmoByCost_Server(float AmmoCost, const FGameplayEffectContextHandle& Context)
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	const int32 CostInt = FMath::Max(0, FMath::RoundToInt(FMath::Abs(AmmoCost)));
+	if (CostInt <= 0)
+	{
+		return;
+	}
+
+	UMosesCombatComponent* CC = GetCombatComponent();
+	if (!CC)
+	{
+		UE_LOG(LogMosesWeapon, Warning,
+			TEXT("[AMMO][SV][GAS] Consume FAIL (NoCombatComponent) PS=%s"),
+			*GetNameSafe(this));
+		return;
+	}
+
+	// ✅ SSOT: CombatComponent가 CurrentSlot/WeaponData를 알고 있으니 여기서 위임
+	CC->Server_ConsumeAmmo_ManualCost(CostInt);
+
+	UE_LOG(LogMosesWeapon, Verbose,
+		TEXT("[AMMO][SV][GAS] Consume OK Cost=%d PS=%s"),
+		CostInt, *GetNameSafe(this));
+}

@@ -8,7 +8,7 @@
 #include "AbilitySystemInterface.h"
 #include "GameFramework/PlayerState.h"
 #include "GameplayEffectTypes.h"
-
+#include "UE5_Multi_Shooter/Match/GAS/Interfaces/MosesAmmoConsumer.h" 
 #include "UE5_Multi_Shooter/Match/GAS/MosesAbilitySet.h"
 #include "UE5_Multi_Shooter/Match/GAS/AttributeSet/MosesAttributeSet.h"
 
@@ -43,7 +43,7 @@ DECLARE_MULTICAST_DELEGATE_OneParam(FOnTotalKillsChangedNative, int32 /*TotalKil
 DECLARE_MULTICAST_DELEGATE_OneParam(FOnMosesTotalScoreChangedNative, int32 /*TotalScore*/);
 
 UCLASS()
-class UE5_MULTI_SHOOTER_API AMosesPlayerState : public APlayerState, public IAbilitySystemInterface
+class UE5_MULTI_SHOOTER_API AMosesPlayerState : public APlayerState, public IAbilitySystemInterface, public IMosesAmmoConsumer
 {
 	GENERATED_BODY()
 
@@ -62,6 +62,8 @@ protected:
 
 	/** Score(기본 APlayerState score) Rep 수신 시 브로드캐스트. */
 	virtual void OnRep_Score() override;
+
+	virtual void ConsumeAmmoByCost_Server(float AmmoCost, const FGameplayEffectContextHandle& Context) override;
 
 public:
 	/** PawnData 조회 헬퍼(템플릿). */

@@ -506,8 +506,6 @@ void UMosesCombatComponent::ServerFire_Implementation()
 
 	if (!Server_CanFire(Reason, Debug))
 	{
-		UE_LOG(LogMosesCombat, VeryVerbose, TEXT("[FIRE][SV] Reject Guard Reason=%d Debug=%s Slot=%d PS=%s"),
-			(int32)Reason, *Debug, CurrentSlot, *GetNameSafe(GetOwner()));
 		return;
 	}
 
@@ -515,26 +513,28 @@ void UMosesCombatComponent::ServerFire_Implementation()
 	const UMosesWeaponData* WeaponData = Server_ResolveEquippedWeaponData(ApprovedWeaponId);
 	if (!WeaponData)
 	{
-		UE_LOG(LogMosesCombat, VeryVerbose, TEXT("[FIRE][SV] Reject(NoWeaponData) Weapon=%s"), *ApprovedWeaponId.ToString());
 		return;
 	}
 
 	if (!Server_IsFireCooldownReady(WeaponData))
 	{
-		UE_LOG(LogMosesCombat, VeryVerbose, TEXT("[FIRE][SV] Reject(Cooldown) Slot=%d Weapon=%s"),
-			CurrentSlot, *ApprovedWeaponId.ToString());
 		return;
 	}
 
+	// ✅ 여기서부터가 "승인 후" 구간
 	Server_UpdateFireCooldownStamp();
 
-	Server_ConsumeAmmo_OnApprovedFire(WeaponData);
+	// ✅ [여기에 삽입]
+	const bool bAmmoCostApplied = Server_ApplyAmmoCostToSelf_GAS(1.0f, WeaponData);
+	if (!bAmmoCostApplied)
+	{
+		Server_ConsumeAmmo_OnApprovedFire(WeaponData);
+	}
 
 	UE_LOG(LogMosesWeapon, Warning, TEXT("[WEAPON][SV] Fire Weapon=%s Slot=%d Mag=%d Reserve=%d"),
 		*ApprovedWeaponId.ToString(), CurrentSlot, GetCurrentMagAmmo(), GetCurrentReserveAmmo());
 
 	Server_PerformFireAndApplyDamage(WeaponData);
-
 	Server_PropagateFireCosmetics(ApprovedWeaponId);
 
 	BroadcastSlotsStateChanged(CurrentSlot, TEXT("ServerFire"));
@@ -2226,4 +2226,107 @@ void UMosesCombatComponent::ClientFireHeldHeartbeatTick()
 		StopClientFireHeldHeartbeat();
 		ServerStopFire(); // ✅ RequestStopFire 재진입 제거
 	}
+}
+
+void UMosesCombatComponent::Server_ConsumeAmmo_ManualCost(int32 Cost)
+{
+	if (!GetOwner() || !GetOwner()->HasAuthority())
+	{
+		return;
+	}
+
+	Cost = FMath::Max(0, Cost);
+	if (Cost <= 0)
+	{
+		return;
+	}
+
+	int32 Mag = 0;
+	int32 ReserveCur = 0;
+	int32 ReserveMax = 0;
+	GetSlotAmmo_Internal(CurrentSlot, Mag, ReserveCur, ReserveMax);
+
+	const int32 OldMag = Mag;
+
+	Mag = FMath::Max(0, Mag - Cost);
+	SetSlotAmmo_Internal(CurrentSlot, Mag, ReserveCur, ReserveMax);
+
+	BroadcastAmmoChanged(TEXT("Server_ConsumeAmmo_ManualCost"));
+
+	UE_LOG(LogMosesWeapon, Verbose,
+		TEXT("[AMMO][SV] ManualCost Slot=%d Cost=%d Mag %d->%d Reserve=%d/%d PS=%s"),
+		CurrentSlot,
+		Cost,
+		OldMag,
+		Mag,
+		ReserveCur,
+		ReserveMax,
+		*GetNameSafe(GetOwner()));
+
+	// (선택) 자동 리로드 정책을 Cost에도 동일 적용하고 싶으면 여기서 체크
+	// 단, 이미 Server_ConsumeAmmo_OnApprovedFire에 auto reload가 있다면 중복 주의.
+}
+
+bool UMosesCombatComponent::Server_ApplyAmmoCostToSelf_GAS(float AmmoCost, const UMosesWeaponData* WeaponData) const
+{
+	// Server Authority only
+	if (!GetOwner() || !GetOwner()->HasAuthority())
+	{
+		UE_LOG(LogMosesGAS, Verbose, TEXT("[AMMO][SV][GAS] FAIL NoAuthority Owner=%s"), *GetNameSafe(GetOwner()));
+		return false;
+	}
+
+	AMosesPlayerState* SourcePS = Cast<AMosesPlayerState>(GetOwner());
+	if (!SourcePS)
+	{
+		UE_LOG(LogMosesGAS, Warning, TEXT("[AMMO][SV][GAS] FAIL OwnerNotPlayerState Owner=%s"), *GetNameSafe(GetOwner()));
+		return false;
+	}
+
+	UAbilitySystemComponent* SourceASC = SourcePS->GetAbilitySystemComponent();
+	if (!SourceASC)
+	{
+		UE_LOG(LogMosesGAS, Warning, TEXT("[AMMO][SV][GAS] FAIL NoSourceASC PS=%s"), *GetNameSafe(SourcePS));
+		return false;
+	}
+
+	// Load GE (Soft Reference)
+	TSubclassOf<UGameplayEffect> GEClass = AmmoCostGE_SetByCaller.LoadSynchronous();
+	if (!GEClass)
+	{
+		UE_LOG(LogMosesGAS, Warning,
+			TEXT("[AMMO][SV][GAS] FAIL AmmoCostGE missing -> Fallback. SoftPath=%s PS=%s"),
+			*AmmoCostGE_SetByCaller.ToSoftObjectPath().ToString(),
+			*GetNameSafe(SourcePS));
+		return false;
+	}
+
+	// Build EffectContext
+	FGameplayEffectContextHandle Ctx = SourceASC->MakeEffectContext();
+	Ctx.AddSourceObject(const_cast<UMosesCombatComponent*>(this)); // SourceObject
+	Ctx.AddSourceObject(const_cast<UMosesWeaponData*>(WeaponData)); // Optional (WeaponData can be null)
+
+	// Make spec
+	const FGameplayEffectSpecHandle SpecHandle = SourceASC->MakeOutgoingSpec(GEClass, 1.0f, Ctx);
+	if (!SpecHandle.IsValid() || !SpecHandle.Data.IsValid())
+	{
+		UE_LOG(LogMosesGAS, Warning, TEXT("[AMMO][SV][GAS] FAIL MakeOutgoingSpec GE=%s PS=%s"),
+			*GetNameSafe(GEClass.Get()), *GetNameSafe(SourcePS));
+		return false;
+	}
+
+	// SetByCaller: Data.AmmoCost
+	const float FinalCost = FMath::Abs(AmmoCost);
+	SpecHandle.Data->SetSetByCallerMagnitude(FMosesGameplayTags::Get().Data_AmmoCost, FinalCost);
+
+	// Apply to self (this will drive AttributeSet::PostGameplayEffectExecute on server)
+	SourceASC->ApplyGameplayEffectSpecToSelf(*SpecHandle.Data.Get());
+
+	UE_LOG(LogMosesWeapon, Warning,
+		TEXT("[AMMO][SV][GAS] AmmoCost Applied Cost=%.2f GE=%s PS=%s"),
+		FinalCost,
+		*GetNameSafe(GEClass.Get()),
+		*GetNameSafe(SourcePS));
+
+	return true;
 }

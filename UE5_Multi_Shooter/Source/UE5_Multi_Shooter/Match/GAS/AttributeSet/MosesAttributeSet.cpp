@@ -4,6 +4,7 @@
 
 #include "UE5_Multi_Shooter/Match/GAS/AttributeSet/MosesAttributeSet.h"
 #include "UE5_Multi_Shooter/Match/GAS/MosesGameplayTags.h"
+#include "UE5_Multi_Shooter/Match/GAS/Interfaces/MosesAmmoConsumer.h"
 #include "UE5_Multi_Shooter/Match/Characters/Player/PlayerCharacter.h" 
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
 #include "UE5_Multi_Shooter/MosesPlayerState.h"
@@ -89,6 +90,7 @@ void UMosesAttributeSet::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& O
 	DOREPLIFETIME_CONDITION_NOTIFY(UMosesAttributeSet, MaxHealth, COND_None, REPNOTIFY_Always);
 	DOREPLIFETIME_CONDITION_NOTIFY(UMosesAttributeSet, Shield, COND_None, REPNOTIFY_Always);
 	DOREPLIFETIME_CONDITION_NOTIFY(UMosesAttributeSet, MaxShield, COND_None, REPNOTIFY_Always);
+	DOREPLIFETIME_CONDITION_NOTIFY(UMosesAttributeSet, IncomingAmmoCost, COND_None, REPNOTIFY_Always);
 }
 
 void UMosesAttributeSet::PostGameplayEffectExecute(const FGameplayEffectModCallbackData& Data)
@@ -114,6 +116,9 @@ void UMosesAttributeSet::PostGameplayEffectExecute(const FGameplayEffectModCallb
 
 	bool bTouchedVitalsThisExecute = false;
 
+	// =====================================================================
+	// IncomingDamage -> SplitDamage(Shield/Health) -> Clamp -> Death check
+	// =====================================================================
 	if (Data.EvaluatedData.Attribute == GetIncomingDamageAttribute())
 	{
 		const float DamageAmount = GetIncomingDamage();
@@ -125,6 +130,9 @@ void UMosesAttributeSet::PostGameplayEffectExecute(const FGameplayEffectModCallb
 		SetIncomingDamage(0.f);
 	}
 
+	// =====================================================================
+	// IncomingHeal -> Heal -> Clamp
+	// =====================================================================
 	if (Data.EvaluatedData.Attribute == GetIncomingHealAttribute())
 	{
 		const float HealAmount = GetIncomingHeal();
@@ -136,6 +144,35 @@ void UMosesAttributeSet::PostGameplayEffectExecute(const FGameplayEffectModCallb
 		SetIncomingHeal(0.f);
 	}
 
+	// =====================================================================
+	// [ADD] IncomingAmmoCost -> IMosesAmmoConsumer로 위임 (SSOT: CombatComponent)
+	// - Meta 처리이므로 vitals clamp/Death와 분리
+	// =====================================================================
+	if (Data.EvaluatedData.Attribute == GetIncomingAmmoCostAttribute())
+	{
+		const float AmmoCost = GetIncomingAmmoCost();
+
+		if (AmmoCost > 0.f)
+		{
+			IMosesAmmoConsumer* Consumer = Cast<IMosesAmmoConsumer>(OwnerActor);
+			if (Consumer)
+			{
+				Consumer->ConsumeAmmoByCost_Server(AmmoCost, Data.EffectSpec.GetEffectContext());
+			}
+			else
+			{
+				UE_LOG(LogMosesWeapon, Verbose,
+					TEXT("[AMMO][SV][GAS] Consume SKIP (Owner is not IMosesAmmoConsumer) Owner=%s"),
+					*GetNameSafe(OwnerActor));
+			}
+		}
+
+		SetIncomingAmmoCost(0.f);
+	}
+
+	// =====================================================================
+	// Clamp & Death
+	// =====================================================================
 	ClampVitals();
 
 	if (bTouchedVitalsThisExecute)
@@ -334,3 +371,7 @@ void UMosesAttributeSet::OnRep_MaxShield(const FGameplayAttributeData& OldValue)
 	GAMEPLAYATTRIBUTE_REPNOTIFY(UMosesAttributeSet, MaxShield, OldValue);
 }
 
+void UMosesAttributeSet::OnRep_IncomingAmmoCost(const FGameplayAttributeData& OldValue)
+{
+	GAMEPLAYATTRIBUTE_REPNOTIFY(UMosesAttributeSet, IncomingAmmoCost, OldValue);
+}
