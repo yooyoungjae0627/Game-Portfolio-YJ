@@ -32,6 +32,8 @@
 #include "Kismet/GameplayStatics.h"
 #include "Net/UnrealNetwork.h"
 #include "TimerManager.h"
+#include "Engine/GameViewportClient.h"
+#include "Framework/Application/SlateApplication.h"
 
 // --------------------------------------------------
 // Lobby RPC parameter policy (Clamp on server)
@@ -51,6 +53,7 @@ AMosesPlayerController::AMosesPlayerController(const FObjectInitializer& ObjectI
 // =========================================================
 // AActor
 // =========================================================
+
 void AMosesPlayerController::BeginPlay()
 {
 	Super::BeginPlay();
@@ -59,6 +62,24 @@ void AMosesPlayerController::BeginPlay()
 	{
 		return;
 	}
+
+	// =========================================================
+	// 🔥 첫 PIE에서 Release 씹힘 방지용 강제 캡처 세팅
+	// =========================================================
+	if (UWorld* World = GetWorld())
+	{
+		if (UGameViewportClient* GVC = World->GetGameViewport())
+		{
+			GVC->SetMouseCaptureMode(EMouseCaptureMode::CapturePermanently_IncludingInitialMouseDown);
+			GVC->SetMouseLockMode(EMouseLockMode::LockOnCapture);
+		}
+	}
+
+	if (FSlateApplication::IsInitialized())
+	{
+		FSlateApplication::Get().SetAllUserFocusToGameViewport();
+	}
+	// =========================================================
 
 	if (IsMatchMap_Local())
 	{
@@ -100,6 +121,7 @@ void AMosesPlayerController::BeginPlay()
 		return;
 	}
 
+	// ================= Lobby =================
 	bAutoManageActiveCameraTarget = false;
 	ActivateLobbyUI_LocalOnly();
 	ApplyLobbyInputMode_LocalOnly();
@@ -116,8 +138,79 @@ void AMosesPlayerController::BeginPlay()
 	BindScopeWeaponEvents_Local();
 }
 
+void AMosesPlayerController::ForceGameViewportFocusAndCapture_LocalOnly()
+{
+	if (!IsLocalController())
+	{
+		return;
+	}
+
+	bShowMouseCursor = false;
+	bEnableClickEvents = false;
+	bEnableMouseOverEvents = false;
+
+	FInputModeGameOnly Mode;
+	SetInputMode(Mode);
+
+	SetIgnoreLookInput(false);
+	SetIgnoreMoveInput(false);
+
+	// ✅ 캡처/락은 ViewportClient에서
+	if (UWorld* World = GetWorld())
+	{
+		if (UGameViewportClient* GVC = World->GetGameViewport())
+		{
+			GVC->SetMouseCaptureMode(EMouseCaptureMode::CapturePermanently_IncludingInitialMouseDown);
+			GVC->SetMouseLockMode(EMouseLockMode::LockOnCapture);
+		}
+	}
+
+	// ✅ 포커스는 이 한 줄만 (버전 호환 가장 좋음)
+	if (FSlateApplication::IsInitialized())
+	{
+		FSlateApplication::Get().SetAllUserFocusToGameViewport();
+	}
+}
+
+void AMosesPlayerController::ForceGameViewportFocusAndCapture_NextTick_LocalOnly()
+{
+	if (!IsLocalController())
+	{
+		return;
+	}
+
+	// 기존 핸들이 있으면 중복 방지
+	GetWorldTimerManager().ClearTimer(ForceCaptureNextTickHandle);
+
+	// ✅ 다음 틱에 한 번 더 강제 (첫 PIE에서 가장 효과 좋음)
+	GetWorldTimerManager().SetTimerForNextTick(FTimerDelegate::CreateWeakLambda(this, [this]()
+		{
+			if (!IsLocalController())
+			{
+				return;
+			}
+
+			ForceGameViewportFocusAndCapture_LocalOnly();
+		}));
+}
+
+
+bool AMosesPlayerController::ShouldForceCapture_LocalOnly() const
+{
+	// 로비는 UI 모드가 정상일 수 있으니 제외하고 싶으면 이렇게
+	if (IsLobbyContext())
+	{
+		return false;
+	}
+
+	// 매치/스타트/기타 게임플레이 맵은 강제 캡처
+	return true;
+}
+
 void AMosesPlayerController::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	GetWorldTimerManager().ClearTimer(ForceCaptureNextTickHandle);
+
 	StopScopeBlurTimer_Local();
 	UnbindScopeWeaponEvents_Local();
 

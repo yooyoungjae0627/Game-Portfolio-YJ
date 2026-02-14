@@ -459,15 +459,16 @@ void APlayerCharacter::Input_Reload()
 
 void APlayerCharacter::Input_FirePressed()
 {
+	UE_LOG(LogTemp, Warning, TEXT("[INPUT] FirePressed Pawn=%s"), *GetNameSafe(this));
+
 	const int32 FireInputID = static_cast<int32>(EMosesAbilityInputID::Fire);
 
-	AMosesPlayerState* PS = GetPlayerState<AMosesPlayerState>();
-	if (PS)
+	// ✅ 서버권위 연사: CombatComp에 Start 전달
+	if (AMosesPlayerState* PS = GetPlayerState<AMosesPlayerState>())
 	{
-		if (UAbilitySystemComponent* ASC = PS->GetAbilitySystemComponent())
+		if (UMosesCombatComponent* CC = PS->FindComponentByClass<UMosesCombatComponent>())
 		{
-			UE_LOG(LogTemp, Warning, TEXT("ASC AbilityCount=%d"),
-				ASC->GetActivatableAbilities().Num());
+			CC->RequestStartFire();
 		}
 	}
 
@@ -476,10 +477,18 @@ void APlayerCharacter::Input_FirePressed()
 
 void APlayerCharacter::Input_FireReleased()
 {
+	UE_LOG(LogTemp, Warning, TEXT("[INPUT] FireReleased Pawn=%s"), *GetNameSafe(this));
+
 	const int32 FireInputID = static_cast<int32>(EMosesAbilityInputID::Fire);
 
-	UE_LOG(LogMosesWeapon, Verbose, TEXT("[INPUT][CL] FireReleased -> GAS InputID=%d Pawn=%s"),
-		FireInputID, *GetNameSafe(this));
+	// ✅ 서버권위 연사: CombatComp에 Stop 전달
+	if (AMosesPlayerState* PS = GetPlayerState<AMosesPlayerState>())
+	{
+		if (UMosesCombatComponent* CC = PS->FindComponentByClass<UMosesCombatComponent>())
+		{
+			CC->RequestStopFire();
+		}
+	}
 
 	GAS_InputReleased(FireInputID);
 }

@@ -319,6 +319,14 @@ private:
 	/** Pawn에서 MosesCameraComponent를 찾는다. */
 	UMosesCameraComponent* FindMosesCameraComponent_Local() const;
 
+	// 첫 PIE에서 Released 씹힘 방지용: 포커스/캡처 강제 보정
+	void ForceGameViewportFocusAndCapture_LocalOnly();
+	void ForceGameViewportFocusAndCapture_NextTick_LocalOnly();
+
+	// (선택) 로비에서는 UI 모드라 캡처를 안 할 수도 있으니,
+	// "게임플레이 맵"에서만 강제하고 싶으면 아래 헬퍼를 써도 됨.
+	bool ShouldForceCapture_LocalOnly() const;
+
 private:
 	/* =========================================================================
 	 * Variables (UPROPERTY first, then non-UPROPERTY)
@@ -408,4 +416,6 @@ private:
 
 	static constexpr int32 MaxPickupToastRetryCount = 60;
 	static constexpr float PickupToastRetryIntervalSec = 0.1f;
+
+	FTimerHandle ForceCaptureNextTickHandle;
 };

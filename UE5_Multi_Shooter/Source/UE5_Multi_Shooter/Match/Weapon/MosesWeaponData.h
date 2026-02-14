@@ -139,6 +139,9 @@ public:
 	UPROPERTY(EditDefaultsOnly, Category = "Weapon|Ammo")
 	FGameplayTag AmmoTypeId; // e.g., Ammo.Rifle
 
+	UPROPERTY(EditDefaultsOnly, Category = "Weapon|Fire")
+	float FireIntervalSec = 0.12f;
+
 public:
 	/** Day7: Speed(0~Max) -> SpreadFactor(0~1)로 정규화할 때 사용할 기준 속도 */
 	UPROPERTY(EditDefaultsOnly, Category = "Weapon|Aim", meta = (ClampMin = "1.0"))

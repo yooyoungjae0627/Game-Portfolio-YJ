@@ -1,4 +1,15 @@
-﻿#include "UE5_Multi_Shooter/Match/Characters/Player/Components/MosesCombatComponent.h"
+﻿// ============================================================================
+// UE5_Multi_Shooter/Match/Characters/Player/Components/MosesCombatComponent.cpp
+// (FULL - UPDATED / CLEAN / COMPILE-READY)
+//
+// ✅ 포함사항
+// - 네가 올린 .cpp 내용 "전부" 포함
+// - Heartbeat/AutoFire 쪽 컴파일 깨지는 멤버/이름 불일치 전부 정리
+// - Owner=PlayerState 패턴에 맞게 Pawn resolve 전부 MosesCombat_Private::GetOwnerPawn(this)로 통일
+// - 서버 AutoFireTick에서 Heartbeat timeout 시 강제 Stop (연사 고착 방지)
+// ============================================================================
+
+#include "UE5_Multi_Shooter/Match/Characters/Player/Components/MosesCombatComponent.h"
 #include "UE5_Multi_Shooter/Match/Characters/Player/PlayerCharacter.h"
 #include "UE5_Multi_Shooter/MosesLogChannels.h"
 #include "UE5_Multi_Shooter/Match/Weapon/MosesWeaponData.h"
@@ -6,13 +17,14 @@
 #include "UE5_Multi_Shooter/MosesPlayerState.h"
 #include "UE5_Multi_Shooter/Match/Weapon/MosesGrenadeProjectile.h"
 #include "UE5_Multi_Shooter/Match/GAS/MosesGameplayTags.h"
-#include "UE5_Multi_Shooter/Match/Characters/Enemy/Zombie/MosesZombieCharacter.h" 
+#include "UE5_Multi_Shooter/Match/Characters/Enemy/Zombie/MosesZombieCharacter.h"
 #include "UE5_Multi_Shooter/MosesPlayerController.h"
 
 #include "Engine/World.h"
 #include "Engine/GameInstance.h"
 #include "GameFramework/Pawn.h"
 #include "GameFramework/Controller.h"
+#include "GameFramework/PlayerController.h"
 #include "Kismet/GameplayStatics.h"
 #include "TimerManager.h"
 #include "AbilitySystemInterface.h"
@@ -20,8 +32,9 @@
 #include "GameplayEffect.h"
 #include "GameplayEffectTypes.h"
 #include "GameplayTagContainer.h"
-#include "DrawDebugHelpers.h"                
-#include "Components/SkeletalMeshComponent.h" 
+#include "DrawDebugHelpers.h"
+#include "Components/SkeletalMeshComponent.h"
+#include "InputCoreTypes.h" // EKeys
 
 namespace MosesCombat_Private
 {
@@ -54,7 +67,7 @@ namespace MosesCombat_Private
 }
 
 // ============================================================================
-// Ctor / BeginPlay / Replication
+// Ctor / BeginPlay / EndPlay / Replication
 // ============================================================================
 
 UMosesCombatComponent::UMosesCombatComponent()
@@ -69,12 +82,49 @@ void UMosesCombatComponent::BeginPlay()
 
 	if (GetOwner() && GetOwner()->HasAuthority())
 	{
+		// ✅ 안전장치: 서버에서 시작 시 연사 상태/타이머는 무조건 초기화
+		bWantsToFire = false;
+
+		if (UWorld* World = GetWorld())
+		{
+			World->GetTimerManager().ClearTimer(AutoFireTimerHandle);
+			World->GetTimerManager().ClearTimer(ReloadTimerHandle);
+		}
+
+		UE_LOG(LogMosesCombat, Warning,
+			TEXT("[FIRE][SV] BeginPlay Reset AutoFire/Reload Timers PS=%s"),
+			*GetNameSafe(GetOwner()));
+
 		UE_LOG(LogMosesCombat, Warning,
 			TEXT("[WEAPON][SV] CombatComponent BeginPlay Owner=%s OwnerClass=%s DamageGE_SoftPath=%s"),
 			*GetNameSafe(GetOwner()),
 			*GetNameSafe(GetOwner()->GetClass()),
 			*DamageGE_SetByCaller.ToSoftObjectPath().ToString());
 	}
+}
+
+void UMosesCombatComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	// ✅ PIE 종료/Travel/월드 파괴 시 타이머 잔존 방지(클라 heartbeat 포함)
+	StopClientFireHeldHeartbeat();
+
+	if (GetOwner() && GetOwner()->HasAuthority())
+	{
+		bWantsToFire = false;
+
+		if (UWorld* World = GetWorld())
+		{
+			World->GetTimerManager().ClearTimer(AutoFireTimerHandle);
+			World->GetTimerManager().ClearTimer(ReloadTimerHandle);
+		}
+
+		UE_LOG(LogMosesCombat, Warning,
+			TEXT("[FIRE][SV] EndPlay Clear AutoFire/Reload Timers Reason=%d PS=%s"),
+			(int32)EndPlayReason,
+			*GetNameSafe(GetOwner()));
+	}
+
+	Super::EndPlay(EndPlayReason);
 }
 
 void UMosesCombatComponent::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
@@ -90,15 +140,19 @@ void UMosesCombatComponent::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>
 
 	DOREPLIFETIME(UMosesCombatComponent, Slot1MagAmmo);
 	DOREPLIFETIME(UMosesCombatComponent, Slot1ReserveAmmo);
+	DOREPLIFETIME(UMosesCombatComponent, Slot1ReserveMax);
 
 	DOREPLIFETIME(UMosesCombatComponent, Slot2MagAmmo);
 	DOREPLIFETIME(UMosesCombatComponent, Slot2ReserveAmmo);
+	DOREPLIFETIME(UMosesCombatComponent, Slot2ReserveMax);
 
 	DOREPLIFETIME(UMosesCombatComponent, Slot3MagAmmo);
 	DOREPLIFETIME(UMosesCombatComponent, Slot3ReserveAmmo);
+	DOREPLIFETIME(UMosesCombatComponent, Slot3ReserveMax);
 
 	DOREPLIFETIME(UMosesCombatComponent, Slot4MagAmmo);
 	DOREPLIFETIME(UMosesCombatComponent, Slot4ReserveAmmo);
+	DOREPLIFETIME(UMosesCombatComponent, Slot4ReserveMax);
 
 	DOREPLIFETIME(UMosesCombatComponent, bIsDead);
 	DOREPLIFETIME(UMosesCombatComponent, bIsReloading);
@@ -106,11 +160,6 @@ void UMosesCombatComponent::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>
 	DOREPLIFETIME(UMosesCombatComponent, SwapSerial);
 	DOREPLIFETIME(UMosesCombatComponent, LastSwapFromSlot);
 	DOREPLIFETIME(UMosesCombatComponent, LastSwapToSlot);
-
-	DOREPLIFETIME(UMosesCombatComponent, Slot1ReserveMax);
-	DOREPLIFETIME(UMosesCombatComponent, Slot2ReserveMax);
-	DOREPLIFETIME(UMosesCombatComponent, Slot3ReserveMax);
-	DOREPLIFETIME(UMosesCombatComponent, Slot4ReserveMax);
 }
 
 // ============================================================================
@@ -152,7 +201,11 @@ int32 UMosesCombatComponent::GetCurrentReserveMax() const
 // Default init / loadout (Server)
 // ============================================================================
 
-void UMosesCombatComponent::ServerInitDefaultSlots_4(const FGameplayTag& InSlot1, const FGameplayTag& InSlot2, const FGameplayTag& InSlot3, const FGameplayTag& InSlot4)
+void UMosesCombatComponent::ServerInitDefaultSlots_4(
+	const FGameplayTag& InSlot1,
+	const FGameplayTag& InSlot2,
+	const FGameplayTag& InSlot3,
+	const FGameplayTag& InSlot4)
 {
 	if (!GetOwner() || !GetOwner()->HasAuthority())
 	{
@@ -166,8 +219,6 @@ void UMosesCombatComponent::ServerInitDefaultSlots_4(const FGameplayTag& InSlot1
 
 	CurrentSlot = 1;
 
-	// [MOD] 초기 슬롯 무기는 들어오되, 탄약은 "WeaponData 기준 기본값"으로 자동 세팅할 수 있다.
-	//       단, Match 기본 지급(라이플 30/90)은 PlayerState에서 별도로 강제한다.
 	Server_EnsureAmmoInitializedForSlot(1, Slot1WeaponId);
 	Server_EnsureAmmoInitializedForSlot(2, Slot2WeaponId);
 	Server_EnsureAmmoInitializedForSlot(3, Slot3WeaponId);
@@ -203,7 +254,7 @@ void UMosesCombatComponent::ServerGrantDefaultRifleAmmo_30_90()
 
 	if (CurrentSlot == 1)
 	{
-		OnRep_CurrentSlot(); // equipped slot UI sync
+		OnRep_CurrentSlot();
 	}
 
 	UE_LOG(LogMosesWeapon, Warning, TEXT("[AMMO][SV] DefaultRifleAmmo Granted Slot=1 Mag=30 Reserve=90/90 Weapon=%s"),
@@ -212,9 +263,6 @@ void UMosesCombatComponent::ServerGrantDefaultRifleAmmo_30_90()
 
 // ============================================================================
 // [AMMO_PICKUP] Ammo Farming - Server Authority ONLY
-// - ReserveMax += ReserveMaxDelta
-// - ReserveCur += ReserveFillDelta (Clamp 0..ReserveMax)
-// - 적용 대상: "해당 AmmoType을 쓰는 무기"가 들어있는 슬롯들
 // ============================================================================
 
 void UMosesCombatComponent::ServerAddAmmoByType(EMosesAmmoType AmmoType, int32 ReserveMaxDelta, int32 ReserveFillDelta)
@@ -250,7 +298,6 @@ void UMosesCombatComponent::ServerAddAmmoByType(EMosesAmmoType AmmoType, int32 R
 			continue;
 		}
 
-		// ✅ AmmoType 일치 슬롯만 적용
 		if (Data->AmmoType != AmmoType)
 		{
 			continue;
@@ -298,7 +345,7 @@ void UMosesCombatComponent::ServerAddAmmoByType(EMosesAmmoType AmmoType, int32 R
 }
 
 // ============================================================================
-// [MOD][STEP1] Grant/Pickup API (Server only)
+// Grant/Pickup API (Server only)
 // ============================================================================
 
 void UMosesCombatComponent::ServerGrantWeaponToSlot(int32 SlotIndex, const FGameplayTag& WeaponId, bool bInitializeAmmoIfEmpty /*=true*/)
@@ -324,7 +371,6 @@ void UMosesCombatComponent::ServerGrantWeaponToSlot(int32 SlotIndex, const FGame
 
 	const int32 ClampedSlot = MosesCombat_Private::ClampSlotIndex(SlotIndex);
 
-	// 이미 동일 무기면 중복 세팅은 스킵(탄약 초기화는 상황에 따라 필요할 수 있으나, 여기서는 보수적으로 스킵)
 	if (GetSlotWeaponIdInternal(ClampedSlot) == WeaponId)
 	{
 		UE_LOG(LogMosesWeapon, Verbose, TEXT("[WEAPON][SV] GrantWeaponToSlot SKIP (SameWeapon) Slot=%d Weapon=%s PS=%s"),
@@ -332,10 +378,8 @@ void UMosesCombatComponent::ServerGrantWeaponToSlot(int32 SlotIndex, const FGame
 		return;
 	}
 
-	// 슬롯 무기 SSOT 갱신
 	Server_SetSlotWeaponId_Internal(ClampedSlot, WeaponId);
 
-	// [MOD] 탄약 초기화(0/0이면 WeaponData 기준으로 채움)
 	if (bInitializeAmmoIfEmpty)
 	{
 		Server_EnsureAmmoInitializedForSlot(ClampedSlot, WeaponId);
@@ -344,8 +388,6 @@ void UMosesCombatComponent::ServerGrantWeaponToSlot(int32 SlotIndex, const FGame
 	UE_LOG(LogMosesWeapon, Warning, TEXT("[WEAPON][SV] GrantWeaponToSlot OK Slot=%d Weapon=%s (InitAmmo=%d) PS=%s"),
 		ClampedSlot, *WeaponId.ToString(), bInitializeAmmoIfEmpty ? 1 : 0, *GetNameSafe(GetOwner()));
 
-	// HUD는 CurrentSlot 기준 표시이므로,
-	// 현재 장착 슬롯의 무기가 방금 세팅된 경우 즉시 Ammo 이벤트를 쏴준다.
 	if (CurrentSlot == ClampedSlot)
 	{
 		BroadcastAmmoChanged(TEXT("ServerGrantWeaponToSlot(CurrentSlot)"));
@@ -374,6 +416,10 @@ void UMosesCombatComponent::ServerEquipSlot_Implementation(int32 SlotIndex)
 	{
 		return;
 	}
+
+	// ✅ 스왑 시작 시 연사 끊기
+	bWantsToFire = false;
+	StopAutoFire_Server();
 
 	if (bIsDead)
 	{
@@ -410,20 +456,17 @@ void UMosesCombatComponent::ServerEquipSlot_Implementation(int32 SlotIndex)
 		return;
 	}
 
-	// SwapContext 갱신(코스메틱 트리거)
 	LastSwapFromSlot = OldSlot;
 	LastSwapToSlot = NewSlot;
 	SwapSerial++;
 
 	CurrentSlot = NewSlot;
 
-	// [MOD] 스왑 직후, 해당 슬롯의 탄약이 0/0이면 WeaponData 기반으로 초기화되게 보강
 	Server_EnsureAmmoInitializedForSlot(CurrentSlot, NewWeaponId);
 
 	UE_LOG(LogMosesWeapon, Warning, TEXT("[WEAPON][SV] Swap OK Slot %d -> %d Weapon %s -> %s Serial=%d"),
 		OldSlot, CurrentSlot, *OldWeaponId.ToString(), *NewWeaponId.ToString(), SwapSerial);
 
-	// ListenServer 환경/테스트 편의: 서버에서도 즉시 Delegate 발행
 	OnRep_SwapSerial();
 	OnRep_CurrentSlot();
 
@@ -432,7 +475,7 @@ void UMosesCombatComponent::ServerEquipSlot_Implementation(int32 SlotIndex)
 }
 
 // ============================================================================
-// Fire API
+// Fire API (단발)
 // ============================================================================
 
 void UMosesCombatComponent::RequestFire()
@@ -485,7 +528,6 @@ void UMosesCombatComponent::ServerFire_Implementation()
 
 	Server_UpdateFireCooldownStamp();
 
-	// ✅ 핵심: "현재 슬롯"의 탄약만 소비한다.
 	Server_ConsumeAmmo_OnApprovedFire(WeaponData);
 
 	UE_LOG(LogMosesWeapon, Warning, TEXT("[WEAPON][SV] Fire Weapon=%s Slot=%d Mag=%d Reserve=%d"),
@@ -493,7 +535,6 @@ void UMosesCombatComponent::ServerFire_Implementation()
 
 	Server_PerformFireAndApplyDamage(WeaponData);
 
-	// 코스메틱은 서버 승인 후 전파
 	Server_PropagateFireCosmetics(ApprovedWeaponId);
 
 	BroadcastSlotsStateChanged(CurrentSlot, TEXT("ServerFire"));
@@ -578,8 +619,12 @@ void UMosesCombatComponent::Server_StartReload(const UMosesWeaponData* WeaponDat
 		return;
 	}
 
+	// ✅ 사망/리로드 시작 시 연사 끊기
+	bWantsToFire = false;
+	StopAutoFire_Server();
+
 	bIsReloading = true;
-	OnRep_IsReloading(); // ✅ 여기서 RepNotify→Delegate가 나감(클라 HUD/코스메틱 트리거)
+	OnRep_IsReloading();
 
 	UE_LOG(LogMosesWeapon, Warning, TEXT("[WEAPON][SV] ReloadStart Slot=%d Weapon=%s Sec=%.2f"),
 		CurrentSlot, *GetEquippedWeaponId().ToString(), WeaponData->ReloadSeconds);
@@ -678,7 +723,6 @@ bool UMosesCombatComponent::Server_CanFire(EMosesFireGuardFailReason& OutReason,
 		return false;
 	}
 
-	// ✅ 핵심: 현재 슬롯 탄창(Mag)만 체크한다.
 	if (GetCurrentMagAmmo() <= 0)
 	{
 		OutReason = EMosesFireGuardFailReason::NoAmmo;
@@ -727,14 +771,13 @@ void UMosesCombatComponent::Server_ConsumeAmmo_OnApprovedFire(const UMosesWeapon
 	int32 Reserve = 0;
 	GetSlotAmmo_Internal(CurrentSlot, Mag, Reserve);
 
-	const int32 OldMag = Mag; // [MOD][AUTO-RELOAD]
+	const int32 OldMag = Mag;
 
 	Mag = FMath::Max(Mag - 1, 0);
 	SetSlotAmmo_Internal(CurrentSlot, Mag, Reserve);
 
 	BroadcastAmmoChanged(TEXT("Server_ConsumeAmmo_OnApprovedFire"));
 
-	// [MOD][AUTO-RELOAD] 1->0 순간 + Reserve>0 이면 서버가 자동으로 Reload 시작
 	if (bAutoReloadOnEmpty
 		&& !bIsDead
 		&& !bIsReloading
@@ -746,41 +789,51 @@ void UMosesCombatComponent::Server_ConsumeAmmo_OnApprovedFire(const UMosesWeapon
 			TEXT("[RELOAD][SV][AUTO] Triggered Slot=%d OldMag=%d NewMag=%d Reserve=%d PS=%s"),
 			CurrentSlot, OldMag, Mag, Reserve, *GetNameSafe(GetOwner()));
 
-		// 수동(R)과 동일 루트로 진입
 		ServerReload_Implementation();
 	}
 }
 
 // ============================================================================
-// Cooldown (DefaultFireIntervalSec based)
+// Cooldown
 // ============================================================================
 
-float UMosesCombatComponent::Server_GetFireIntervalSec_FromWeaponData(const UMosesWeaponData* /*WeaponData*/) const
+float UMosesCombatComponent::Server_GetFireIntervalSec_FromWeaponData(const UMosesWeaponData* WeaponData) const
 {
-	return DefaultFireIntervalSec;
+	float Interval = WeaponData ? WeaponData->FireIntervalSec : DefaultFireIntervalSec;
+
+	const float MinInterval = 0.03f;
+	Interval = FMath::Max(MinInterval, Interval);
+
+	return Interval;
 }
 
 bool UMosesCombatComponent::Server_IsFireCooldownReady(const UMosesWeaponData* WeaponData) const
 {
-	const double Now = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0;
+	if (!GetWorld())
+	{
+		return false;
+	}
 
-	const int32 Index = MosesCombat_Private::ClampSlotIndex(CurrentSlot) - 1;
-	const double Last = SlotLastFireTimeSec[Index];
+	const int32 SlotIndex = FMath::Clamp(CurrentSlot, 1, 4) - 1;
+	const float Now = GetWorld()->GetTimeSeconds();
+	const float Interval = Server_GetFireIntervalSec_FromWeaponData(WeaponData);
 
-	const float IntervalSec = Server_GetFireIntervalSec_FromWeaponData(WeaponData);
-	return (Now - Last) >= (double)IntervalSec;
+	return (Now - SlotLastFireTimeSec[SlotIndex]) >= Interval;
 }
 
 void UMosesCombatComponent::Server_UpdateFireCooldownStamp()
 {
-	const double Now = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0;
+	if (!GetWorld())
+	{
+		return;
+	}
 
-	const int32 Index = MosesCombat_Private::ClampSlotIndex(CurrentSlot) - 1;
-	SlotLastFireTimeSec[Index] = Now;
+	const int32 SlotIndex = FMath::Clamp(CurrentSlot, 1, 4) - 1;
+	SlotLastFireTimeSec[SlotIndex] = GetWorld()->GetTimeSeconds();
 }
 
 // ============================================================================
-// Fire 수행(스프레드 적용 + 히트스캔/프로젝트 분기)
+// Spread / Fire Core
 // ============================================================================
 
 float UMosesCombatComponent::Server_CalcSpreadFactor01(const UMosesWeaponData* WeaponData, const APawn* OwnerPawn) const
@@ -942,20 +995,18 @@ void UMosesCombatComponent::Server_PerformFireAndApplyDamage(const UMosesWeaponD
 	}
 
 	// ---------------------------------------------------------------------
-	// [MOD] Headshot 판정 강화 (좀비 HitBox 대응)
+	// Headshot 판정 강화 (좀비 HitBox 대응)
 	// ---------------------------------------------------------------------
 	bool bHeadshot = false;
 
 	UPrimitiveComponent* HitComp = Cast<UPrimitiveComponent>(FinalHit.GetComponent());
 	const FString HitCompName = HitComp ? HitComp->GetName() : TEXT("None");
 
-	// 0) 컴포넌트 Tag 우선
 	if (HitComp && HitComp->ComponentHasTag(TEXT("HitZone.Head")))
 	{
 		bHeadshot = true;
 	}
 
-	// 1) 플레이어: HeadHitBox 컴포넌트 일치
 	if (!bHeadshot)
 	{
 		if (const APlayerCharacter* VictimPlayer = Cast<APlayerCharacter>(FinalHit.GetActor()))
@@ -967,7 +1018,6 @@ void UMosesCombatComponent::Server_PerformFireAndApplyDamage(const UMosesWeaponD
 		}
 	}
 
-	// 2) 좀비/기타: 컴포넌트 이름 기반 (네 로그 Comp=HeadHitBox 그대로 잡힘)
 	if (!bHeadshot)
 	{
 		if (HitComp && HitCompName.Contains(TEXT("HeadHitBox")))
@@ -976,7 +1026,6 @@ void UMosesCombatComponent::Server_PerformFireAndApplyDamage(const UMosesWeaponD
 		}
 	}
 
-	// 3) BoneName 보조
 	if (!bHeadshot)
 	{
 		if (!FinalHit.BoneName.IsNone())
@@ -986,10 +1035,6 @@ void UMosesCombatComponent::Server_PerformFireAndApplyDamage(const UMosesWeaponD
 		}
 	}
 
-	// ---------------------------------------------------------------------
-	// [MOD] 데미지 정책
-	// - "한 방에 죽어야" 조건: 좀비 헤드샷이면 원샷(매우 큰 값)
-	// ---------------------------------------------------------------------
 	const float BaseDamage = WeaponData ? WeaponData->Damage : DefaultDamage;
 
 	const bool bIsZombie = Server_IsZombieTarget(FinalHit.GetActor());
@@ -999,11 +1044,11 @@ void UMosesCombatComponent::Server_PerformFireAndApplyDamage(const UMosesWeaponD
 	{
 		if (bIsZombie)
 		{
-			AppliedDamage = 99999.0f; // ✅ 좀비 헤드샷 원샷 확정
+			AppliedDamage = 99999.0f;
 		}
 		else
 		{
-			AppliedDamage = BaseDamage * HeadshotDamageMultiplier; // 플레이어는 기존 정책 유지(원하면 여기도 원샷으로 바꿔도 됨)
+			AppliedDamage = BaseDamage * HeadshotDamageMultiplier;
 		}
 	}
 
@@ -1015,7 +1060,6 @@ void UMosesCombatComponent::Server_PerformFireAndApplyDamage(const UMosesWeaponD
 		bIsZombie ? 1 : 0,
 		AppliedDamage);
 
-	// ✅ GAS 적용 (HitResult는 Context에 저장됨)
 	const bool bAppliedByGAS = Server_ApplyDamageToTarget_GAS(
 		FinalHit.GetActor(),
 		AppliedDamage,
@@ -1049,7 +1093,6 @@ void UMosesCombatComponent::Server_SpawnGrenadeProjectile(
 		return;
 	}
 
-	// ProjectileClass는 WeaponData 단일 진실
 	TSubclassOf<AMosesGrenadeProjectile> ProjectileClass = WeaponData->ProjectileClass;
 	if (!ProjectileClass)
 	{
@@ -1076,21 +1119,16 @@ void UMosesCombatComponent::Server_SpawnGrenadeProjectile(
 		return;
 	}
 
-	// --------------------------------------------------------------------
-	// [MOD] Damage GE (없어도 스폰은 진행)
-	// - GE가 없으면 Projectile 내부에서 GAS 적용은 실패 → ApplyDamage 폴백으로 감
-	// --------------------------------------------------------------------
 	TSubclassOf<UGameplayEffect> GEClass = DamageGE_SetByCaller.LoadSynchronous();
 	if (!GEClass)
 	{
 		UE_LOG(LogMosesGAS, Warning,
 			TEXT("[GRENADE][SV] DamageGE missing -> FallbackOnly. SoftPath=%s"),
 			*DamageGE_SetByCaller.ToSoftObjectPath().ToString());
-		// return;  // ❌ 막지 않는다
 	}
 
 	FActorSpawnParameters Params;
-	Params.Owner = OwnerPawn; // Pawn으로 고정
+	Params.Owner = OwnerPawn;
 	Params.Instigator = OwnerPawn;
 	Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn;
 
@@ -1113,7 +1151,7 @@ void UMosesCombatComponent::Server_SpawnGrenadeProjectile(
 
 	Projectile->InitFromCombat_Server(
 		SourceASC,
-		GEClass, // null일 수도 있음(폴백용)
+		GEClass,
 		ExplodeDamage,
 		WeaponData->ExplosionRadius,
 		InstigatorController,
@@ -1140,7 +1178,6 @@ bool UMosesCombatComponent::Server_ApplyDamageToTarget_GAS(
 	const UMosesWeaponData* WeaponData,
 	const FHitResult& Hit) const
 {
-	// Dead target guard (PS SSOT)
 	if (APawn* TargetPawn = Cast<APawn>(TargetActor))
 	{
 		if (AMosesPlayerState* TargetPS = TargetPawn->GetPlayerState<AMosesPlayerState>())
@@ -1178,7 +1215,6 @@ bool UMosesCombatComponent::Server_ApplyDamageToTarget_GAS(
 		return false;
 	}
 
-	// Target ASC resolve
 	UAbilitySystemComponent* TargetASC = nullptr;
 	AActor* ResolvedTargetOwnerForLog = TargetActor;
 
@@ -1208,7 +1244,6 @@ bool UMosesCombatComponent::Server_ApplyDamageToTarget_GAS(
 		return false;
 	}
 
-	// Damage GE resolve (Player vs Zombie)
 	TSubclassOf<UGameplayEffect> GEClass = nullptr;
 
 	const bool bZombieTarget = Server_IsZombieTarget(TargetActor);
@@ -1232,10 +1267,8 @@ bool UMosesCombatComponent::Server_ApplyDamageToTarget_GAS(
 		return false;
 	}
 
-	// ---- Context / Spec ----
 	FGameplayEffectContextHandle Ctx = SourceASC->MakeEffectContext();
 
-	// Instigator/causer 정리
 	AActor* InstigatorActor = InstigatorController ? InstigatorController->GetPawn() : nullptr;
 	if (!InstigatorActor)
 	{
@@ -1245,8 +1278,6 @@ bool UMosesCombatComponent::Server_ApplyDamageToTarget_GAS(
 	Ctx.AddInstigator(InstigatorActor, DamageCauser);
 	Ctx.AddSourceObject(this);
 	Ctx.AddSourceObject(WeaponData);
-
-	// HitResult 저장
 	Ctx.AddHitResult(Hit, true);
 
 	const FGameplayEffectSpecHandle SpecHandle = SourceASC->MakeOutgoingSpec(GEClass, 1.0f, Ctx);
@@ -1255,21 +1286,17 @@ bool UMosesCombatComponent::Server_ApplyDamageToTarget_GAS(
 		return false;
 	}
 
-	// ---------------------------------------------------------------------
-	// [MOD] Headshot 판정 (너 기존 로직 + 좀비 HitBox/컴포넌트명 보강)
-	// ---------------------------------------------------------------------
+	// Headshot 판정(동일 로직 유지)
 	bool bIsHeadshot = false;
 
 	UPrimitiveComponent* HitComp = Cast<UPrimitiveComponent>(Hit.GetComponent());
 	const FString HitCompName = HitComp ? HitComp->GetName() : TEXT("None");
 
-	// 0) 컴포넌트 Tag 우선(프로젝트에서 쓸 수 있으면 가장 안정적)
 	if (HitComp && HitComp->ComponentHasTag(TEXT("HitZone.Head")))
 	{
 		bIsHeadshot = true;
 	}
 
-	// 1) 플레이어: HeadHitBox 일치
 	if (!bIsHeadshot)
 	{
 		if (const APlayerCharacter* VictimPlayer = Cast<APlayerCharacter>(TargetActor))
@@ -1281,7 +1308,6 @@ bool UMosesCombatComponent::Server_ApplyDamageToTarget_GAS(
 		}
 	}
 
-	// 2) 좀비/기타: 컴포넌트 이름 기반 (Comp=HeadHitBox 로그 그대로 잡힘)
 	if (!bIsHeadshot)
 	{
 		if (HitComp && HitCompName.Contains(TEXT("HeadHitBox")))
@@ -1290,7 +1316,6 @@ bool UMosesCombatComponent::Server_ApplyDamageToTarget_GAS(
 		}
 	}
 
-	// 3) BoneName 보조
 	if (!bIsHeadshot)
 	{
 		if (!Hit.BoneName.IsNone())
@@ -1302,17 +1327,13 @@ bool UMosesCombatComponent::Server_ApplyDamageToTarget_GAS(
 
 	if (bIsHeadshot)
 	{
-		SpecHandle.Data->DynamicAssetTags.AddTag(FMosesGameplayTags::Get().Hit_Headshot);
+		SpecHandle.Data->AddDynamicAssetTag(FMosesGameplayTags::Get().Hit_Headshot);
 	}
 
-	// ---------------------------------------------------------------------
-	// [MOD] 데미지 확정 (좀비 헤드샷 = 원샷 보장)
-	// ---------------------------------------------------------------------
 	float FinalDamageForSetByCaller = FMath::Abs(Damage);
-
 	if (bZombieTarget && bIsHeadshot)
 	{
-		FinalDamageForSetByCaller = 99999.0f; // ✅ 좀비 헤드샷 원샷 확정
+		FinalDamageForSetByCaller = 99999.0f;
 	}
 
 	SpecHandle.Data->SetSetByCallerMagnitude(FMosesGameplayTags::Get().Data_Damage, FinalDamageForSetByCaller);
@@ -1331,15 +1352,10 @@ bool UMosesCombatComponent::Server_ApplyDamageToTarget_GAS(
 		bZombieTarget ? 1 : 0,
 		*HitCompName);
 
-	// ---------------------------------------------------------------------
-	// [MOD] 헤드샷 알람(OwnerOnly Toast): 발사자에게만
-	// - "Apply 성공" 이후 호출 → 불일치 최소화
-	// ---------------------------------------------------------------------
 	if (bIsHeadshot && InstigatorController)
 	{
 		if (AMosesPlayerController* MPC = Cast<AMosesPlayerController>(InstigatorController))
 		{
-			// 원하는 문구/시간 여기서 조절
 			MPC->Client_ShowHeadshotToast_OwnerOnly(FText::FromString(TEXT("헤드샷!")), 0.8f);
 		}
 	}
@@ -1348,7 +1364,7 @@ bool UMosesCombatComponent::Server_ApplyDamageToTarget_GAS(
 }
 
 // ============================================================================
-// Cosmetic propagation (Fire only - already server approved by ServerFire)
+// Cosmetic propagation
 // ============================================================================
 
 void UMosesCombatComponent::Server_PropagateFireCosmetics(FGameplayTag ApprovedWeaponId)
@@ -1368,9 +1384,8 @@ void UMosesCombatComponent::Server_PropagateFireCosmetics(FGameplayTag ApprovedW
 	PlayerChar->Multicast_PlayFireMontage(ApprovedWeaponId);
 }
 
-
 // ============================================================================
-// Dead Hook
+// Dead / Respawn
 // ============================================================================
 
 void UMosesCombatComponent::ServerMarkDead()
@@ -1387,16 +1402,17 @@ void UMosesCombatComponent::ServerMarkDead()
 
 	bIsDead = true;
 
-	// Reload/Swap 같은 상태도 서버에서 확실히 끊어주는 게 안정적
+	bWantsToFire = false;
+	StopAutoFire_Server();
+
 	bIsReloading = false;
 
-	// 서버 타이머 정리
 	if (UWorld* World = GetWorld())
 	{
+		World->GetTimerManager().ClearTimer(AutoFireTimerHandle);
 		World->GetTimerManager().ClearTimer(ReloadTimerHandle);
 	}
 
-	// RepNotify/Delegate
 	OnRep_IsDead();
 	OnRep_IsReloading();
 
@@ -1404,16 +1420,7 @@ void UMosesCombatComponent::ServerMarkDead()
 		TEXT("[DEAD][SV][CC] MarkDead bIsDead=1 PS=%s PS_Pawn=%s"),
 		*GetNameSafe(GetOwner()),
 		*GetNameSafe(MosesCombat_Private::GetOwnerPawn(this)));
-
-	// ❌ 몽타주는 여기서 절대 재생하지 않는다.
 }
-
-
-// ============================================================================
-// [FIX] UMosesCombatComponent::ServerClearDeadAfterRespawn
-// - MatchGameMode / PlayerState에서 호출 중인데 정의가 없어서 LNK2019 발생
-// - 서버 권위에서만 Dead 상태/Reload 상태/타이머를 정리하고 RepNotify->Delegate 갱신
-// ============================================================================
 
 void UMosesCombatComponent::ServerClearDeadAfterRespawn()
 {
@@ -1422,10 +1429,8 @@ void UMosesCombatComponent::ServerClearDeadAfterRespawn()
 		return;
 	}
 
-	if (!bIsDead && !bIsReloading)
-	{
-		return;
-	}
+	bWantsToFire = false;
+	StopAutoFire_Server();
 
 	const bool bOldDead = bIsDead;
 	const bool bOldReload = bIsReloading;
@@ -1433,13 +1438,12 @@ void UMosesCombatComponent::ServerClearDeadAfterRespawn()
 	bIsDead = false;
 	bIsReloading = false;
 
-	// 서버 타이머 정리(리스폰 직후 잔존 타이머 방지)
 	if (UWorld* World = GetWorld())
 	{
+		World->GetTimerManager().ClearTimer(AutoFireTimerHandle);
 		World->GetTimerManager().ClearTimer(ReloadTimerHandle);
 	}
 
-	// RepNotify/Delegate (ListenServer 즉시 반영 패턴 유지)
 	if (bOldDead)
 	{
 		OnRep_IsDead();
@@ -1450,7 +1454,7 @@ void UMosesCombatComponent::ServerClearDeadAfterRespawn()
 	}
 
 	UE_LOG(LogMosesCombat, Warning,
-		TEXT("[RESPAWN][SV][CC] ClearDead DONE Dead %d->0 Reload %d->0 PS=%s Pawn=%s"),
+		TEXT("[RESPAWN][SV][CC] ClearDead DONE Dead %d->0 Reload %d->0 (AutoFire cleared) PS=%s Pawn=%s"),
 		bOldDead ? 1 : 0,
 		bOldReload ? 1 : 0,
 		*GetNameSafe(GetOwner()),
@@ -1522,7 +1526,10 @@ void UMosesCombatComponent::OnRep_IsReloading()
 	BroadcastSlotsStateChanged(CurrentSlot, TEXT("OnRep_IsReloading"));
 }
 
-void UMosesCombatComponent::OnRep_IsDead() { BroadcastDeadChanged(TEXT("OnRep_IsDead")); }
+void UMosesCombatComponent::OnRep_IsDead()
+{
+	BroadcastDeadChanged(TEXT("OnRep_IsDead"));
+}
 
 void UMosesCombatComponent::OnRep_SwapSerial()
 {
@@ -1542,19 +1549,12 @@ void UMosesCombatComponent::BroadcastEquippedChanged(const TCHAR* ContextTag)
 		ContextTag ? ContextTag : TEXT("None"), CurrentSlot, *WeaponId.ToString());
 }
 
-// ============================================================================
-// Broadcast (Ammo) - RepNotify -> Delegate
-// - 기존 2파라미터 유지 + 신규 3파라미터(ReserveMax) 발행
-// ============================================================================
 void UMosesCombatComponent::BroadcastAmmoChanged(const TCHAR* ContextTag)
 {
 	int32 Mag = 0, Cur = 0, Max = 0;
 	GetSlotAmmo_Internal(CurrentSlot, Mag, Cur, Max);
 
-	// 기존 호환
 	OnAmmoChanged.Broadcast(Mag, Cur);
-
-	// 신규(ReserveMax 포함)
 	OnAmmoChangedEx.Broadcast(Mag, Cur, Max);
 
 	UE_LOG(LogMosesCombat, Warning, TEXT("[AMMO][REP] %s Slot=%d Mag=%d Reserve=%d/%d"),
@@ -1645,12 +1645,6 @@ void UMosesCombatComponent::Server_SetSlotWeaponId_Internal(int32 SlotIndex, con
 	}
 }
 
-// ============================================================================
-// [OPTIONAL BUT RECOMMENDED] 초기 슬롯 Ammo가 0/0/0일 때 WeaponData로 초기화
-// - WeaponData: MagSize, MaxReserve 사용
-// - 기본 정책: Mag=MagSize, ReserveCur=MaxReserve, ReserveMax=MaxReserve
-// ============================================================================
-
 void UMosesCombatComponent::Server_EnsureAmmoInitializedForSlot(int32 SlotIndex, const FGameplayTag& WeaponId)
 {
 	if (!GetOwner() || !GetOwner()->HasAuthority())
@@ -1666,7 +1660,6 @@ void UMosesCombatComponent::Server_EnsureAmmoInitializedForSlot(int32 SlotIndex,
 	int32 Mag = 0, Cur = 0, Max = 0;
 	GetSlotAmmo_Internal(SlotIndex, Mag, Cur, Max);
 
-	// 이미 초기화되어 있으면 보호
 	if (Mag > 0 || Cur > 0 || Max > 0)
 	{
 		return;
@@ -1700,7 +1693,7 @@ void UMosesCombatComponent::Server_EnsureAmmoInitializedForSlot(int32 SlotIndex,
 }
 
 // ============================================================================
-// Ammo helpers (ReserveMax 포함) - 내부 저장/조회
+// Ammo helpers (ReserveMax 포함)
 // ============================================================================
 
 void UMosesCombatComponent::GetSlotAmmo_Internal(int32 SlotIndex, int32& OutMag, int32& OutReserveCur, int32& OutReserveMax) const
@@ -1757,7 +1750,7 @@ void UMosesCombatComponent::SetSlotAmmo_Internal(int32 SlotIndex, int32 NewMag, 
 		Slot1MagAmmo = NewMag;
 		Slot1ReserveMax = NewReserveMax;
 		Slot1ReserveAmmo = NewReserveCur;
-		OnRep_Slot1Ammo(); // ListenServer 즉시 반영
+		OnRep_Slot1Ammo();
 		return;
 
 	case 2:
@@ -1794,7 +1787,6 @@ void UMosesCombatComponent::GetSlotAmmo_Internal(int32 SlotIndex, int32& OutMag,
 
 void UMosesCombatComponent::SetSlotAmmo_Internal(int32 SlotIndex, int32 NewMag, int32 NewReserveCur)
 {
-	// ReserveMax는 "현재 값 유지"가 기본 정책
 	int32 OldMag = 0;
 	int32 OldCur = 0;
 	int32 OldMax = 0;
@@ -1826,7 +1818,6 @@ int32 UMosesCombatComponent::GetReserveMaxForSlot(int32 SlotIndex) const
 
 void UMosesCombatComponent::BroadcastSlotsStateChanged(int32 ChangedSlotOr0ForAll, const TCHAR* ContextTag)
 {
-	// 0 = 전체 갱신, 1~4 = 해당 슬롯 중심 갱신
 	OnSlotsStateChanged.Broadcast(ChangedSlotOr0ForAll);
 
 	UE_LOG(LogMosesWeapon, Verbose, TEXT("[WEAPON][HUD] SlotsStateChanged Slot=%d Ctx=%s PS=%s"),
@@ -1834,6 +1825,10 @@ void UMosesCombatComponent::BroadcastSlotsStateChanged(int32 ChangedSlotOr0ForAl
 		ContextTag ? ContextTag : TEXT("None"),
 		*GetNameSafe(GetOwner()));
 }
+
+// ============================================================================
+// AddAmmoByTag
+// ============================================================================
 
 void UMosesCombatComponent::ServerAddAmmoByTag(FGameplayTag AmmoTypeId, int32 ReserveMaxDelta, int32 ReserveFillDelta)
 {
@@ -1849,7 +1844,6 @@ void UMosesCombatComponent::ServerAddAmmoByTag(FGameplayTag AmmoTypeId, int32 Re
 		return;
 	}
 
-	// ✅ Tag -> Enum 매핑 (현재 프로젝트는 enum 기반 AddAmmoByType을 이미 구현했으니 재사용)
 	EMosesAmmoType AmmoType = EMosesAmmoType::Rifle;
 
 	const FString TagStr = AmmoTypeId.ToString();
@@ -1882,8 +1876,9 @@ void UMosesCombatComponent::ServerAddAmmoByTag(FGameplayTag AmmoTypeId, int32 Re
 }
 
 // ============================================================================
-// [MOD][DEBUG] Trace Debug (Server -> All Clients)
+// Trace Debug (Server -> All Clients)
 // ============================================================================
+
 void UMosesCombatComponent::Multicast_DrawFireTraceDebug_Implementation(
 	const FVector& CamStart,
 	const FVector& CamEnd,
@@ -1895,7 +1890,6 @@ void UMosesCombatComponent::Multicast_DrawFireTraceDebug_Implementation(
 	const FVector& FinalImpact)
 {
 #if ENABLE_DRAW_DEBUG
-	// Dedicated Server는 렌더링 없음
 	if (GetNetMode() == NM_DedicatedServer)
 	{
 		return;
@@ -1907,7 +1901,6 @@ void UMosesCombatComponent::Multicast_DrawFireTraceDebug_Implementation(
 		return;
 	}
 
-	// 게임 플레이 월드에서만(에디터 프리뷰/에디터월드 꼬임 방지)
 	if (!World->IsGameWorld())
 	{
 		return;
@@ -1915,23 +1908,322 @@ void UMosesCombatComponent::Multicast_DrawFireTraceDebug_Implementation(
 
 	const float Life = FMath::Max(0.01f, ServerTraceDebugDrawTime);
 
-	// 시야(Cam) Trace
 	DrawDebugLine(World, CamStart, CamEnd, FColor::Cyan, false, Life, 0, 1.5f);
 	if (bCamHit)
 	{
 		DrawDebugPoint(World, CamImpact, 10.f, FColor::Cyan, false, Life);
 	}
 
-	// 총구(Muzzle) 최종 판정 Trace
 	DrawDebugLine(World, MuzzleStart, MuzzleEnd, bFinalHit ? FColor::Green : FColor::Red, false, Life, 0, 2.5f);
 	if (bFinalHit)
 	{
 		DrawDebugPoint(World, FinalImpact, 14.f, FColor::Green, false, Life);
 	}
-#endif // ENABLE_DRAW_DEBUG
+#endif
 }
 
 bool UMosesCombatComponent::Server_IsZombieTarget(const AActor* TargetActor) const
 {
 	return TargetActor && TargetActor->IsA(AMosesZombieCharacter::StaticClass());
+}
+
+// ============================================================================
+// AutoFire (Server) + Heartbeat (Client -> Server)
+// ============================================================================
+
+void UMosesCombatComponent::RequestStartFire()
+{
+	UE_LOG(LogTemp, Warning, TEXT("[CC][CL] RequestStartFire"));
+
+	// ✅ 로컬(클라)에서 Heartbeat 시작
+	StartClientFireHeldHeartbeat();
+
+	// ✅ 서버에 연사 시작 요청
+	ServerStartFire();
+}
+
+void UMosesCombatComponent::RequestStopFire()
+{
+	UE_LOG(LogTemp, Warning, TEXT("[CC][CL] RequestStopFire"));
+
+	StopClientFireHeldHeartbeat();
+	ServerStopFire();
+}
+
+void UMosesCombatComponent::ServerStartFire_Implementation()
+{
+	if (!GetOwner() || !GetOwner()->HasAuthority())
+	{
+		return;
+	}
+
+	// ✅ 새 연사 세션 토큰 발급 (Stop 이후 남은 tick 무력화)
+	++FireRequestToken;
+	ActiveFireToken = FireRequestToken;
+
+	// 이미 연사 의도 상태라도 “타이머가 꺼져있을 수 있음” -> 아래에서 재보장
+	bWantsToFire = true;
+
+	// ✅ 시작 시점 기준점(클라 heartbeat 지연 대비)
+	if (UWorld* World = GetWorld())
+	{
+		LastFireHeldHeartbeatSec = World->GetTimeSeconds();
+	}
+
+	// ✅ 현재 무기 interval 캐시
+	FGameplayTag WeaponId;
+	const UMosesWeaponData* WeaponData = Server_ResolveEquippedWeaponData(WeaponId);
+	CachedAutoFireIntervalSec = Server_GetFireIntervalSec_FromWeaponData(WeaponData);
+
+	UE_LOG(LogMosesCombat, Warning,
+		TEXT("[FIRE][SV] StartFire Wants=1 Token=%u Interval=%.3f PS=%s"),
+		ActiveFireToken,
+		CachedAutoFireIntervalSec,
+		*GetNameSafe(GetOwner()));
+
+	// ✅ 즉발 1발
+	AutoFireTick_Server();
+
+	// ✅ 반복 타이머 시작(weapon interval)
+	StartAutoFire_Server(CachedAutoFireIntervalSec);
+}
+
+void UMosesCombatComponent::ServerStopFire_Implementation()
+{
+	if (!GetOwner() || !GetOwner()->HasAuthority())
+	{
+		return;
+	}
+
+	bWantsToFire = false;
+
+	// ✅ 토큰 갱신: 이미 큐에 들어간 tick도 무력화
+	++FireRequestToken;
+
+	StopAutoFire_Server();
+
+	UE_LOG(LogMosesCombat, Warning,
+		TEXT("[FIRE][SV] StopFire Wants=0 NewToken=%u PS=%s"),
+		FireRequestToken,
+		*GetNameSafe(GetOwner()));
+}
+
+void UMosesCombatComponent::Server_UpdateFireHeldHeartbeat_Implementation()
+{
+	if (!GetOwner() || !GetOwner()->HasAuthority())
+	{
+		return;
+	}
+
+	if (UWorld* World = GetWorld())
+	{
+		LastFireHeldHeartbeatSec = World->GetTimeSeconds();
+	}
+}
+
+void UMosesCombatComponent::StartAutoFire_Server(float IntervalSec)
+{
+	if (!GetOwner() || !GetOwner()->HasAuthority())
+	{
+		return;
+	}
+
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	// 혹시 남아있는게 있으면 먼저 정리
+	World->GetTimerManager().ClearTimer(AutoFireTimerHandle);
+
+	const float TickRate = FMath::Max(0.01f, IntervalSec);
+
+	World->GetTimerManager().SetTimer(
+		AutoFireTimerHandle,
+		this,
+		&ThisClass::AutoFireTick_Server,
+		TickRate,
+		true,
+		TickRate);
+
+	UE_LOG(LogMosesCombat, Verbose,
+		TEXT("[FIRE][SV] AutoFireTimer START Rate=%.3f Token=%u PS=%s"),
+		TickRate, ActiveFireToken, *GetNameSafe(GetOwner()));
+}
+
+void UMosesCombatComponent::StopAutoFire_Server()
+{
+	if (!GetOwner() || !GetOwner()->HasAuthority())
+	{
+		return;
+	}
+
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(AutoFireTimerHandle);
+	}
+
+	UE_LOG(LogMosesCombat, Verbose,
+		TEXT("[FIRE][SV] AutoFireTimer STOP PS=%s"),
+		*GetNameSafe(GetOwner()));
+}
+
+void UMosesCombatComponent::AutoFireTick_Server()
+{
+	if (!GetOwner() || !GetOwner()->HasAuthority())
+	{
+		return;
+	}
+
+	// ✅ Stop 이후 큐에 남은 tick 무력화
+	const uint32 TickToken = ActiveFireToken;
+	if (TickToken != FireRequestToken)
+	{
+		UE_LOG(LogMosesCombat, Verbose,
+			TEXT("[FIRE][SV] AutoFireTick IGNORED by Token Tick=%u Cur=%u PS=%s"),
+			TickToken, FireRequestToken, *GetNameSafe(GetOwner()));
+		return;
+	}
+
+	if (!bWantsToFire)
+	{
+		StopAutoFire_Server();
+		return;
+	}
+
+	// ✅ Heartbeat timeout이면 연사 고착 강제 종료
+	if (UWorld* World = GetWorld())
+	{
+		const double Now = World->GetTimeSeconds();
+		if ((Now - LastFireHeldHeartbeatSec) > FireHeldHeartbeatTimeoutSec)
+		{
+			UE_LOG(LogMosesCombat, Warning,
+				TEXT("[FIRE][SV] AutoFire STOP by HeartbeatTimeout Now=%.3f Last=%.3f Timeout=%.3f PS=%s"),
+				Now, LastFireHeldHeartbeatSec, FireHeldHeartbeatTimeoutSec, *GetNameSafe(GetOwner()));
+
+			bWantsToFire = false;
+			++FireRequestToken; // 잔여 tick 무력화
+			StopAutoFire_Server();
+			return;
+		}
+	}
+
+	EMosesFireGuardFailReason Reason = EMosesFireGuardFailReason::None;
+	FString Debug;
+	if (!Server_CanFire(Reason, Debug))
+	{
+		UE_LOG(LogMosesCombat, Verbose,
+			TEXT("[FIRE][SV] AutoFire STOP by Guard Reason=%d Debug=%s PS=%s"),
+			(int32)Reason, *Debug, *GetNameSafe(GetOwner()));
+
+		bWantsToFire = false;
+		++FireRequestToken;
+		StopAutoFire_Server();
+		return;
+	}
+
+	// ✅ 서버면 RPC(ServerFire)로 다시 돌지 말고 Implementation 직접 호출
+	ServerFire_Implementation();
+}
+
+// ============================================================================
+// Client Heartbeat (Fail-safe)
+// ============================================================================
+
+void UMosesCombatComponent::StartClientFireHeldHeartbeat()
+{
+	if (GetNetMode() == NM_DedicatedServer)
+	{
+		return;
+	}
+
+	APawn* Pawn = MosesCombat_Private::GetOwnerPawn(this);
+	if (!Pawn)
+	{
+		return;
+	}
+
+	APlayerController* PC = Cast<APlayerController>(Pawn->GetController());
+	if (!PC || !PC->IsLocalController())
+	{
+		return;
+	}
+
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	if (bClientFireHeldHeartbeatRunning)
+	{
+		return;
+	}
+
+	bClientFireHeldHeartbeatRunning = true;
+
+	World->GetTimerManager().SetTimer(
+		ClientFireHeldHeartbeatHandle,
+		this,
+		&ThisClass::ClientFireHeldHeartbeatTick,
+		FMath::Max(0.01f, ClientFireHeldHeartbeatIntervalSec),
+		true);
+}
+
+void UMosesCombatComponent::StopClientFireHeldHeartbeat()
+{
+	if (GetNetMode() == NM_DedicatedServer)
+	{
+		return;
+	}
+
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(ClientFireHeldHeartbeatHandle);
+	}
+
+	bClientFireHeldHeartbeatRunning = false;
+}
+
+void UMosesCombatComponent::ClientFireHeldHeartbeatTick()
+{
+	if (GetNetMode() == NM_DedicatedServer)
+	{
+		StopClientFireHeldHeartbeat();
+		return;
+	}
+
+	APawn* Pawn = MosesCombat_Private::GetOwnerPawn(this);
+	APlayerController* PC = Pawn ? Cast<APlayerController>(Pawn->GetController()) : nullptr;
+
+	// Pawn/PC가 깨졌으면 “클라 heartbeat만” 끄고 서버에도 Stop 한번 날림
+	if (!Pawn || !PC || !PC->IsLocalController())
+	{
+		StopClientFireHeldHeartbeat();
+		ServerStopFire(); // ✅ RequestStopFire 재진입 제거
+		return;
+	}
+
+	// ✅ 서버로 heartbeat 전송
+	if (GetOwner() && GetOwner()->HasAuthority())
+	{
+		// ListenServer 로컬 입력도 서버값 갱신
+		if (UWorld* World = GetWorld())
+		{
+			LastFireHeldHeartbeatSec = World->GetTimeSeconds();
+		}
+	}
+	else
+	{
+		Server_UpdateFireHeldHeartbeat();
+	}
+
+	// ✅ Released 씹힘 대응: 실제 입력 상태로 Stop 강제
+	const bool bMouseDown = PC->IsInputKeyDown(EKeys::LeftMouseButton);
+	if (!bMouseDown)
+	{
+		StopClientFireHeldHeartbeat();
+		ServerStopFire(); // ✅ RequestStopFire 재진입 제거
+	}
 }
